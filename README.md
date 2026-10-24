@@ -24,7 +24,8 @@ Game Masters pour years into their campaigns. That work shouldn't be locked insi
 - **📝 Plain Markdown.** Every note, NPC, and location is a readable `.md` file you can open in any text editor.
 - **💾 Local only.** No accounts and no cloud saves. Your campaign lives in a folder on your drive, and you back it up however you like.
 - **🚪 No lock-in.** If you stop using Dungeon Elements, your files come with you, untouched.
-- **🦀 Built in Rust.** Aiming for a fast, stable, secure desktop app.
+- **🦀 Pure Rust.** A native desktop app built with [iced](https://iced.rs), aiming to be fast, stable, and secure.
+- **🎲 Any system.** System-agnostic: not tied to D&D, Shadowdark, or any other game. Built for GMs and solo players on Windows and Linux.
 
 ## How it will work
 
@@ -32,34 +33,38 @@ Each campaign is just a folder. Open the folder and your campaign is there:
 
 ```text
 my-campaign/
+├── locations/
+│   ├── the-sunken-keep.md
+│   └── the-sunken-keep.svg
 ├── npcs/
 │   └── mira-the-innkeeper.md
-├── locations/
-│   └── the-sunken-keep.md
-├── maps/
-│   └── the-sunken-keep.svg
-└── sessions/
-    └── session-01.md
+├── players/
+├── quests/
+├── items/
+└── lore/
 ```
 
-Highlight a name in your notes and choose **Add link**. If a page with that name exists, it gets linked; if not, a new one is created for you. Over time, your notes grow into a connected wiki of your world.
+Highlight a name in your notes and choose **Add link** to create an Obsidian-compatible `[[link]]`. If a page with that name exists, it gets linked; if not, a new one is created for you. Over time, your notes grow into a connected wiki of your world.
 
 ## Roadmap
 
 | Phase | Name | Goals |
 | :---: | --- | --- |
-| **0** | _Call to Action_ | Basic Rust GUI · write and save Markdown · one folder per campaign |
-| **1** | _Inciting Incident_ | WYSIWYG Markdown editing · polished file display · one-click internal links |
-| **2** | _Rising Action_ | Basic SVG map editor · map, name, and roll table generators |
+| **0** | _Call to Action_ | Basic iced GUI · write, save, and open Markdown · one folder per campaign · YAML metadata · detect outside edits |
+| **1** | _Inciting Incident_ | Polished file display · Obsidian-style `[[links]]` that survive renames · WYSIWYG editing · built-in dice roller |
+| **2** | _Rising Action_ | Basic SVG map editor · name and roll table generators |
+
+Dungeon Elements is **not** a virtual tabletop and has no multiplayer sync. It's for building and tracking campaigns, not hosting them.
 
 ### Planned features
 
 - 🧙 **Player management:** character sheets, backstories, and player notes
 - 👥 **NPC management**
-- 🗺️ **Map generators:** world, region, city, building, and dungeon
+- 🗺️ **Map generators:** world, region, city, building, and dungeon (later in development)
 - 📜 **Quest tracker:** build quests and get story suggestions for inspiration (suggestions, not generated stories)
 - 📚 **World and lore wiki:** your Markdown files as a browsable wiki, linked to your maps
-- 🎲 **Solo journaling:** built-in dice rollers and a side-by-side view of your journal with lore, rules, or roll tables
+- 🖨️ **PDF export:** player handouts and table maps with a square, hex, or blank overlay
+- 📓 **Solo journaling:** built-in dice rollers and a side-by-side view of your journal with lore, rules, or roll tables
 
 See [PLAN.md](PLAN.md) for the full plan and checklists.
 
