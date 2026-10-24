@@ -15,7 +15,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 ---
 
 > [!NOTE]
-> Dungeon Elements is in **early development**. Right now the app is a single text editor: you can open a Markdown (`.md`) file, write notes, and save them with **Open...** (Ctrl+O), **Save** (Ctrl+S), and **Save As...** (Ctrl+Shift+S). The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
+> Dungeon Elements is in **early development**. When it starts, you can open a campaign folder or create a new one (optionally with a starter set of folders). Inside a campaign, a collapsible file tree on the left lists your folders and Markdown (`.md`) files, and each file you open gets its own tab. Shortcuts: **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), and **Close Tab** (Ctrl+W). The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
 
 ## Why Dungeon Elements?
 
