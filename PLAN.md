@@ -26,9 +26,9 @@ The suite will also include drawing tools and generators to allow the Game Maste
 - [x] Able to input text
 - [x] Save text, stored in a folder in Markdown format
 - [x] Open saved text files
-- [ ] Save folder structure for campaigns
+- [x] Save folder structure for campaigns
   - campaigns have locations, quests, npcs, players, items, lore, etc.
-- [ ] Different folders represent different campaigns, GM can open a folder and their campaign is there
+- [x] Different folders represent different campaigns, GM can open a folder and their campaign is there
 - [ ] YAML metadata for formatting and to ensure links and other data work consistently
 - [ ] Check files on load for edits outside software, warn of improper formatting
 
