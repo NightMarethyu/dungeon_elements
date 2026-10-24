@@ -4,7 +4,7 @@ Dungeon Elements _working title_
 
 ## What it is
 
-Dungeon Elements is a full campaign building suite for Table Top Role Playing Games. The files are saved and formatted in Markdown and they live on the user's harddrive. No cloud saves (unless the user uses cloud backups). If the software no longer works or the user wants to switch to different software, they can take their markdown files with them.
+Dungeon Elements is a full campaign building suite for Table Top Role Playing Games. The files are saved and formatted in Markdown and they live on the user's hard drive. No cloud saves (unless the user uses cloud backups). If the software no longer works or the user wants to switch to different software, they can take their markdown files with them.
 
 The suite will also include drawing tools and generators to allow the Game Master to build out worlds, cities, and dungeons. These will enable the GM to build completely custom from scratch locations to generated on the fly because the players did very unexpected things.
 
@@ -37,9 +37,14 @@ The suite will also include drawing tools and generators to allow the Game Maste
 - [ ] Display markdown files in a nice way
 - [ ] Allow internal linking of files, make this easy highlight text and select "add link" (right-click context menu or file menu) will check if a file already exists with that name and link it, if a file doesn't exist it will create one. Links formatted in Obsidian compatible [[link text]] format
 - [ ] Ensure name safe links, if filename changes, links are robust enough to stay in place
+  - rename links to protect Obsidian compatibility
   - Possibly save as part of YAML metadata
-- [ ] Add editor features to make Markdown more intuitive (WYSIWYG)
+- [ ] Syntax-highlighting and live preview
 - [ ] Built-in dice roller, keep everything close without needing to leave the app
+
+Stretch goal:
+
+- [ ] Add editor features to make Markdown more intuitive (WYSIWYG)
 
 ### Phase 2: rising action
 
