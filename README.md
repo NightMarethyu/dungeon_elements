@@ -76,6 +76,8 @@ You need a recent stable [Rust toolchain](https://rustup.rs) (edition 2024, Rust
 cargo run
 ```
 
+On Windows, Rust uses the Microsoft C++ linker, so install the **Desktop development with C++** workload (MSVC build tools and a Windows SDK) from the Visual Studio Installer.
+
 On Linux, iced also needs the usual windowing libraries (for example `libxkbcommon-x11` and Wayland or X11 development packages) installed through your distro.
 
 ## Contributing
