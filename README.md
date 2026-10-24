@@ -15,7 +15,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 ---
 
 > [!NOTE]
-> Dungeon Elements is in **early development**. Right now the app is a single text editor: you can write notes and save them as a Markdown (`.md`) file with **Save**, **Save As...**, or Ctrl+S. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
+> Dungeon Elements is in **early development**. Right now the app is a single text editor: you can open a Markdown (`.md`) file, write notes, and save them with **Open...** (Ctrl+O), **Save** (Ctrl+S), and **Save As...** (Ctrl+Shift+S). The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
 
 ## Why Dungeon Elements?
 

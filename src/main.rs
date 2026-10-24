@@ -25,6 +25,8 @@ struct App {
 #[derive(Debug, Clone)]
 enum Message {
     Edit(text_editor::Action),
+    Open,
+    Opened(Result<Option<(PathBuf, String)>, String>),
     Save,
     SaveAs,
     Saved(Result<Option<PathBuf>, String>),
@@ -36,6 +38,20 @@ impl App {
             Message::Edit(action) => {
                 self.modified |= action.is_edit();
                 self.content.perform(action);
+                Task::none()
+            }
+            Message::Open => Task::perform(open(self.modified), Message::Opened),
+            Message::Opened(Ok(Some((path, text)))) => {
+                self.content = text_editor::Content::with_text(&text);
+                self.status = format!("Opened {}", path.display());
+                self.path = Some(path);
+                self.modified = false;
+                Task::none()
+            }
+            // The user closed the open dialog or chose to keep their changes.
+            Message::Opened(Ok(None)) => Task::none(),
+            Message::Opened(Err(error)) => {
+                self.status = format!("Could not open: {error}");
                 Task::none()
             }
             Message::Save => {
@@ -59,6 +75,7 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         let toolbar = row![
+            button("Open...").on_press(Message::Open),
             button("Save").on_press(Message::Save),
             button("Save As...").on_press(Message::SaveAs),
         ]
@@ -68,14 +85,23 @@ impl App {
             .placeholder("Start writing...")
             .on_action(Message::Edit)
             .key_binding(|key_press| {
-                let is_ctrl_s = key_press.modifiers.command()
-                    && key_press.key == keyboard::Key::Character("s".into());
-
-                if is_ctrl_s {
-                    Some(text_editor::Binding::Custom(Message::Save))
-                } else {
-                    text_editor::Binding::from_key_press(key_press)
+                if !key_press.modifiers.command() {
+                    return text_editor::Binding::from_key_press(key_press);
                 }
+
+                let message = match key_press.key.as_ref() {
+                    keyboard::Key::Character(c) if c.eq_ignore_ascii_case("o") => Message::Open,
+                    keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
+                        if key_press.modifiers.shift() {
+                            Message::SaveAs
+                        } else {
+                            Message::Save
+                        }
+                    }
+                    _ => return text_editor::Binding::from_key_press(key_press),
+                };
+
+                Some(text_editor::Binding::Custom(message))
             })
             .height(Fill);
 
@@ -96,6 +122,40 @@ impl App {
             .padding(8)
             .into()
     }
+}
+
+/// Asks the user for a Markdown file and reads it.
+///
+/// If `modified` is true, first asks whether to discard the unsaved changes.
+/// Returns `Ok(None)` if the user cancels.
+async fn open(modified: bool) -> Result<Option<(PathBuf, String)>, String> {
+    if modified {
+        let choice = rfd::AsyncMessageDialog::new()
+            .set_title("Unsaved changes")
+            .set_description("You have unsaved changes. Discard them and open another file?")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show()
+            .await;
+
+        if choice != rfd::MessageDialogResult::Yes {
+            return Ok(None);
+        }
+    }
+
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("Open Markdown file")
+        .add_filter("Markdown", &["md"])
+        .pick_file()
+        .await;
+
+    let Some(handle) = picked else {
+        return Ok(None);
+    };
+
+    let path = handle.path().to_path_buf();
+    let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+
+    Ok(Some((path, text)))
 }
 
 /// Writes `text` to `path`, asking the user where to save first if there is no path yet.
