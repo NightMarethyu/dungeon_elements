@@ -23,8 +23,8 @@ The suite will also include drawing tools and generators to allow the Game Maste
 ### Phase 0: call to action
 
 - [x] Basic GUI, built in pure Rust (using iced, everything in Rust, everything local)
-- [ ] Able to input text
-- [ ] Save text, stored in a folder in Markdown format
+- [x] Able to input text
+- [x] Save text, stored in a folder in Markdown format
 - [ ] Open saved text files
 - [ ] Save folder structure for campaigns
   - campaigns have locations, quests, npcs, players, items, lore, etc.
