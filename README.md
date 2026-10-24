@@ -6,7 +6,7 @@
 
 Write your world in plain Markdown, link it together like a wiki, and keep every file on your own drive.
 
-![Status: planning](https://img.shields.io/badge/status-planning-orange)
+![Status: early development](https://img.shields.io/badge/status-early%20development-orange)
 ![Language: Rust](https://img.shields.io/badge/language-Rust-b7410e?logo=rust)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
@@ -15,7 +15,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 ---
 
 > [!NOTE]
-> Dungeon Elements is in the **planning stage**. There is no code to build or run yet. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
+> Dungeon Elements is in **early development**. Right now the app opens an empty window and nothing more. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
 
 ## Why Dungeon Elements?
 
@@ -67,6 +67,16 @@ Dungeon Elements is **not** a virtual tabletop and has no multiplayer sync. It's
 - 📓 **Solo journaling:** built-in dice rollers and a side-by-side view of your journal with lore, rules, or roll tables
 
 See [PLAN.md](PLAN.md) for the full plan and checklists.
+
+## Building
+
+You need a recent stable [Rust toolchain](https://rustup.rs) (edition 2024, Rust 1.85 or newer).
+
+```sh
+cargo run
+```
+
+On Linux, iced also needs the usual windowing libraries (for example `libxkbcommon-x11` and Wayland or X11 development packages) installed through your distro.
 
 ## Contributing
 
