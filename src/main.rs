@@ -1,32 +1,52 @@
 //! Dungeon Elements: a local-first campaign manager for tabletop RPGs.
 
 mod campaign;
+mod menu;
+mod settings;
 mod style;
+mod theme;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
-    button, center, checkbox, column, container, opaque, row, rule, scrollable, space, stack, text,
-    text_editor, text_input,
+    Svg, button, center, checkbox, column, container, opaque, row, rule, scrollable, space, stack,
+    svg, text, text_editor, text_input,
 };
-use iced::{Center, Element, Fill, Subscription, Task};
+use iced::{Center, Element, Fill, Subscription, Task, window};
 
 use campaign::Entry;
+use menu::Menu;
+use settings::Settings;
+use theme::{Colors, Theme};
+
+/// The logo, drawn in black on white. [`logo`] recolors it to match the theme.
+const LOGO: &str = include_str!("../reference/dungeon_elements.svg");
 
 fn main() -> iced::Result {
-    iced::application(App::default, App::update, App::view)
+    iced::application(App::new, App::update, App::view)
         .title(App::title)
-        .theme(style::theme())
+        .theme(App::theme)
         .subscription(App::subscription)
         .window_size((1200.0, 800.0))
+        // Closing the window asks about unsaved changes first; see `Message::Exit`.
+        .exit_on_close_request(false)
         .run()
 }
 
-#[derive(Default)]
 struct App {
     screen: Screen,
+    settings: Settings,
+    themes: Vec<Theme>,
+    /// The index of the active theme in `themes`.
+    theme: usize,
+    /// The logo colored for the menu bar, and for the splash screen.
+    logos: (svg::Handle, svg::Handle),
+    /// The dropdown menu that is open, if any.
+    menu: Option<Menu>,
+    /// Whether the "About" dialog is showing.
+    about: bool,
 }
 
 enum Screen {
@@ -81,18 +101,45 @@ struct Tab {
 }
 
 impl Tab {
-    fn name(&self) -> String {
-        self.path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .map_or("Untitled".into(), |name| {
-                name.to_string_lossy().into_owned()
-            })
+    fn name(&self, show_extensions: bool) -> String {
+        self.path.as_deref().map_or("Untitled".into(), |path| {
+            display_name(path, show_extensions)
+        })
     }
+}
+
+/// The name to show for a file: its filename, without `.md` unless `show_extensions` is on.
+///
+/// Other extensions always show, so a `_type.yaml` can't be mistaken for a note.
+fn display_name(path: &Path, show_extensions: bool) -> String {
+    let name = if !show_extensions && campaign::is_markdown(path) {
+        path.file_stem()
+    } else {
+        path.file_name()
+    };
+
+    name.map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 #[derive(Debug, Clone)]
 enum Message {
+    // Menus and app-wide settings
+    MenuOpened(Menu),
+    MenuHovered(Menu),
+    CloseMenu,
+    Escape,
+    ThemePicked(String),
+    ReloadThemes,
+    ToggleExtensions(bool),
+    ToggleTypeFiles(bool),
+    ShowAbout,
+    CloseAbout,
+    Exit,
+    ExitConfirmed(bool),
+
     // Splash screen
     OpenCampaign,
     CampaignPicked(Option<PathBuf>),
@@ -125,6 +172,81 @@ enum Message {
 }
 
 impl App {
+    fn new() -> Self {
+        let settings = Settings::load();
+        let folder = theme::user_folder();
+        if let Some(folder) = &folder {
+            // So users can find where their themes go. Not being able to make it is fine.
+            let _ = std::fs::create_dir_all(folder);
+        }
+        let (themes, problems) = theme::load(folder.as_deref());
+
+        let mut app = App {
+            screen: Screen::Splash {
+                new_campaign: None,
+                error: theme_problems(&problems),
+            },
+            settings,
+            themes,
+            theme: 0,
+            logos: (
+                svg::Handle::from_memory(LOGO.as_bytes()),
+                svg::Handle::from_memory(LOGO.as_bytes()),
+            ),
+            menu: None,
+            about: false,
+        };
+        let name = app.settings.theme.clone();
+        app.use_theme(&name);
+        app
+    }
+
+    fn colors(&self) -> Colors {
+        self.themes[self.theme].colors
+    }
+
+    fn theme(&self) -> iced::Theme {
+        self.themes[self.theme].to_iced()
+    }
+
+    /// Switches to the theme named `name`, or the default theme if there is none by that name.
+    fn use_theme(&mut self, name: &str) {
+        self.theme = self
+            .themes
+            .iter()
+            .position(|theme| theme.name == name)
+            .or_else(|| {
+                self.themes
+                    .iter()
+                    .position(|theme| theme.name == theme::DEFAULT)
+            })
+            .unwrap_or(0);
+
+        let c = self.colors();
+        self.logos = (logo(c, c.menu_bar), logo(c, c.background));
+    }
+
+    /// Shows `message` in the status bar, or under the buttons on the splash screen.
+    fn notify(&mut self, message: String) {
+        match &mut self.screen {
+            Screen::Splash { error, .. } => *error = Some(message),
+            Screen::Workspace(workspace) => workspace.status = message,
+        }
+    }
+
+    fn save_settings(&mut self) {
+        if let Err(error) = self.settings.save() {
+            self.notify(format!("Could not save settings: {error}"));
+        }
+    }
+
+    fn has_unsaved_changes(&self) -> bool {
+        match &self.screen {
+            Screen::Splash { .. } => false,
+            Screen::Workspace(workspace) => workspace.tabs.iter().any(|tab| tab.modified),
+        }
+    }
+
     fn title(&self) -> String {
         match &self.screen {
             Screen::Splash { .. } => "Dungeon Elements".into(),
@@ -135,16 +257,113 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        match self.screen {
-            Screen::Splash { .. } => Subscription::none(),
-            Screen::Workspace(_) => keyboard::listen().filter_map(|event| match event {
-                keyboard::Event::KeyPressed { key, modifiers, .. } => shortcut(&key, modifiers),
+        let keys = match self.screen {
+            Screen::Splash { .. } => keyboard::listen().filter_map(|event| match event {
+                keyboard::Event::KeyPressed { key, .. } => escape(&key),
                 _ => None,
             }),
-        }
+            Screen::Workspace(_) => keyboard::listen().filter_map(|event| match event {
+                keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                    escape(&key).or_else(|| shortcut(&key, modifiers))
+                }
+                _ => None,
+            }),
+        };
+
+        Subscription::batch([keys, window::close_requests().map(|_| Message::Exit)])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::MenuOpened(menu) => {
+                self.menu = if self.menu == Some(menu) {
+                    None
+                } else {
+                    Some(menu)
+                };
+                return Task::none();
+            }
+            Message::MenuHovered(menu) => {
+                if self.menu.is_some() {
+                    self.menu = Some(menu);
+                }
+                return Task::none();
+            }
+            _ => {}
+        }
+
+        // Anything else, such as picking a menu item, closes the open menu.
+        self.menu = None;
+
+        match message {
+            Message::CloseMenu => return Task::none(),
+            Message::Escape => {
+                if let Screen::Splash { new_campaign, .. } = &mut self.screen
+                    && !self.about
+                {
+                    *new_campaign = None;
+                }
+                self.about = false;
+                return Task::none();
+            }
+            Message::ThemePicked(name) => {
+                self.use_theme(&name);
+                self.settings.theme = self.themes[self.theme].name.clone();
+                self.save_settings();
+                return Task::none();
+            }
+            Message::ReloadThemes => {
+                let folder = theme::user_folder();
+                let (themes, problems) = theme::load(folder.as_deref());
+                self.themes = themes;
+                let name = self.settings.theme.clone();
+                self.use_theme(&name);
+
+                let message = theme_problems(&problems).unwrap_or_else(|| match &folder {
+                    Some(folder) => format!(
+                        "Loaded {} themes (add your own in {})",
+                        self.themes.len(),
+                        folder.display()
+                    ),
+                    None => format!("Loaded {} themes", self.themes.len()),
+                });
+                self.notify(message);
+                return Task::none();
+            }
+            Message::ToggleExtensions(show) => {
+                self.settings.show_extensions = show;
+                self.save_settings();
+                return Task::none();
+            }
+            Message::ToggleTypeFiles(show) => {
+                self.settings.show_type_files = show;
+                self.save_settings();
+                return Task::none();
+            }
+            Message::ShowAbout => {
+                self.about = true;
+                return Task::none();
+            }
+            Message::CloseAbout => {
+                self.about = false;
+                return Task::none();
+            }
+            Message::Exit => {
+                return if self.has_unsaved_changes() {
+                    Task::perform(
+                        confirm_discard("Some files have unsaved changes. Quit anyway?"),
+                        Message::ExitConfirmed,
+                    )
+                } else {
+                    iced::exit()
+                };
+            }
+            Message::ExitConfirmed(yes) => {
+                return if yes { iced::exit() } else { Task::none() };
+            }
+            _ => {}
+        }
+
         match &mut self.screen {
             Screen::Splash {
                 new_campaign,
@@ -223,19 +442,107 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        match &self.screen {
-            Screen::Splash {
-                new_campaign,
-                error,
-            } => {
-                let splash = splash(error.as_deref());
+        let c = self.colors();
 
-                match new_campaign {
-                    Some(form) => modal(splash, new_campaign_dialog(form)),
-                    None => splash,
-                }
+        let bar = menu::bar(
+            c,
+            &self.logos.0,
+            self.menu,
+            Message::MenuOpened,
+            Message::MenuHovered,
+        );
+
+        let body = match &self.screen {
+            Screen::Splash { error, .. } => splash(c, &self.logos.1, error.as_deref()),
+            Screen::Workspace(workspace) => workspace.view(c, &self.settings),
+        };
+
+        let edge = rule::horizontal(c.border_width.max(1.0)).style(style::separator(c));
+        let mut view: Element<'_, Message> = column![bar, edge, body].into();
+
+        if let Screen::Splash {
+            new_campaign: Some(form),
+            ..
+        } = &self.screen
+        {
+            view = modal(view, new_campaign_dialog(c, form));
+        }
+
+        if self.about {
+            view = modal(view, about_dialog(c, &self.logos.1));
+        }
+
+        if let Some(open) = self.menu {
+            view = stack![
+                view,
+                menu::dropdown(c, open, self.menu_entries(open), Message::CloseMenu)
+            ]
+            .into();
+        }
+
+        view
+    }
+
+    fn menu_entries(&self, open: Menu) -> Vec<menu::Entry<Message>> {
+        use menu::{Entry, item};
+
+        let workspace = match &self.screen {
+            Screen::Workspace(workspace) => Some(workspace),
+            Screen::Splash { .. } => None,
+        };
+        let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
+        let when = |enabled: bool, message: Message| enabled.then_some(message);
+
+        match open {
+            Menu::File => match workspace {
+                Some(_) => vec![
+                    item("New Note", Some(Message::NewNote)).shortcut("Ctrl+N"),
+                    item("Open File...", Some(Message::OpenFile)).shortcut("Ctrl+O"),
+                    Entry::Separator,
+                    item("Save", when(has_tab, Message::Save)).shortcut("Ctrl+S"),
+                    item("Save As...", when(has_tab, Message::SaveAs)).shortcut("Ctrl+Shift+S"),
+                    Entry::Separator,
+                    item("Close Tab", when(has_tab, Message::CloseActiveTab)).shortcut("Ctrl+W"),
+                    item("Close Campaign", Some(Message::CloseCampaign)),
+                    Entry::Separator,
+                    item("Exit", Some(Message::Exit)),
+                ],
+                None => vec![
+                    item("New Campaign...", Some(Message::ShowNewCampaign)),
+                    item("Open Campaign...", Some(Message::OpenCampaign)),
+                    Entry::Separator,
+                    item("Exit", Some(Message::Exit)),
+                ],
+            },
+            Menu::Edit => vec![item("Types... (coming soon)", None)],
+            Menu::View => {
+                let mut entries = vec![Entry::Heading("Theme".into())];
+                entries.extend(self.themes.iter().enumerate().map(|(index, theme)| {
+                    item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
+                        .checked(index == self.theme)
+                }));
+                entries.extend([
+                    item("Reload Themes", Some(Message::ReloadThemes)),
+                    Entry::Separator,
+                    item(
+                        "Show File Extensions",
+                        Some(Message::ToggleExtensions(!self.settings.show_extensions)),
+                    )
+                    .checked(self.settings.show_extensions),
+                    item(
+                        "Show Type Files (.yaml)",
+                        Some(Message::ToggleTypeFiles(!self.settings.show_type_files)),
+                    )
+                    .checked(self.settings.show_type_files),
+                    Entry::Separator,
+                    item(
+                        "Refresh File Tree",
+                        when(workspace.is_some(), Message::RefreshTree),
+                    ),
+                ]);
+                entries
             }
-            Screen::Workspace(workspace) => workspace.view(),
+            Menu::Help => vec![item("About Dungeon Elements", Some(Message::ShowAbout))],
         }
     }
 }
@@ -440,32 +747,15 @@ impl Workspace {
         }
     }
 
-    fn view(&self) -> Element<'_, Message> {
-        let menu_button = |label| {
-            button(text(label).size(13))
-                .padding([4, 10])
-                .style(style::flat(false))
-        };
+    fn view<'a>(&'a self, c: Colors, settings: &Settings) -> Element<'a, Message> {
+        let main = column![self.tab_bar(c, settings), self.editor(c)];
 
-        let menu = container(
-            row![
-                menu_button("New Note").on_press(Message::NewNote),
-                menu_button("Open File...").on_press(Message::OpenFile),
-                menu_button("Save").on_press_maybe(self.active.map(|_| Message::Save)),
-                menu_button("Save As...").on_press_maybe(self.active.map(|_| Message::SaveAs)),
-                space::horizontal(),
-                menu_button("Close Campaign").on_press(Message::CloseCampaign),
-            ]
-            .spacing(2)
-            .align_y(Center),
-        )
-        .padding([2, 6])
-        .width(Fill)
-        .style(style::panel(style::TITLE_BAR));
-
-        let main = column![self.tab_bar(), self.editor()];
-
-        let body = row![self.sidebar(), rule::vertical(1), main].height(Fill);
+        let body = row![
+            self.sidebar(c, settings),
+            rule::vertical(c.border_width.max(1.0)).style(style::separator(c)),
+            main
+        ]
+        .height(Fill);
 
         let status = container(
             row![
@@ -478,20 +768,20 @@ impl Workspace {
         .padding([3, 10])
         .width(Fill)
         .clip(true)
-        .style(style::status_bar);
+        .style(style::status_bar(c));
 
-        column![menu, body, status].into()
+        column![body, status].into()
     }
 
-    fn sidebar(&self) -> Element<'_, Message> {
+    fn sidebar<'a>(&'a self, c: Colors, settings: &Settings) -> Element<'a, Message> {
         let header = row![
             text(self.name().to_uppercase())
                 .size(11)
-                .color(style::MUTED),
+                .color(c.text_muted),
             space::horizontal(),
             button(text("⟳").size(13))
                 .padding([0, 6])
-                .style(style::flat(false))
+                .style(style::flat(c, false))
                 .on_press(Message::RefreshTree),
         ]
         .align_y(Center)
@@ -500,11 +790,11 @@ impl Workspace {
         let tree: Element<'_, Message> = if self.tree.is_empty() {
             text("This campaign has no folders or Markdown files yet.")
                 .size(13)
-                .color(style::MUTED)
+                .color(c.text_muted)
                 .into()
         } else {
             let mut rows = Vec::new();
-            self.tree_rows(&self.tree, 0, &mut rows);
+            self.tree_rows(c, settings, &self.tree, 0, &mut rows);
             column(rows).into()
         };
 
@@ -514,13 +804,15 @@ impl Workspace {
         ])
         .width(260)
         .height(Fill)
-        .style(style::panel(style::SIDEBAR))
+        .style(style::panel(c.sidebar))
         .into()
     }
 
     /// Adds a row for each entry, and for the contents of expanded folders.
     fn tree_rows<'a>(
         &'a self,
+        c: Colors,
+        settings: &Settings,
         entries: &'a [Entry],
         depth: u16,
         rows: &mut Vec<Element<'a, Message>>,
@@ -528,6 +820,18 @@ impl Workspace {
         let active_path = self.active_tab().and_then(|tab| tab.path.as_ref());
 
         for entry in entries {
+            if entry.children.is_none()
+                && !settings.show_type_files
+                && campaign::is_yaml(&entry.path)
+            {
+                continue;
+            }
+
+            let name = match entry.children {
+                Some(_) => entry.name.clone(),
+                None => display_name(&entry.path, settings.show_extensions),
+            };
+
             let indent = space().width(f32::from(8 + depth * 14));
             let (arrow, message, selected) = match &entry.children {
                 Some(_) if self.expanded.contains(&entry.path) => {
@@ -544,11 +848,11 @@ impl Workspace {
             let row = button(row![
                 indent,
                 text(arrow).size(13).width(14),
-                text(&entry.name).size(13)
+                text(name).size(13)
             ])
             .width(Fill)
             .padding([2, 0])
-            .style(style::flat(selected))
+            .style(style::flat(c, selected))
             .on_press(message);
 
             rows.push(row.into());
@@ -556,31 +860,31 @@ impl Workspace {
             if let Some(children) = &entry.children
                 && self.expanded.contains(&entry.path)
             {
-                self.tree_rows(children, depth + 1, rows);
+                self.tree_rows(c, settings, children, depth + 1, rows);
             }
         }
     }
 
-    fn tab_bar(&self) -> Element<'_, Message> {
+    fn tab_bar(&self, c: Colors, settings: &Settings) -> Element<'_, Message> {
         let tabs = self.tabs.iter().map(|tab| {
             let active = Some(tab.id) == self.active;
             let close_label = if tab.modified { "●" } else { "×" };
 
             container(
                 row![
-                    button(text(tab.name()).size(13))
+                    button(text(tab.name(settings.show_extensions)).size(13))
                         .padding([8, 4])
-                        .style(style::tab_button(active))
+                        .style(style::tab_button(c, active))
                         .on_press(Message::SelectTab(tab.id)),
                     button(text(close_label).size(13))
                         .padding([8, 4])
-                        .style(style::tab_button(active))
+                        .style(style::tab_button(c, active))
                         .on_press(Message::CloseTab(tab.id)),
                 ]
                 .align_y(Center),
             )
             .padding([0, 6])
-            .style(style::tab(active))
+            .style(style::tab(c, active))
             .into()
         });
 
@@ -590,23 +894,23 @@ impl Workspace {
             )),
         )
         .width(Fill)
-        .style(style::panel(style::SIDEBAR))
+        .style(style::panel(c.sidebar))
         .into()
     }
 
-    fn editor(&self) -> Element<'_, Message> {
+    fn editor(&self, c: Colors) -> Element<'_, Message> {
         let Some(tab) = self.active_tab() else {
             return center(
                 column![
-                    text("No file open").size(20).color(style::MUTED),
+                    text("No file open").size(20).color(c.text_muted),
                     text("Pick a file in the sidebar, or press Ctrl+N for a new note.")
                         .size(14)
-                        .color(style::MUTED),
+                        .color(c.text_muted),
                 ]
                 .spacing(8)
                 .align_x(Center),
             )
-            .style(style::panel(style::EDITOR))
+            .style(style::panel(c.background))
             .into();
         };
 
@@ -623,9 +927,29 @@ impl Workspace {
             })
             .padding(16)
             .height(Fill)
-            .style(style::editor)
+            .style(style::editor(c))
             .into()
     }
+}
+
+/// Maps the Escape key, which closes menus and dialogs.
+fn escape(key: &Key) -> Option<Message> {
+    matches!(key, Key::Named(keyboard::key::Named::Escape)).then_some(Message::Escape)
+}
+
+/// Sums up the theme files that could not be loaded, if any.
+fn theme_problems(problems: &[String]) -> Option<String> {
+    (!problems.is_empty())
+        .then(|| format!("Some themes could not be loaded. {}", problems.join("; ")))
+}
+
+/// The logo in the theme's colors: black lines become the text color, and white fills become `background`.
+fn logo(c: Colors, background: iced::Color) -> svg::Handle {
+    let svg = LOGO
+        .replace("#000000", &theme::to_hex(c.text))
+        .replace("#ffffff", &theme::to_hex(background));
+
+    svg::Handle::from_memory(svg.into_bytes())
 }
 
 /// Maps the workspace keyboard shortcuts to their messages.
@@ -648,7 +972,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     }
 }
 
-fn splash(error: Option<&str>) -> Element<'_, Message> {
+fn splash<'a>(c: Colors, logo: &svg::Handle, error: Option<&'a str>) -> Element<'a, Message> {
     let big_button = |label| {
         button(text(label).size(16).width(Fill).align_x(Center))
             .padding([12, 24])
@@ -656,35 +980,63 @@ fn splash(error: Option<&str>) -> Element<'_, Message> {
     };
 
     let mut content = column![
-        text("Dungeon Elements").size(44),
+        Svg::new(logo.clone()).width(180).height(180),
+        text("Dungeon Elements").size(44).color(c.text),
         text("A local-first campaign manager for tabletop RPGs")
             .size(16)
-            .color(style::MUTED),
+            .color(c.text_muted),
         space().height(24),
         big_button("Open Campaign...")
-            .style(style::primary)
+            .style(style::primary(c))
             .on_press(Message::OpenCampaign),
         big_button("New Campaign...")
-            .style(style::secondary)
+            .style(style::secondary(c))
             .on_press(Message::ShowNewCampaign),
     ]
     .spacing(12)
     .align_x(Center);
 
     if let Some(error) = error {
-        content = content.push(
-            text(error)
-                .color(style::theme().palette().danger)
-                .width(480)
-                .align_x(Center),
-        );
+        content = content.push(text(error).color(c.danger).width(560).align_x(Center));
     }
 
-    center(content).style(style::panel(style::EDITOR)).into()
+    center(content).style(style::panel(c.background)).into()
 }
 
-fn new_campaign_dialog(form: &NewCampaign) -> Element<'_, Message> {
-    let label = |label| text(label).size(13).color(style::MUTED);
+/// The "About" dialog, opened from Help > About.
+fn about_dialog<'a>(c: Colors, logo: &svg::Handle) -> Element<'a, Message> {
+    let themes_folder = theme::user_folder().map_or_else(
+        || "Your config folder could not be found.".into(),
+        |folder| format!("Your themes folder: {}", folder.display()),
+    );
+
+    let content = column![
+        Svg::new(logo.clone()).width(96).height(96),
+        text("Dungeon Elements").size(24).color(c.text),
+        text(format!("Version {}", env!("CARGO_PKG_VERSION")))
+            .size(13)
+            .color(c.text_muted),
+        text("A local-first campaign manager for tabletop RPGs. Your campaigns are plain Markdown files that stay on your drive.")
+            .size(13)
+            .color(c.text)
+            .align_x(Center),
+        text(themes_folder).size(12).color(c.text_muted).align_x(Center),
+        button("Close")
+            .style(style::primary(c))
+            .on_press(Message::CloseAbout),
+    ]
+    .spacing(10)
+    .align_x(Center);
+
+    container(content)
+        .width(420)
+        .padding(24)
+        .style(style::dialog(c))
+        .into()
+}
+
+fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
+    let label = |label| text(label).size(13).color(c.text_muted);
 
     let folder_preview = if form.title.trim().is_empty() {
         String::new()
@@ -698,14 +1050,15 @@ fn new_campaign_dialog(form: &NewCampaign) -> Element<'_, Message> {
     };
 
     let mut content = column![
-        text("New campaign").size(22),
+        text("New campaign").size(22).color(c.text),
         column![
             label("Title"),
             text_input("The Sunken Keep", &form.title)
                 .id(TITLE_INPUT)
                 .on_input(Message::TitleChanged)
                 .on_submit(Message::CreateCampaign)
-                .padding(8),
+                .padding(8)
+                .style(style::input(c)),
         ]
         .spacing(4),
         column![
@@ -714,43 +1067,45 @@ fn new_campaign_dialog(form: &NewCampaign) -> Element<'_, Message> {
                 text_input("Folder to save the campaign in", &form.location)
                     .on_input(Message::LocationChanged)
                     .on_submit(Message::CreateCampaign)
-                    .padding(8),
+                    .padding(8)
+                    .style(style::input(c)),
                 button("Browse...")
-                    .style(style::secondary)
+                    .style(style::secondary(c))
                     .padding(8)
                     .on_press(Message::BrowseLocation),
             ]
             .spacing(8),
-            text(folder_preview).size(12).color(style::MUTED),
+            text(folder_preview).size(12).color(c.text_muted),
         ]
         .spacing(4),
         column![
             checkbox(form.with_template)
                 .label("Set up the starter folder structure")
-                .on_toggle(Message::TemplateToggled),
+                .on_toggle(Message::TemplateToggled)
+                .style(style::check(c)),
             text(format!(
                 "Adds the folders: {}",
                 campaign::TEMPLATE_FOLDERS.join(", ")
             ))
             .size(12)
-            .color(style::MUTED),
+            .color(c.text_muted),
         ]
         .spacing(4),
     ]
     .spacing(16);
 
     if let Some(error) = &form.error {
-        content = content.push(text(error).size(13).color(style::theme().palette().danger));
+        content = content.push(text(error).size(13).color(c.danger));
     }
 
     content = content.push(
         row![
             space::horizontal(),
             button("Cancel")
-                .style(style::secondary)
+                .style(style::secondary(c))
                 .on_press(Message::CancelNewCampaign),
             button("Create")
-                .style(style::primary)
+                .style(style::primary(c))
                 .on_press(Message::CreateCampaign),
         ]
         .spacing(8),
@@ -759,7 +1114,7 @@ fn new_campaign_dialog(form: &NewCampaign) -> Element<'_, Message> {
     container(content)
         .width(480)
         .padding(24)
-        .style(style::dialog)
+        .style(style::dialog(c))
         .into()
 }
 
@@ -788,8 +1143,9 @@ async fn pick_folder(title: &'static str) -> Option<PathBuf> {
 
 async fn pick_markdown(folder: PathBuf) -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
-        .set_title("Open Markdown file")
+        .set_title("Open file")
         .add_filter("Markdown", &["md"])
+        .add_filter("Type files (YAML)", &["yaml", "yml"])
         .set_directory(folder)
         .pick_file()
         .await
@@ -821,6 +1177,7 @@ async fn save(
             let picked = rfd::AsyncFileDialog::new()
                 .set_title("Save as Markdown")
                 .add_filter("Markdown", &["md"])
+                .add_filter("Type files (YAML)", &["yaml", "yml"])
                 .set_directory(folder)
                 .set_file_name("untitled.md")
                 .save_file()
@@ -838,9 +1195,11 @@ async fn save(
     Ok(Some(path))
 }
 
-/// Appends `.md` to `path` unless it already ends in it, so files are always Markdown.
+/// Appends `.md` to `path` unless it already ends in it, so notes are always Markdown.
+///
+/// YAML files, like a folder's `_type.yaml`, keep their extension.
 fn with_md_extension(mut path: PathBuf) -> PathBuf {
-    if !campaign::is_markdown(&path) {
+    if !campaign::is_markdown(&path) && !campaign::is_yaml(&path) {
         path.as_mut_os_string().push(".md");
     }
 

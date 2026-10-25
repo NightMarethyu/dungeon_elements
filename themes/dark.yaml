@@ -1,0 +1,29 @@
+# The default theme, loosely modeled on VS Code's dark theme.
+#
+# Copy this file into your themes folder, change the name and colors, and pick
+# it under View > Theme. Colors are "#rrggbb" or "#rrggbbaa". Any color you
+# leave out falls back to the Dark theme (base: dark) or High Contrast (base: light).
+name: Dark
+base: dark
+colors:
+  background: "#1e1e1e"       # the main editor pane
+  sidebar: "#252526"          # file tree, tab bar, dialogs
+  menu_bar: "#323233"
+  menu: "#252526"             # open dropdown menus
+  tab_active: "#1e1e1e"
+  tab_inactive: "#2d2d2d"
+  border: "#3c3c3c"           # panel edges, menu and dialog outlines
+  text: "#cccccc"
+  text_muted: "#969696"
+  field_background: "#3c3c3c" # text boxes and form fields
+  selection: "#37373d"        # selected tree row, highlighted menu item
+  hover: "#2a2d2e"
+  accent: "#007acc"           # primary buttons, focused fields
+  accent_text: "#ffffff"      # text on accent-colored buttons
+  status_bar: "#007acc"
+  status_text: "#ffffff"
+  danger: "#f48771"
+  warning: "#cca700"
+  success: "#89d185"
+border_width: 1
+corner_radius: 4

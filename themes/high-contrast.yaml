@@ -1,0 +1,25 @@
+# Black and white, like the reference layout drawing.
+name: High Contrast
+base: light
+colors:
+  background: "#ffffff"
+  sidebar: "#ffffff"
+  menu_bar: "#ffffff"
+  menu: "#ffffff"
+  tab_active: "#ffffff"
+  tab_inactive: "#9a9a9a"
+  border: "#000000"
+  text: "#000000"
+  text_muted: "#3a3a3a"
+  field_background: "#ffffff"
+  selection: "#d4d4d4"
+  hover: "#ececec"
+  accent: "#000000"
+  accent_text: "#ffffff"
+  status_bar: "#ffffff"
+  status_text: "#000000"
+  danger: "#b00020"
+  warning: "#8a6d00"
+  success: "#1b6e1b"
+border_width: 2
+corner_radius: 10
