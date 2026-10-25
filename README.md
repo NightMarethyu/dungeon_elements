@@ -98,7 +98,7 @@ For an optimized build, run `cargo build --release`; the app is `target/release/
 
 On Windows, Rust uses the Microsoft C++ linker, so install the **Desktop development with C++** workload (MSVC build tools and a Windows SDK) from the Visual Studio Installer.
 
-On Linux, iced also needs the usual windowing libraries (for example `libxkbcommon-x11` and Wayland or X11 development packages) installed through your distro.
+On Linux, building needs only a C compiler (`build-essential` on Debian and Ubuntu). Running the app needs the usual desktop libraries, which desktop distros already have; on a minimal system or WSL, install them first (on Ubuntu: `sudo apt install libwayland-client0 libwayland-cursor0 libwayland-egl1 libxkbcommon0 libxkbcommon-x11-0 libegl1 libgl1`).
 
 ## Contributing
 

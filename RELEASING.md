@@ -71,7 +71,15 @@ The Linux build has to be made on Linux. On Windows the easiest way is WSL with 
 
    For later releases, `cd ~/dungeon_elements && git pull` instead of cloning again.
 
-4. Optional: try it. Windows 11 shows Linux windows from WSL, so `./target/release/dungeon_elements` should open the app. If it complains about `libxkbcommon-x11`, run `sudo apt install -y libxkbcommon-x11-0` first.
+4. Optional: try it. Windows 11 shows Linux windows from WSL, but a fresh WSL Ubuntu doesn't have the libraries a desktop app loads when it starts (a normal Linux desktop already has them). Without them it stops with `NoWaylandLib`. Install them once, then run it:
+
+   ```sh
+   sudo apt install -y libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+     libxkbcommon0 libxkbcommon-x11-0 libegl1 libgl1 libvulkan1 mesa-vulkan-drivers
+   ./target/release/dungeon_elements
+   ```
+
+   These are only needed to run the app, not to build it, so the binary you package is the same either way.
 
 5. Package it with the icon and a desktop entry, and copy the archive to your Windows `dist` folder:
 
