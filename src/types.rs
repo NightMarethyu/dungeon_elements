@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The name of the file in a folder that defines its content type.
 pub const TYPE_FILE: &str = "_type.yaml";
@@ -22,17 +22,18 @@ pub const STARTER_TYPES: &[(&str, &str)] = &[
     ("quests", include_str!("../templates/default/quests.yaml")),
 ];
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContentType {
     /// The id stored in each note's `type:` key.
     #[serde(rename = "type")]
     pub id: String,
     /// The name shown to the user, like "Item" in "New Item".
-    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// An icon for the file tree. Not shown yet.
-    #[allow(dead_code)]
-    icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default)]
     pub fields: Vec<Field>,
 }
@@ -46,23 +47,31 @@ impl ContentType {
     pub fn name_field(&self) -> Option<usize> {
         self.fields.iter().position(|field| field.key == "name")
     }
+
+    /// Writes the type as the YAML of a `_type.yaml`, checking it the way [`parse`] does.
+    pub fn to_yaml(&self) -> Result<String, String> {
+        let yaml = serde_yaml_ng::to_string(self).map_err(|error| error.to_string())?;
+        parse(&yaml)?;
+        Ok(yaml)
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Field {
     /// The front matter key the value is stored under.
     pub key: String,
-    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(default)]
     pub kind: Kind,
     /// The choices of a `choice` field.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Width::is_half")]
     pub width: Width,
     /// For `link` fields: the folder to suggest notes from. Not used yet.
-    #[allow(dead_code)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
 }
 
@@ -84,7 +93,7 @@ impl Field {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// One line of text.
@@ -103,6 +112,16 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub const ALL: [Kind; 7] = [
+        Kind::Text,
+        Kind::Longtext,
+        Kind::Number,
+        Kind::Choice,
+        Kind::Tags,
+        Kind::Link,
+        Kind::Checkbox,
+    ];
+
     /// The kinds a field added to a single note can have.
     ///
     /// A choice needs its options listed in the type, so it isn't one of them.
@@ -130,7 +149,7 @@ impl std::fmt::Display for Kind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Width {
     /// Half the form, so two fields sit side by side.
@@ -138,6 +157,23 @@ pub enum Width {
     Half,
     /// The whole width of the form.
     Full,
+}
+
+impl Width {
+    pub const ALL: [Width; 2] = [Width::Half, Width::Full];
+
+    fn is_half(&self) -> bool {
+        *self == Width::Half
+    }
+}
+
+impl std::fmt::Display for Width {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Width::Half => "Half width",
+            Width::Full => "Full width",
+        })
+    }
 }
 
 pub fn parse(yaml: &str) -> Result<ContentType, String> {
@@ -182,6 +218,19 @@ pub fn load(folder: &Path) -> Option<Result<ContentType, String>> {
     )
 }
 
+/// Turns a name like "Hit Points" into a key like `hit_points`.
+pub fn key_from(name: &str) -> String {
+    let mut key = String::new();
+    for c in name.trim().chars() {
+        if c.is_alphanumeric() {
+            key.extend(c.to_lowercase());
+        } else if !key.ends_with('_') && !key.is_empty() {
+            key.push('_');
+        }
+    }
+    key.trim_end_matches('_').to_string()
+}
+
 /// Turns `snake_case` or `kebab-case` into "Title Case".
 fn title_case(key: &str) -> String {
     key.split(['_', '-', ' '])
@@ -206,6 +255,28 @@ mod tests {
             let ty = parse(yaml).unwrap_or_else(|error| panic!("{folder}: {error}"));
             assert!(ty.name_field().is_some(), "{folder} has no name field");
         }
+    }
+
+    #[test]
+    fn writes_what_it_reads() {
+        for (folder, yaml) in STARTER_TYPES {
+            let ty = parse(yaml).unwrap();
+            let again = parse(&ty.to_yaml().unwrap()).unwrap();
+            assert_eq!(format!("{again:?}"), format!("{ty:?}"), "{folder}");
+        }
+
+        let yaml = parse("type: x\nfields:\n  - key: a\n")
+            .unwrap()
+            .to_yaml()
+            .unwrap();
+        assert_eq!(yaml, "type: x\nfields:\n- key: a\n  kind: text\n");
+    }
+
+    #[test]
+    fn makes_keys_from_names() {
+        assert_eq!(key_from("Hit Points"), "hit_points");
+        assert_eq!(key_from("  Armor Class (AC) "), "armor_class_ac");
+        assert_eq!(key_from("Größe"), "größe");
     }
 
     #[test]

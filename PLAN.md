@@ -40,7 +40,7 @@ The suite will also include drawing tools and generators to allow the Game Maste
   - [x] + in the main pane adds a field to that note only (stored as an extra front matter key or `##` section; extra keys and sections added in Obsidian show as fields too)
   - [x] Any field except the name can be removed from a single note (listed in the note's `removed_fields`); the main pane's + brings it back
   - [x] Big + in the sidebar makes a new folder, offering a default type template
-  - [ ] Edit > Types dialog: types on the left, their fields on the right, add/remove fields and set their kind
+  - [x] Edit > Types dialog: folders on the left, their type's fields on the right; add, remove and reorder fields, set their name, key, kind, width and options, and give an untyped folder a type (saving rewrites `_type.yaml` without its comments)
 - [ ] Check files on load for edits outside software, warn of improper formatting
 
 ### Phase 1: inciting incident
