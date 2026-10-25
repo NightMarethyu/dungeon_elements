@@ -244,6 +244,7 @@ enum Message {
     AddFieldLabel(String),
     AddFieldKind(types::Kind),
     AddField,
+    RestoreField(String),
     ShowNewFolder,
     NewFolderName(String),
     NewFolderTemplate(Template),
@@ -884,6 +885,35 @@ impl Workspace {
         templates
     }
 
+    /// Buttons to bring back the type's fields that were removed from the note in the active tab.
+    fn removed_fields<'a>(&self, c: Colors) -> Element<'a, Message> {
+        let removed = self
+            .active_tab()
+            .and_then(|tab| tab.form.as_ref())
+            .map(Form::removed_labels)
+            .unwrap_or_default();
+
+        if removed.is_empty() {
+            return space().height(0).into();
+        }
+
+        let buttons = removed.into_iter().map(|label| {
+            button(text(label.clone()).size(13))
+                .style(style::secondary(c))
+                .on_press(Message::RestoreField(label))
+                .into()
+        });
+
+        column![
+            text("Bring back a field this note doesn't use")
+                .size(13)
+                .color(c.text_muted),
+            row(buttons).spacing(6).wrap(),
+        ]
+        .spacing(6)
+        .into()
+    }
+
     fn dialog_view<'a>(&'a self, c: Colors, dialog: &'a Dialog) -> Element<'a, Message> {
         let label = |label| text(label).size(13).color(c.text_muted);
 
@@ -892,6 +922,7 @@ impl Workspace {
                 Dialog::AddField { label: name, kind, error } => (
                     "Add a field to this note",
                     column![
+                        self.removed_fields(c),
                         column![
                             label("Name"),
                             text_input("Durability", name)
@@ -911,7 +942,7 @@ impl Workspace {
                                 .menu_style(style::choice_menu(c)),
                         ]
                         .spacing(4),
-                        text("Only this note gets the field. To give every note in the folder a field, edit the folder's type.")
+                        text("Only this note gets the field. To give every note in the folder a field, edit the folder's type. Any field can be removed from a note with its Remove button.")
                             .size(12)
                             .color(c.text_muted),
                     ]
@@ -1075,6 +1106,12 @@ impl Workspace {
                     Err(message) => *error = Some(message),
                 }
                 Task::none()
+            }
+            Message::RestoreField(name) => {
+                if let Some(Dialog::AddField { label, .. }) = &mut self.dialog {
+                    *label = name;
+                }
+                self.update(Message::AddField)
             }
             Message::ShowNewFolder => {
                 self.dialog = Some(Dialog::NewFolder {

@@ -38,6 +38,7 @@ The suite will also include drawing tools and generators to allow the Game Maste
   - [x] New campaigns get a `_type.yaml` in each starter folder (from `templates/default/`)
   - [x] + on a folder makes a new note of its type
   - [x] + in the main pane adds a field to that note only (stored as an extra front matter key or `##` section; extra keys and sections added in Obsidian show as fields too)
+  - [x] Any field except the name can be removed from a single note (listed in the note's `removed_fields`); the main pane's + brings it back
   - [x] Big + in the sidebar makes a new folder, offering a default type template
   - [ ] Edit > Types dialog: types on the left, their fields on the right, add/remove fields and set their kind
 - [ ] Check files on load for edits outside software, warn of improper formatting
@@ -83,9 +84,11 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 - The note's front matter records `type:`, so a note moved to another folder still knows its type.
 - The `name` field is the filename (`The One Ring.md`). The tree shows names without `.md`, like Windows Explorer, unless View > Show File Extensions is on.
 - Front matter keys and `##` sections the type doesn't know about become fields of that note only (the main pane's + adds one; each has a Remove button). Values that can't be a field (nested lists or maps) and text before the first section are kept and shown in an "Other" area. Saving never drops data added in Obsidian or another editor.
+- Any field except `name` can be removed from a single note: the note's front matter lists it under `removed_fields`, and the main pane's + offers to bring it back.
 - A folder with no `_type.yaml` is a plain Markdown folder.
 - Later:
   - Subfolders inherit their parent's type unless they have their own `_type.yaml`.
+  - A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note. The Quest type uses it so a step can be another quest, building quest lines (a Big Quest made of smaller quests).
   - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
   - Campaign templates: New Campaign offers templates (e.g. D&D, Shadowdark, Cyberpunk) that set up folders and types. Templates are shareable files, so GMs can build their own and give them to friends.
 
@@ -98,6 +101,7 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
   - save map generators for later in development
 - Quest Tracker
   - build quests
+  - quests have steps or actions, and a step can be another quest, so a big quest is made of smaller quests (quest lines)
   - suggest story outlines (don't generate them, but offer suggestions for inspiration and building things out)
 - World and Lore management
   - This is the wiki-interface of the markdown files

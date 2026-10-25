@@ -17,6 +17,14 @@ use crate::style;
 use crate::theme::Colors;
 use crate::types::{ContentType, Field, Kind, Width};
 
+/// The front matter key listing the type's fields this note doesn't use.
+pub const REMOVED_KEY: &str = "removed_fields";
+
+/// Whether front matter `key` is one the form manages itself, rather than a field.
+fn is_reserved(key: &str) -> bool {
+    key == "type" || key == REMOVED_KEY
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Text(usize, String),
@@ -24,7 +32,7 @@ pub enum Message {
     Check(usize, bool),
     Choice(usize, String),
     Other(text_editor::Action),
-    /// Removes a field this note has on its own.
+    /// Removes a field from this note.
     Remove(usize),
 }
 
@@ -53,6 +61,8 @@ pub struct Form {
     fields: Vec<Field>,
     /// The index in `fields` where this note's own fields start.
     own: usize,
+    /// The keys of the type's fields this note doesn't use, in the type's order.
+    removed: Vec<String>,
     /// One input per field, in the same order.
     inputs: Vec<Input>,
     /// The note's front matter as it was read, so keys stay in place when saved.
@@ -71,13 +81,34 @@ impl Form {
 
     pub fn from_note(ty: ContentType, note: Note) -> Self {
         let mut sections: Vec<Option<Section>> = note.sections.into_iter().map(Some).collect();
-        let mut fields = ty.fields.clone();
+
+        let removed_keys: Vec<String> = match note.front.get(REMOVED_KEY) {
+            Some(Value::Sequence(keys)) => keys.iter().map(note::value_to_text).collect(),
+            Some(Value::String(key)) => vec![key.clone()],
+            _ => Vec::new(),
+        };
+        // The name can't be removed: it is the note's filename.
+        let removed: Vec<String> = ty
+            .fields
+            .iter()
+            .filter(|field| field.key != "name" && removed_keys.contains(&field.key))
+            .map(|field| field.key.clone())
+            .collect();
+
+        let mut fields: Vec<Field> = ty
+            .fields
+            .iter()
+            .filter(|field| !removed.contains(&field.key))
+            .cloned()
+            .collect();
         let own = fields.len();
 
         // Front matter keys the type doesn't list become fields of this note, if they can be edited as one.
         for (key, value) in &note.front {
             let key = note::value_to_text(key);
-            let listed = key == "type" || fields.iter().any(|field| field.key == key);
+            let listed = is_reserved(&key)
+                || ty.fields.iter().any(|field| field.key == key)
+                || fields.iter().any(|field| field.key == key);
             if let (false, Some(kind)) = (listed, kind_of(value)) {
                 fields.push(Field::for_note(&key, kind));
             }
@@ -125,6 +156,7 @@ impl Form {
             ty,
             fields,
             own,
+            removed,
             inputs,
             other: text_editor::Content::with_text(&note.preamble),
             show_other: false,
@@ -168,25 +200,79 @@ impl Form {
                 return edited;
             }
             Message::Remove(index) => {
-                if index < self.own || index >= self.fields.len() {
+                if !self.can_remove(index) {
                     return false;
                 }
                 let field = self.fields.remove(index);
                 self.inputs.remove(index);
                 self.front.shift_remove(field.key.as_str());
+
+                if index < self.own {
+                    self.own -= 1;
+                    self.removed.push(field.key);
+                    // Keep the type's order, so the list in the file doesn't depend on removal order.
+                    let order = |key: &String| self.ty.fields.iter().position(|f| f.key == *key);
+                    self.removed.sort_by_key(order);
+                }
             }
         }
         true
     }
 
+    /// Whether field `index` can be removed from this note: any but the name.
+    fn can_remove(&self, index: usize) -> bool {
+        index < self.fields.len() && !(index < self.own && self.fields[index].key == "name")
+    }
+
+    /// The labels of the type's fields this note doesn't use.
+    pub fn removed_labels(&self) -> Vec<String> {
+        self.removed
+            .iter()
+            .filter_map(|key| self.ty.fields.iter().find(|field| field.key == *key))
+            .map(Field::label)
+            .collect()
+    }
+
     /// Adds a field to this note only.
+    ///
+    /// If one of the type's fields that was removed from this note has that name, it comes back instead.
     pub fn add_field(&mut self, label: &str, kind: Kind) -> Result<(), String> {
         let label = label.trim();
         if label.is_empty() {
             return Err("Give the field a name".into());
         }
 
-        let taken = label.eq_ignore_ascii_case("type")
+        if let Some(position) = self.removed.iter().position(|key| {
+            self.ty.fields.iter().any(|field| {
+                field.key == *key
+                    && (field.key.eq_ignore_ascii_case(label)
+                        || field.label().eq_ignore_ascii_case(label))
+            })
+        }) {
+            let key = self.removed.remove(position);
+            let field = self
+                .ty
+                .fields
+                .iter()
+                .find(|field| field.key == key)
+                .cloned()
+                .expect("removed keys are the type's");
+
+            // Put it back where the type lists it, among the type's fields still here.
+            let type_order = |key: &str| self.ty.fields.iter().position(|f| f.key == key);
+            let target = type_order(&key);
+            let index = self.fields[..self.own]
+                .iter()
+                .position(|f| type_order(&f.key) > target)
+                .unwrap_or(self.own);
+
+            self.inputs.insert(index, Input::empty(field.kind));
+            self.fields.insert(index, field);
+            self.own += 1;
+            return Ok(());
+        }
+
+        let taken = is_reserved(label)
             || self.fields.iter().any(|field| {
                 field.key.eq_ignore_ascii_case(label) || field.label().eq_ignore_ascii_case(label)
             })
@@ -205,7 +291,10 @@ impl Form {
 
     /// The note's name, from its `name` field, if the type has one and it is filled in.
     pub fn name(&self) -> Option<String> {
-        match self.inputs.get(self.ty.name_field()?) {
+        let index = self.fields[..self.own]
+            .iter()
+            .position(|field| field.key == "name")?;
+        match self.inputs.get(index) {
             Some(Input::Text(name)) if !name.trim().is_empty() => Some(name.trim().to_string()),
             _ => None,
         }
@@ -224,7 +313,7 @@ impl Form {
             .iter()
             .filter_map(|(key, value)| {
                 let key = note::value_to_text(key);
-                let covered = key == "type" || self.front_field(&key).is_some();
+                let covered = is_reserved(&key) || self.front_field(&key).is_some();
                 (!covered).then(|| (key, note::value_to_text(value)))
             })
             .collect()
@@ -273,11 +362,17 @@ impl Form {
     pub fn to_markdown(&self) -> Result<String, String> {
         let mut front = Mapping::new();
         front.insert("type".into(), self.ty.id.clone().into());
+        if !self.removed.is_empty() {
+            front.insert(
+                REMOVED_KEY.into(),
+                Value::Sequence(self.removed.iter().map(|key| key.as_str().into()).collect()),
+            );
+        }
 
         // Keep the keys that were already there in their order, updating the ones the form edits.
         for (key, value) in &self.front {
             let name = note::value_to_text(key);
-            if name == "type" {
+            if is_reserved(&name) {
                 continue;
             }
             match self.front_field(&name) {
@@ -336,11 +431,10 @@ impl Form {
             text_editor::Binding::from_key_press(key_press)
         };
 
-        let own = self.own;
-        // A field's label, with a button to remove it if only this note has it.
+        // A field's label, with a button to remove the field from this note.
         let label = move |index: usize, label: String| -> Element<'a, M> {
             let label = text(label).size(14).color(c.text);
-            if index < own {
+            if !self.can_remove(index) {
                 return label.into();
             }
             row![
@@ -399,11 +493,7 @@ impl Form {
                                 .label(field.label())
                                 .on_toggle(move |value| map(Message::Check(index, value)))
                                 .style(style::check(c));
-                            let header: Element<'a, M> = if index < own {
-                                space().height(20).into()
-                            } else {
-                                label(index, String::new())
-                            };
+                            let header = label(index, String::new());
                             column![header, check].spacing(6).into()
                         }
                         Input::Long(content) => column![
@@ -602,8 +692,44 @@ mod tests {
             "---\ntype: item\n---\n\n## Lore\n"
         );
 
-        // The type's own fields can't be removed.
+        // The name can't be removed: it is the filename.
         assert!(!again.update(Message::Remove(0)));
+    }
+
+    #[test]
+    fn removes_and_restores_the_types_fields() {
+        let mut form = Form::blank(item_type());
+        let keys = |form: &Form| -> Vec<String> {
+            form.fields.iter().map(|field| field.key.clone()).collect()
+        };
+
+        // Remove Stats, then Value; the file lists them in the type's order.
+        form.update(Message::Remove(5));
+        form.update(Message::Remove(1));
+        assert_eq!(keys(&form), ["name", "rarity", "owner", "history"]);
+        assert_eq!(form.removed_labels(), ["Value", "Stats"]);
+
+        let text = form.to_markdown().unwrap();
+        assert_eq!(
+            text,
+            "---\ntype: item\nremoved_fields:\n- value\n- stats\n---\n"
+        );
+
+        // Reopened, the note still doesn't have them.
+        let mut again = Form::from_note(item_type(), note::parse(&text).unwrap());
+        assert_eq!(keys(&again), ["name", "rarity", "owner", "history"]);
+
+        // Adding one by name brings it back in its place, whatever kind is asked for.
+        again.add_field("value", Kind::Checkbox).unwrap();
+        assert_eq!(
+            keys(&again),
+            ["name", "value", "rarity", "owner", "history"]
+        );
+        assert_eq!(again.fields[1].kind, Kind::Text);
+        assert_eq!(
+            again.to_markdown().unwrap(),
+            "---\ntype: item\nremoved_fields:\n- stats\n---\n"
+        );
     }
 
     #[test]
