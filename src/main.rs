@@ -8,6 +8,7 @@ mod settings;
 mod style;
 mod theme;
 mod types;
+mod types_editor;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -116,6 +117,8 @@ enum Dialog {
         template: Template,
         error: Option<String>,
     },
+    /// Edit > Types: changes the fields of every folder's type.
+    Types(types_editor::Editor),
 }
 
 /// A content type a new folder can start with.
@@ -250,6 +253,8 @@ enum Message {
     NewFolderTemplate(Template),
     CreateFolder,
     CloseDialog,
+    ShowTypes,
+    Types(types_editor::Message),
     OpenEntry(PathBuf),
     RefreshTree,
     SelectTab(u64),
@@ -629,7 +634,7 @@ impl App {
                     ),
                 ),
                 Entry::Separator,
-                item("Types... (coming soon)", None),
+                item("Types...", Some(Message::ShowTypes)),
             ],
             Menu::View => {
                 let mut entries = vec![Entry::Heading("Theme".into())];
@@ -712,6 +717,26 @@ impl Workspace {
     fn rescan(&mut self) {
         self.tree = campaign::scan(&self.root);
         self.types = load_types(&self.root, &self.tree);
+    }
+
+    /// Rebuilds the form of every open note without unsaved changes, so it shows its new type.
+    ///
+    /// Notes with unsaved changes keep the old fields until they are reopened.
+    fn reload_forms(&mut self) {
+        for index in 0..self.tabs.len() {
+            let tab = &self.tabs[index];
+            let (Some(path), false) = (tab.path.clone(), tab.modified) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if let Ok(form) = self.form_for(&path, &text) {
+                let tab = &mut self.tabs[index];
+                tab.content = text_editor::Content::with_text(&text);
+                tab.form = form;
+            }
+        }
     }
 
     /// Adds a tab and shows it.
@@ -915,6 +940,10 @@ impl Workspace {
     }
 
     fn dialog_view<'a>(&'a self, c: Colors, dialog: &'a Dialog) -> Element<'a, Message> {
+        if let Dialog::Types(editor) = dialog {
+            return editor.view(c).map(Message::Types);
+        }
+
         let label = |label| text(label).size(13).color(c.text_muted);
 
         let (title, fields, error, confirm, on_confirm): (_, Element<'a, Message>, _, _, _) =
@@ -980,7 +1009,7 @@ impl Workspace {
                             .width(Fill)
                             .style(style::choice(c))
                             .menu_style(style::choice_menu(c)),
-                            text("Picking a type gives every note in the folder its fields. You can change them later in the folder's _type.yaml.")
+                            text("Picking a type gives every note in the folder its fields. You can change them later in Edit > Types.")
                                 .size(12)
                                 .color(c.text_muted),
                         ]
@@ -992,6 +1021,7 @@ impl Workspace {
                     "Create",
                     Message::CreateFolder,
                 ),
+                Dialog::Types(_) => unreachable!("the types dialog has its own view"),
             };
 
         let mut content = column![text(title).size(22).color(c.text), fields].spacing(16);
@@ -1156,6 +1186,44 @@ impl Workspace {
             }
             Message::CloseDialog => {
                 self.dialog = None;
+                Task::none()
+            }
+            Message::ShowTypes => {
+                let mut folders = Vec::new();
+                collect_folders(&self.tree, &mut folders);
+                let mut editor = types_editor::Editor::new(&self.root, &folders, &self.types);
+                if let Some(tab) = self.active_tab() {
+                    editor.select(&tab.folder);
+                }
+                self.dialog = Some(Dialog::Types(editor));
+                Task::none()
+            }
+            Message::Types(types_editor::Message::Cancel) => {
+                self.dialog = None;
+                Task::none()
+            }
+            Message::Types(types_editor::Message::Save) => {
+                let Some(Dialog::Types(editor)) = &mut self.dialog else {
+                    return Task::none();
+                };
+                match editor.save() {
+                    Ok(saved) => {
+                        self.dialog = None;
+                        self.rescan();
+                        self.reload_forms();
+                        self.status = match saved.len() {
+                            1 => format!("Saved the type of {}", self.relative(&saved[0])),
+                            count => format!("Saved the types of {count} folders"),
+                        };
+                    }
+                    Err(message) => editor.error = Some(message),
+                }
+                Task::none()
+            }
+            Message::Types(message) => {
+                if let Some(Dialog::Types(editor)) = &mut self.dialog {
+                    editor.update(message);
+                }
                 Task::none()
             }
             Message::Form(message) => {
@@ -1487,6 +1555,16 @@ impl Workspace {
             .height(Fill)
             .style(style::editor(c))
             .into()
+    }
+}
+
+/// Lists every folder in the tree, parents before their subfolders.
+fn collect_folders(entries: &[Entry], folders: &mut Vec<PathBuf>) {
+    for entry in entries {
+        if let Some(children) = &entry.children {
+            folders.push(entry.path.clone());
+            collect_folders(children, folders);
+        }
     }
 }
 
