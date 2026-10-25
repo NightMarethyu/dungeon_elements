@@ -75,9 +75,12 @@ The Linux build has to be made on Linux. On Windows the easiest way is WSL with 
 
    ```sh
    sudo apt install -y libwayland-client0 libwayland-cursor0 libwayland-egl1 \
-     libxkbcommon0 libxkbcommon-x11-0 libegl1 libgl1 libvulkan1 mesa-vulkan-drivers
-   ./target/release/dungeon_elements
+     libxkbcommon0 libxkbcommon-x11-0 libegl1 libgl1 libvulkan1 mesa-vulkan-drivers \
+     libx11-6 libx11-xcb1 libxcursor1 libxrandr2 libxi6
+   WAYLAND_DISPLAY= ./target/release/dungeon_elements
    ```
+
+   The empty `WAYLAND_DISPLAY=` runs it through WSL's X11 display: WSL's own Wayland display drops the connection with this app (it prints `Io error: Broken pipe`). Real Linux desktops don't need this.
 
    These are only needed to run the app, not to build it, so the binary you package is the same either way.
 
