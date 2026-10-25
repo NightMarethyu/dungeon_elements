@@ -55,6 +55,29 @@ pub fn create(parent: &Path, title: &str, with_template: bool) -> Result<PathBuf
     Ok(root)
 }
 
+/// Creates a folder named `name` inside `root` and returns its path.
+///
+/// If `type_yaml` is given, it is written to the folder's `_type.yaml`.
+pub fn create_folder(root: &Path, name: &str, type_yaml: Option<&str>) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Give the folder a name".into());
+    }
+    validate_name(name)?;
+
+    let path = root.join(name);
+    if path.exists() {
+        return Err(format!("{name} already exists"));
+    }
+
+    fs::create_dir(&path).map_err(|error| error.to_string())?;
+    if let Some(yaml) = type_yaml {
+        fs::write(path.join(types::TYPE_FILE), yaml).map_err(|error| error.to_string())?;
+    }
+
+    Ok(path)
+}
+
 /// Checks that `name` can be used as a file or folder name on both Windows and Linux.
 pub fn validate_name(name: &str) -> Result<(), String> {
     const RESERVED: &[&str] = &[
@@ -194,6 +217,24 @@ mod tests {
         assert!(create(&parent, "Curse of the Lich", true).is_err());
 
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn creates_folders() {
+        let root = temp_folder("folders");
+
+        let factions = create_folder(&root, " factions ", Some("type: faction\n")).unwrap();
+        assert_eq!(factions, root.join("factions"));
+        assert!(types::load(&factions).unwrap().is_ok());
+
+        let notes = create_folder(&root, "notes", None).unwrap();
+        assert!(types::load(&notes).is_none());
+
+        assert!(create_folder(&root, "factions", None).is_err());
+        assert!(create_folder(&root, "", None).is_err());
+        assert!(create_folder(&root, "a/b", None).is_err());
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

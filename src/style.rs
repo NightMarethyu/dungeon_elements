@@ -343,3 +343,23 @@ pub fn choice_menu(c: Colors) -> impl Fn(&Theme) -> menu::Style {
         shadow: iced::Shadow::default(),
     }
 }
+
+/// The round + buttons in the corners of the sidebar and the form.
+pub fn round(c: Colors) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let (background, text_color) = match status {
+            button::Status::Hovered | button::Status::Pressed => (c.accent, c.accent_text),
+            _ => (c.field_background, c.text),
+        };
+
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color,
+            border: Border::default()
+                .color(c.text)
+                .width(c.border_width.max(1.0) + 1.0)
+                .rounded(24),
+            ..button::Style::default()
+        }
+    }
+}

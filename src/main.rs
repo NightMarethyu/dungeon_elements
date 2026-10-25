@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
-    Svg, button, center, checkbox, column, container, opaque, row, rule, scrollable, space, stack,
-    svg, text, text_editor, text_input,
+    Svg, button, center, checkbox, column, container, opaque, pick_list, row, rule, scrollable,
+    space, stack, svg, text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Subscription, Task, window};
 
@@ -74,6 +74,8 @@ impl Default for Screen {
 
 /// The widget id of the title field in the "New campaign" dialog.
 const TITLE_INPUT: &str = "new-campaign-title";
+/// The widget id of the name field in the workspace's dialogs.
+const DIALOG_INPUT: &str = "dialog-name";
 
 /// The fields of the "New campaign" dialog.
 struct NewCampaign {
@@ -96,6 +98,47 @@ struct Workspace {
     active: Option<u64>,
     next_id: u64,
     status: String,
+    /// The dialog open over the workspace, if any.
+    dialog: Option<Dialog>,
+}
+
+/// A dialog over the workspace.
+enum Dialog {
+    /// Adds a field to the note in the active tab only.
+    AddField {
+        label: String,
+        kind: types::Kind,
+        error: Option<String>,
+    },
+    /// Makes a folder at the top of the campaign, optionally with a content type.
+    NewFolder {
+        name: String,
+        template: Template,
+        error: Option<String>,
+    },
+}
+
+/// A content type a new folder can start with.
+#[derive(Debug, Clone, PartialEq)]
+struct Template {
+    label: String,
+    /// The `_type.yaml` to write, or `None` for a folder of plain notes.
+    yaml: Option<String>,
+}
+
+impl std::fmt::Display for Template {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+impl Template {
+    fn plain() -> Self {
+        Template {
+            label: "Plain notes (no fields)".into(),
+            yaml: None,
+        }
+    }
 }
 
 struct Tab {
@@ -197,6 +240,16 @@ enum Message {
     NewNoteIn(PathBuf),
     Form(form::Message),
     ToggleSource,
+    ShowAddField,
+    AddFieldLabel(String),
+    AddFieldKind(types::Kind),
+    AddField,
+    RestoreField(String),
+    ShowNewFolder,
+    NewFolderName(String),
+    NewFolderTemplate(Template),
+    CreateFolder,
+    CloseDialog,
     OpenEntry(PathBuf),
     RefreshTree,
     SelectTab(u64),
@@ -341,10 +394,10 @@ impl App {
         match message {
             Message::CloseMenu => return Task::none(),
             Message::Escape => {
-                if let Screen::Splash { new_campaign, .. } = &mut self.screen
-                    && !self.about
-                {
-                    *new_campaign = None;
+                match &mut self.screen {
+                    Screen::Splash { new_campaign, .. } if !self.about => *new_campaign = None,
+                    Screen::Workspace(workspace) if !self.about => workspace.dialog = None,
+                    _ => {}
                 }
                 self.about = false;
                 return Task::none();
@@ -511,6 +564,12 @@ impl App {
             view = modal(view, new_campaign_dialog(c, form));
         }
 
+        if let Screen::Workspace(workspace) = &self.screen
+            && let Some(dialog) = &workspace.dialog
+        {
+            view = modal(view, workspace.dialog_view(c, dialog));
+        }
+
         if self.about {
             view = modal(view, about_dialog(c, &self.logos.1));
         }
@@ -543,6 +602,7 @@ impl App {
             Menu::File => match workspace {
                 Some(_) => vec![
                     item("New Note", Some(Message::NewNote)).shortcut("Ctrl+N"),
+                    item("New Folder...", Some(Message::ShowNewFolder)),
                     item("Open File...", Some(Message::OpenFile)).shortcut("Ctrl+O"),
                     Entry::Separator,
                     item("Save", when(has_tab, Message::Save)).shortcut("Ctrl+S"),
@@ -560,7 +620,17 @@ impl App {
                     item("Exit", Some(Message::Exit)),
                 ],
             },
-            Menu::Edit => vec![item("Types... (coming soon)", None)],
+            Menu::Edit => vec![
+                item(
+                    "Add Field to This Note...",
+                    when(
+                        active_tab.is_some_and(Tab::shows_form),
+                        Message::ShowAddField,
+                    ),
+                ),
+                Entry::Separator,
+                item("Types... (coming soon)", None),
+            ],
             Menu::View => {
                 let mut entries = vec![Entry::Heading("Theme".into())];
                 entries.extend(self.themes.iter().enumerate().map(|(index, theme)| {
@@ -611,6 +681,7 @@ impl Workspace {
             tabs: Vec::new(),
             active: None,
             next_id: 0,
+            dialog: None,
         }
     }
 
@@ -779,6 +850,176 @@ impl Workspace {
         })
     }
 
+    /// The types a new folder can start with: none, the default template's, and the campaign's own.
+    fn templates(&self) -> Vec<Template> {
+        let mut templates = vec![Template::plain()];
+
+        let starters = types::STARTER_TYPES.iter().filter_map(|(_, yaml)| {
+            let ty = types::parse(yaml).ok()?;
+            Some((ty.id.clone(), ty.label(), yaml.to_string()))
+        });
+
+        let mut folders: Vec<_> = self.types.keys().collect();
+        folders.sort();
+        let campaign = folders.into_iter().filter_map(|folder| {
+            let ty = self.types.get(folder)?.as_ref().ok()?;
+            let yaml = std::fs::read_to_string(folder.join(types::TYPE_FILE)).ok()?;
+            Some((ty.id.clone(), ty.label(), yaml))
+        });
+
+        // The campaign's own version of a type wins over the default one with the same id.
+        let mut seen: Vec<(String, Template)> = Vec::new();
+        for (id, label, yaml) in campaign.chain(starters) {
+            if seen.iter().all(|(other, _)| *other != id) {
+                seen.push((
+                    id,
+                    Template {
+                        label,
+                        yaml: Some(yaml),
+                    },
+                ));
+            }
+        }
+        seen.sort_by(|a, b| a.1.label.cmp(&b.1.label));
+        templates.extend(seen.into_iter().map(|(_, template)| template));
+        templates
+    }
+
+    /// Buttons to bring back the type's fields that were removed from the note in the active tab.
+    fn removed_fields<'a>(&self, c: Colors) -> Element<'a, Message> {
+        let removed = self
+            .active_tab()
+            .and_then(|tab| tab.form.as_ref())
+            .map(Form::removed_labels)
+            .unwrap_or_default();
+
+        if removed.is_empty() {
+            return space().height(0).into();
+        }
+
+        let buttons = removed.into_iter().map(|label| {
+            button(text(label.clone()).size(13))
+                .style(style::secondary(c))
+                .on_press(Message::RestoreField(label))
+                .into()
+        });
+
+        column![
+            text("Bring back a field this note doesn't use")
+                .size(13)
+                .color(c.text_muted),
+            row(buttons).spacing(6).wrap(),
+        ]
+        .spacing(6)
+        .into()
+    }
+
+    fn dialog_view<'a>(&'a self, c: Colors, dialog: &'a Dialog) -> Element<'a, Message> {
+        let label = |label| text(label).size(13).color(c.text_muted);
+
+        let (title, fields, error, confirm, on_confirm): (_, Element<'a, Message>, _, _, _) =
+            match dialog {
+                Dialog::AddField { label: name, kind, error } => (
+                    "Add a field to this note",
+                    column![
+                        self.removed_fields(c),
+                        column![
+                            label("Name"),
+                            text_input("Durability", name)
+                                .id(DIALOG_INPUT)
+                                .on_input(Message::AddFieldLabel)
+                                .on_submit(Message::AddField)
+                                .padding(8)
+                                .style(style::input(c)),
+                        ]
+                        .spacing(4),
+                        column![
+                            label("Kind"),
+                            pick_list(types::Kind::FOR_NOTE, Some(*kind), Message::AddFieldKind)
+                                .padding(8)
+                                .width(Fill)
+                                .style(style::choice(c))
+                                .menu_style(style::choice_menu(c)),
+                        ]
+                        .spacing(4),
+                        text("Only this note gets the field. To give every note in the folder a field, edit the folder's type. Any field can be removed from a note with its Remove button.")
+                            .size(12)
+                            .color(c.text_muted),
+                    ]
+                    .spacing(16)
+                    .into(),
+                    error,
+                    "Add",
+                    Message::AddField,
+                ),
+                Dialog::NewFolder {
+                    name,
+                    template,
+                    error,
+                } => (
+                    "New folder",
+                    column![
+                        column![
+                            label("Name"),
+                            text_input("factions", name)
+                                .id(DIALOG_INPUT)
+                                .on_input(Message::NewFolderName)
+                                .on_submit(Message::CreateFolder)
+                                .padding(8)
+                                .style(style::input(c)),
+                        ]
+                        .spacing(4),
+                        column![
+                            label("Notes in this folder"),
+                            pick_list(
+                                self.templates(),
+                                Some(template.clone()),
+                                Message::NewFolderTemplate
+                            )
+                            .padding(8)
+                            .width(Fill)
+                            .style(style::choice(c))
+                            .menu_style(style::choice_menu(c)),
+                            text("Picking a type gives every note in the folder its fields. You can change them later in the folder's _type.yaml.")
+                                .size(12)
+                                .color(c.text_muted),
+                        ]
+                        .spacing(4),
+                    ]
+                    .spacing(16)
+                    .into(),
+                    error,
+                    "Create",
+                    Message::CreateFolder,
+                ),
+            };
+
+        let mut content = column![text(title).size(22).color(c.text), fields].spacing(16);
+
+        if let Some(error) = error {
+            content = content.push(text(error).size(13).color(c.danger));
+        }
+
+        content = content.push(
+            row![
+                space::horizontal(),
+                button("Cancel")
+                    .style(style::secondary(c))
+                    .on_press(Message::CloseDialog),
+                button(confirm)
+                    .style(style::primary(c))
+                    .on_press(on_confirm),
+            ]
+            .spacing(8),
+        );
+
+        container(content)
+            .width(440)
+            .padding(24)
+            .style(style::dialog(c))
+            .into()
+    }
+
     /// Opens a new note in `folder`: a blank form if the folder has a content type.
     fn new_note_in(&mut self, folder: PathBuf) {
         let form = match self.types.get(&folder) {
@@ -819,6 +1060,102 @@ impl Workspace {
             }
             Message::NewNoteIn(folder) => {
                 self.new_note_in(folder);
+                Task::none()
+            }
+            Message::ShowAddField => {
+                if !self.active_tab().is_some_and(Tab::shows_form) {
+                    return Task::none();
+                }
+                self.dialog = Some(Dialog::AddField {
+                    label: String::new(),
+                    kind: types::Kind::Text,
+                    error: None,
+                });
+                iced::widget::operation::focus(DIALOG_INPUT)
+            }
+            Message::AddFieldLabel(value) => {
+                if let Some(Dialog::AddField { label, error, .. }) = &mut self.dialog {
+                    *label = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::AddFieldKind(value) => {
+                if let Some(Dialog::AddField { kind, .. }) = &mut self.dialog {
+                    *kind = value;
+                }
+                Task::none()
+            }
+            Message::AddField => {
+                let Some(Dialog::AddField { label, kind, error }) = &mut self.dialog else {
+                    return Task::none();
+                };
+                let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
+                    return Task::none();
+                };
+                let Some(form) = &mut tab.form else {
+                    return Task::none();
+                };
+
+                match form.add_field(label, *kind) {
+                    Ok(()) => {
+                        tab.modified = true;
+                        self.status = format!("Added the field {:?} to this note", label.trim());
+                        self.dialog = None;
+                    }
+                    Err(message) => *error = Some(message),
+                }
+                Task::none()
+            }
+            Message::RestoreField(name) => {
+                if let Some(Dialog::AddField { label, .. }) = &mut self.dialog {
+                    *label = name;
+                }
+                self.update(Message::AddField)
+            }
+            Message::ShowNewFolder => {
+                self.dialog = Some(Dialog::NewFolder {
+                    name: String::new(),
+                    template: Template::plain(),
+                    error: None,
+                });
+                iced::widget::operation::focus(DIALOG_INPUT)
+            }
+            Message::NewFolderName(value) => {
+                if let Some(Dialog::NewFolder { name, error, .. }) = &mut self.dialog {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::NewFolderTemplate(value) => {
+                if let Some(Dialog::NewFolder { template, .. }) = &mut self.dialog {
+                    *template = value;
+                }
+                Task::none()
+            }
+            Message::CreateFolder => {
+                let Some(Dialog::NewFolder {
+                    name,
+                    template,
+                    error,
+                }) = &mut self.dialog
+                else {
+                    return Task::none();
+                };
+
+                match campaign::create_folder(&self.root, name, template.yaml.as_deref()) {
+                    Ok(path) => {
+                        self.status = format!("Created the folder {}", self.relative(&path));
+                        self.dialog = None;
+                        self.rescan();
+                    }
+                    Err(message) => *error = Some(message),
+                }
+                Task::none()
+            }
+            Message::CloseDialog => {
+                self.dialog = None;
                 Task::none()
             }
             Message::Form(message) => {
@@ -991,7 +1328,11 @@ impl Workspace {
 
         container(column![
             header,
-            scrollable(container(tree).padding([0, 4])).height(Fill)
+            stack![
+                scrollable(column![tree, space().height(72)].padding([0, 4])).height(Fill),
+                corner_button(c, Message::ShowNewFolder),
+            ]
+            .height(Fill)
         ])
         .width(260)
         .height(Fill)
@@ -1121,11 +1462,12 @@ impl Workspace {
         if let Some(form) = &tab.form
             && !tab.source
         {
-            return container(form.view(c, Message::Form, shortcut))
+            let form = container(form.view(c, Message::Form, shortcut))
                 .width(Fill)
                 .height(Fill)
-                .style(style::panel(c.background))
-                .into();
+                .style(style::panel(c.background));
+
+            return stack![form, corner_button(c, Message::ShowAddField)].into();
         }
 
         text_editor(&tab.content)
@@ -1389,6 +1731,24 @@ fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
         .padding(24)
         .style(style::dialog(c))
         .into()
+}
+
+/// The round + button in the bottom right corner of a pane, like in the layout plan.
+fn corner_button<'a>(c: Colors, on_press: Message) -> Element<'a, Message> {
+    container(
+        button(text("+").size(28).center().width(Fill).height(Fill))
+            .width(48)
+            .height(48)
+            .padding(0)
+            .style(style::round(c))
+            .on_press(on_press),
+    )
+    .width(Fill)
+    .height(Fill)
+    .align_right(Fill)
+    .align_bottom(Fill)
+    .padding(16)
+    .into()
 }
 
 /// Shows `dialog` centered over a dimmed `base`, blocking clicks to `base`.

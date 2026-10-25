@@ -67,6 +67,18 @@ pub struct Field {
 }
 
 impl Field {
+    /// A field that only one note has, added from the form. Its key is its label.
+    pub fn for_note(label: &str, kind: Kind) -> Self {
+        Field {
+            key: label.to_string(),
+            label: Some(label.to_string()),
+            kind,
+            options: Vec::new(),
+            width: Width::Half,
+            folder: None,
+        }
+    }
+
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_else(|| title_case(&self.key))
     }
@@ -88,6 +100,34 @@ pub enum Kind {
     Checkbox,
     /// Markdown text, stored as a `## Label` section in the note's body.
     Longtext,
+}
+
+impl Kind {
+    /// The kinds a field added to a single note can have.
+    ///
+    /// A choice needs its options listed in the type, so it isn't one of them.
+    pub const FOR_NOTE: [Kind; 6] = [
+        Kind::Text,
+        Kind::Longtext,
+        Kind::Number,
+        Kind::Tags,
+        Kind::Link,
+        Kind::Checkbox,
+    ];
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Kind::Text => "Text (one line)",
+            Kind::Number => "Number",
+            Kind::Choice => "Choice",
+            Kind::Tags => "Tags",
+            Kind::Link => "Link to a note",
+            Kind::Checkbox => "Checkbox",
+            Kind::Longtext => "Long text",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
