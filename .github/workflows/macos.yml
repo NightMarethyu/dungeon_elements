@@ -1,0 +1,74 @@
+# Builds the macOS app, since it can only be built on a Mac.
+#
+# Runs when a version tag (like v0.1.0) is pushed, or by hand from the Actions tab
+# ("Run workflow"). The zipped app is attached to the run as an artifact; download
+# it and attach it to the GitHub release. See RELEASING.md.
+name: macOS build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  # Checks this workflow itself when it changes.
+  pull_request:
+    paths:
+      - .github/workflows/macos.yml
+      - assets/macos/**
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust targets
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Test
+        run: cargo test
+
+      - name: Build for Apple silicon and Intel
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+
+      - name: Make Dungeon Elements.app
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
+          name="dungeon_elements-v$version-macos-universal"
+          app="dist/$name/Dungeon Elements.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+
+          # One binary that runs on both Apple silicon and Intel Macs.
+          lipo -create -output "$app/Contents/MacOS/dungeon_elements" \
+            target/aarch64-apple-darwin/release/dungeon_elements \
+            target/x86_64-apple-darwin/release/dungeon_elements
+
+          sed "s/@VERSION@/$version/g" assets/macos/Info.plist > "$app/Contents/Info.plist"
+
+          iconset=dist/dungeon_elements.iconset
+          mkdir -p "$iconset"
+          for size in 16 32 128 256 512; do
+            sips -z $size $size assets/dungeon_elements-1024.png --out "$iconset/icon_${size}x${size}.png"
+            sips -z $((size * 2)) $((size * 2)) assets/dungeon_elements-1024.png --out "$iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/dungeon_elements.icns"
+
+          # An ad-hoc signature: not a Developer ID, but Apple silicon won't run unsigned apps at all.
+          codesign --force --deep --sign - "$app"
+
+          cp README.md CHANGELOG.md LICENSE "dist/$name/"
+          ditto -c -k --keepParent "dist/$name" "dist/$name.zip"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist/${{ env.NAME }}.zip
+          if-no-files-found: error

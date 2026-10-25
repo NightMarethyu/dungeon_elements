@@ -32,7 +32,7 @@ The suite will also include drawing tools and generators to allow the Game Maste
 - [x] Real menu bar (File, Edit, View, Help) with the logo, replacing the button row
 - [x] Customizable color themes (see [Themes](#themes)), Dark by default
 - [x] View menu toggles: show file extensions, show `_type.yaml` files (editable in the app's text editor)
-- [ ] YAML metadata for formatting and to ensure links and other data work consistently
+- [x] YAML metadata for formatting and to ensure links and other data work consistently
   - [x] Folder content types defined in `_type.yaml` (see [Content types](#content-types))
   - [x] Notes in a typed folder open as a form; raw Markdown is one toggle away (View > Show Markdown Source, Ctrl+E)
   - [x] New campaigns get a `_type.yaml` in each starter folder (from `templates/default/`)
@@ -41,7 +41,9 @@ The suite will also include drawing tools and generators to allow the Game Maste
   - [x] Any field except the name can be removed from a single note (listed in the note's `removed_fields`); the main pane's + brings it back
   - [x] Big + in the sidebar makes a new folder, offering a default type template
   - [x] Edit > Types dialog: folders on the left, their type's fields on the right; add, remove and reorder fields, set their name, key, kind, width and options, and give an untyped folder a type (saving rewrites `_type.yaml` without its comments)
-- [ ] Check files on load for edits outside software, warn of improper formatting
+- [x] Check files on load for edits outside software, warn of improper formatting
+  - [x] Opening or refreshing a campaign checks every note and `_type.yaml`: broken front matter, values that don't fit their field (a word in a number field, a choice that isn't an option), longtext fields stored in the front matter, repeated sections, unknown `type:`s, and nested YAML the form can't show. Files with problems get a ⚠ in the tree, and the status bar's ⚠ lists them; nothing is changed
+  - [x] Coming back to the window notices files changed in another app: open tabs without unsaved changes reload, and tabs with unsaved changes ask whether to reload or keep your version. Saving never overwrites an outside edit without asking
 
 ### Phase 1: inciting incident
 
@@ -66,7 +68,7 @@ Stretch goal:
 
 ## Design
 
-The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo in `reference/dungeon_elements.svg`. The reference is drawn in black and white for contrast only; the app is themed.
+The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo in `reference/dungeon_elements.svg`. The reference is drawn in black and white for contrast only; the app is themed. The colored logo, `reference/dungeon_elements_colors.svg`, is the app icon (window, taskbar, and the Windows `.exe`, from `assets/dungeon_elements.ico`).
 
 ### Themes
 

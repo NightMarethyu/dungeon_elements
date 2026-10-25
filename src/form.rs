@@ -21,7 +21,7 @@ use crate::types::{ContentType, Field, Kind, Width};
 pub const REMOVED_KEY: &str = "removed_fields";
 
 /// Whether front matter `key` is one the form manages itself, rather than a field.
-fn is_reserved(key: &str) -> bool {
+pub fn is_reserved(key: &str) -> bool {
     key == "type" || key == REMOVED_KEY
 }
 
@@ -575,7 +575,7 @@ impl Form {
 }
 
 /// The kind of field that can edit a front matter value, or `None` for nested values.
-fn kind_of(value: &Value) -> Option<Kind> {
+pub fn kind_of(value: &Value) -> Option<Kind> {
     match value {
         Value::Bool(_) => Some(Kind::Checkbox),
         Value::Number(_) => Some(Kind::Number),
@@ -601,7 +601,7 @@ fn pair<'a, M: 'a>(left: Element<'a, M>, right: Element<'a, M>) -> Element<'a, M
         .into()
 }
 
-fn parse_number(text: &str) -> Option<Value> {
+pub fn parse_number(text: &str) -> Option<Value> {
     if let Ok(integer) = text.parse::<i64>() {
         return Some(Value::from(integer));
     }

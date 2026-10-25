@@ -54,6 +54,20 @@ pub fn dialog(c: Colors) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// A notice across the top of the editor, like a file that changed outside the app.
+pub fn banner(c: Colors) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        container::Style::default()
+            .background(c.field_background)
+            .color(c.text)
+            .border(
+                Border::default()
+                    .color(c.warning)
+                    .width(c.border_width.max(1.0)),
+            )
+    }
+}
+
 /// An open dropdown menu.
 pub fn dropdown(c: Colors) -> impl Fn(&Theme) -> container::Style {
     move |_| {
