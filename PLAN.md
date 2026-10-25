@@ -29,7 +29,15 @@ The suite will also include drawing tools and generators to allow the Game Maste
 - [x] Save folder structure for campaigns
   - campaigns have locations, quests, npcs, players, items, lore, etc.
 - [x] Different folders represent different campaigns, GM can open a folder and their campaign is there
+- [ ] Real menu bar (File, Edit, View, Help) with the logo, replacing the button row
+- [ ] Customizable color themes (see [Themes](#themes)), Dark by default
+- [ ] View menu toggles: show file extensions, show `_type.yaml` files (editable in the app's text editor)
 - [ ] YAML metadata for formatting and to ensure links and other data work consistently
+  - [ ] Folder content types defined in `_type.yaml` (see [Content types](#content-types))
+  - [ ] Notes in a typed folder open as a form; raw Markdown is one toggle away
+  - [ ] + on a folder makes a new note of its type; + in the main pane adds a field to that note only
+  - [ ] Big + in the sidebar makes a new folder, offering a default type template
+  - [ ] Edit > Types dialog: types on the left, their fields on the right, add/remove fields and set their kind
 - [ ] Check files on load for edits outside software, warn of improper formatting
 
 ### Phase 1: inciting incident
@@ -52,6 +60,32 @@ Stretch goal:
 - [ ] Add tools for generators
   - [ ] name generators
   - [ ] roll table generators
+
+## Design
+
+The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo in `reference/dungeon_elements.svg`. The reference is drawn in black and white for contrast only; the app is themed.
+
+### Themes
+
+- A theme is a YAML file that sets a color for each named role (background, sidebar, menu bar, tabs, borders, text, fields, accent, status bar, and so on). Any role left out falls back to the theme's `base` (dark or light).
+- Built-in themes ship with the app (the YAML lives in `themes/`): Dark (the default) and High Contrast (the reference drawing). More built-in themes later.
+- User themes are YAML files in the app's config folder (`%APPDATA%\dungeon_elements\themes` on Windows, `~/.config/dungeon_elements/themes` on Linux) and appear under View > Theme. A broken theme file is skipped with a warning, never a crash.
+- The logo is recolored to match the theme (black becomes the text color, white the background).
+- Later: a theme editor with a color picker per role and live preview.
+
+### Content types
+
+- Each folder can hold a `_type.yaml` that defines the fields every note in that folder has. One type per folder.
+- Field kinds: `text`, `number`, `choice` (with `options`), `tags`, `link` (an Obsidian `[[link]]`), `checkbox`, and `longtext`.
+- Short fields are stored in the note's YAML front matter. `longtext` fields are stored as `## Label` sections in the Markdown body, so notes stay readable in Obsidian.
+- The note's front matter records `type:`, so a note moved to another folder still knows its type.
+- The `name` field is the filename (`The One Ring.md`). The tree shows names without `.md`, like Windows Explorer, unless View > Show File Extensions is on.
+- Front matter keys and body text the type doesn't know about are kept and shown in an "Other" area. Saving never drops data added in Obsidian or another editor.
+- A folder with no `_type.yaml` is a plain Markdown folder.
+- Later:
+  - Subfolders inherit their parent's type unless they have their own `_type.yaml`.
+  - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
+  - Campaign templates: New Campaign offers templates (e.g. D&D, Shadowdark, Cyberpunk) that set up folders and types. Templates are shareable files, so GMs can build their own and give them to friends.
 
 ## Planned features
 

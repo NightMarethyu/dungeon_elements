@@ -15,7 +15,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 ---
 
 > [!NOTE]
-> Dungeon Elements is in **early development**. When it starts, you can open a campaign folder or create a new one (optionally with a starter set of folders). Inside a campaign, a collapsible file tree on the left lists your folders and Markdown (`.md`) files, and each file you open gets its own tab. Shortcuts: **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), and **Close Tab** (Ctrl+W). The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
+> Dungeon Elements is in **early development**. When it starts, you can open a campaign folder or create a new one (optionally with a starter set of folders). Inside a campaign, a collapsible file tree on the left lists your folders and Markdown (`.md`) files, and each file you open gets its own tab. Everything is in the **File**, **Edit**, **View**, and **Help** menus, with shortcuts for **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), and **Close Tab** (Ctrl+W). **View** picks a color theme (Dark or High Contrast, or your own; see [Themes](#themes)) and can show file extensions and folders' `.yaml` type files. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
 
 ## Why Dungeon Elements?
 
@@ -67,6 +67,15 @@ Dungeon Elements is **not** a virtual tabletop and has no multiplayer sync. It's
 - 📓 **Solo journaling:** built-in dice rollers and a side-by-side view of your journal with lore, rules, or roll tables
 
 See [PLAN.md](PLAN.md) for the full plan and checklists.
+
+## Themes
+
+Every color in the app comes from a theme. To make your own, copy [`themes/dark.yaml`](themes/dark.yaml), change its `name` and colors, and save it in your themes folder:
+
+- Windows: `%APPDATA%\dungeon_elements\themes`
+- Linux: `~/.config/dungeon_elements/themes`
+
+Then choose **View > Reload Themes** and pick it from the **View** menu. Any color you leave out comes from Dark (`base: dark`) or High Contrast (`base: light`). **Help > About** shows where your themes folder is.
 
 ## Building
 

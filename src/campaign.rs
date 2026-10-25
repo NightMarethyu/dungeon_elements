@@ -69,7 +69,7 @@ pub fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A folder or Markdown file inside a campaign.
+/// A folder, Markdown file, or YAML file inside a campaign.
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub path: PathBuf,
@@ -78,7 +78,7 @@ pub struct Entry {
     pub children: Option<Vec<Entry>>,
 }
 
-/// Lists the folders and Markdown files under `folder`, folders first, sorted by name.
+/// Lists the folders, Markdown files, and YAML files under `folder`, folders first, sorted by name.
 ///
 /// Hidden entries (such as `.obsidian` or `.git`) are skipped.
 pub fn scan(folder: &Path) -> Vec<Entry> {
@@ -103,7 +103,7 @@ pub fn scan(folder: &Path) -> Vec<Entry> {
                     name,
                     children,
                 })
-            } else if is_markdown(&path) {
+            } else if is_markdown(&path) || is_yaml(&path) {
                 Some(Entry {
                     path,
                     name,
@@ -128,6 +128,13 @@ pub fn scan(folder: &Path) -> Vec<Entry> {
 pub fn is_markdown(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+}
+
+/// Whether `path` has a `.yaml` or `.yml` extension, like a folder's `_type.yaml`.
+pub fn is_yaml(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
+    })
 }
 
 #[cfg(test)]
@@ -179,18 +186,19 @@ mod tests {
     }
 
     #[test]
-    fn scans_folders_first_and_only_markdown() {
+    fn scans_folders_first_and_only_markdown_and_yaml() {
         let root = temp_folder("scan");
         fs::create_dir(root.join("npcs")).unwrap();
         fs::create_dir(root.join(".obsidian")).unwrap();
         fs::write(root.join("npcs").join("Mira.md"), "").unwrap();
         fs::write(root.join("Aardvark.md"), "").unwrap();
         fs::write(root.join("map.png"), "").unwrap();
+        fs::write(root.join("_type.yaml"), "").unwrap();
 
         let entries = scan(&root);
         let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
 
-        assert_eq!(names, ["npcs", "Aardvark.md"]);
+        assert_eq!(names, ["npcs", "_type.yaml", "Aardvark.md"]);
         assert_eq!(entries[0].children.as_ref().unwrap()[0].name, "Mira.md");
 
         fs::remove_dir_all(root).unwrap();
