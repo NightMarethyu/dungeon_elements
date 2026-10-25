@@ -1,0 +1,18 @@
+type: player
+label: Player Character
+fields:
+  - key: name
+    label: Character name
+  - key: player
+    label: Player
+  - key: concept
+    label: Concept
+  - key: level
+    label: Level
+    kind: number
+  - key: backstory
+    label: Backstory
+    kind: longtext
+  - key: notes
+    label: Notes
+    kind: longtext

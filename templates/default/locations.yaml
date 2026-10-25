@@ -1,0 +1,21 @@
+type: location
+label: Location
+fields:
+  - key: name
+    label: Name
+  - key: kind
+    label: Kind
+    kind: choice
+    options: [World, Region, City, Town, Village, Building, Dungeon, Landmark, Other]
+  - key: part_of
+    label: Part of
+    kind: link
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: description
+    label: Description
+    kind: longtext
+  - key: secrets
+    label: Secrets
+    kind: longtext

@@ -1,7 +1,8 @@
 //! Widget styles. Every color comes from the active theme's [`Colors`].
 
 use iced::border::Radius;
-use iced::widget::{button, checkbox, container, rule, text_editor, text_input};
+use iced::overlay::menu;
+use iced::widget::{button, checkbox, container, pick_list, rule, text_editor, text_input};
 use iced::{Background, Border, Color, Theme};
 
 use crate::theme::Colors;
@@ -283,5 +284,62 @@ fn mix(a: Color, b: Color, amount: f32) -> Color {
         g: a.g + (b.g - a.g) * amount,
         b: a.b + (b.b - a.b) * amount,
         a: a.a,
+    }
+}
+
+/// A multi-line field in a form, outlined like a text input.
+pub fn field_editor(c: Colors) -> impl Fn(&Theme, text_editor::Status) -> text_editor::Style {
+    move |_, status| {
+        let border_color = match status {
+            text_editor::Status::Focused { .. } => c.accent,
+            _ => c.border,
+        };
+
+        text_editor::Style {
+            background: Background::Color(c.field_background),
+            border: Border::default()
+                .color(border_color)
+                .width(c.border_width.max(1.0))
+                .rounded(c.corner_radius.min(8.0)),
+            placeholder: c.text_muted,
+            value: c.text,
+            selection: with_alpha(c.accent, 0.35),
+        }
+    }
+}
+
+/// A dropdown field in a form, outlined like a text input.
+pub fn choice(c: Colors) -> impl Fn(&Theme, pick_list::Status) -> pick_list::Style {
+    move |_, status| {
+        let border_color = match status {
+            pick_list::Status::Opened { .. } => c.accent,
+            _ => c.border,
+        };
+
+        pick_list::Style {
+            text_color: c.text,
+            placeholder_color: c.text_muted,
+            handle_color: c.text,
+            background: Background::Color(c.field_background),
+            border: Border::default()
+                .color(border_color)
+                .width(c.border_width.max(1.0))
+                .rounded(c.corner_radius.min(8.0)),
+        }
+    }
+}
+
+/// The list of options under an open dropdown field.
+pub fn choice_menu(c: Colors) -> impl Fn(&Theme) -> menu::Style {
+    move |_| menu::Style {
+        background: Background::Color(c.menu),
+        border: Border::default()
+            .color(c.border)
+            .width(c.border_width.max(1.0))
+            .rounded(c.corner_radius.min(6.0)),
+        text_color: c.text,
+        selected_text_color: c.accent_text,
+        selected_background: Background::Color(c.accent),
+        shadow: iced::Shadow::default(),
     }
 }

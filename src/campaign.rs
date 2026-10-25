@@ -4,16 +4,30 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::types;
+
 /// The optional starter folders for a new campaign.
 ///
-/// They are plain folders, so a campaign also works as an Obsidian vault.
-pub const TEMPLATE_FOLDERS: &[&str] = &["items", "locations", "lore", "npcs", "players", "quests"];
+/// Each gets a `_type.yaml` from the default template. They are plain folders,
+/// so a campaign also works as an Obsidian vault.
+pub const TEMPLATE_FOLDERS: &[&str] = &[
+    "items",
+    "journal",
+    "locations",
+    "lore",
+    "npcs",
+    "players",
+    "quests",
+];
 
 /// Creates a folder named `title` inside `parent` and returns its path.
 ///
-/// If `with_template` is true, also creates the [`TEMPLATE_FOLDERS`] inside it.
+/// If `with_template` is true, also creates the [`TEMPLATE_FOLDERS`] inside it, each with its content type.
 pub fn create(parent: &Path, title: &str, with_template: bool) -> Result<PathBuf, String> {
     let title = title.trim();
+    if title.is_empty() {
+        return Err("Give the campaign a title".into());
+    }
     validate_name(title)?;
 
     if !parent.is_dir() {
@@ -29,14 +43,19 @@ pub fn create(parent: &Path, title: &str, with_template: bool) -> Result<PathBuf
 
     if with_template {
         for folder in TEMPLATE_FOLDERS {
-            fs::create_dir(root.join(folder)).map_err(|error| error.to_string())?;
+            let path = root.join(folder);
+            fs::create_dir(&path).map_err(|error| error.to_string())?;
+
+            if let Some((_, yaml)) = types::STARTER_TYPES.iter().find(|(name, _)| name == folder) {
+                fs::write(path.join(types::TYPE_FILE), yaml).map_err(|error| error.to_string())?;
+            }
         }
     }
 
     Ok(root)
 }
 
-/// Checks that `name` can be used as a folder name on both Windows and Linux.
+/// Checks that `name` can be used as a file or folder name on both Windows and Linux.
 pub fn validate_name(name: &str) -> Result<(), String> {
     const RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -44,18 +63,18 @@ pub fn validate_name(name: &str) -> Result<(), String> {
     ];
 
     if name.is_empty() {
-        return Err("Give the campaign a title".into());
+        return Err("The name can't be empty".into());
     }
 
     if let Some(c) = name
         .chars()
         .find(|c| c.is_control() || r#"<>:"/\|?*"#.contains(*c))
     {
-        return Err(format!("The title can't contain {c:?}"));
+        return Err(format!("The name can't contain {c:?}"));
     }
 
     if name.ends_with('.') || name == ".." {
-        return Err("The title can't end with a period".into());
+        return Err("The name can't end with a period".into());
     }
 
     let stem = name.split('.').next().unwrap_or(name);
@@ -169,6 +188,8 @@ mod tests {
         assert_eq!(root, parent.join("Curse of the Lich"));
         for folder in TEMPLATE_FOLDERS {
             assert!(root.join(folder).is_dir());
+            let ty = types::load(&root.join(folder)).expect("has a type");
+            assert!(ty.is_ok(), "{folder}: {ty:?}");
         }
         assert!(create(&parent, "Curse of the Lich", true).is_err());
 

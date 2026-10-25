@@ -1,0 +1,17 @@
+type: journal
+label: Journal Entry
+fields:
+  - key: name
+    label: Title
+  - key: date
+    label: Date
+  - key: session
+    label: Session
+    kind: number
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: entry
+    label: Entry
+    kind: longtext
+    width: full

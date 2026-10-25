@@ -1,12 +1,15 @@
 //! Dungeon Elements: a local-first campaign manager for tabletop RPGs.
 
 mod campaign;
+mod form;
 mod menu;
+mod note;
 mod settings;
 mod style;
 mod theme;
+mod types;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use iced::keyboard::{self, Key, Modifiers};
@@ -17,9 +20,11 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Subscription, Task, window};
 
 use campaign::Entry;
+use form::Form;
 use menu::Menu;
 use settings::Settings;
 use theme::{Colors, Theme};
+use types::ContentType;
 
 /// The logo, drawn in black on white. [`logo`] recolors it to match the theme.
 const LOGO: &str = include_str!("../reference/dungeon_elements.svg");
@@ -82,6 +87,8 @@ struct NewCampaign {
 struct Workspace {
     root: PathBuf,
     tree: Vec<Entry>,
+    /// The content type of each folder that has a `_type.yaml`, or what is wrong with it.
+    types: HashMap<PathBuf, Result<ContentType, String>>,
     /// The folders in the tree that are expanded.
     expanded: HashSet<PathBuf>,
     tabs: Vec<Tab>,
@@ -93,18 +100,51 @@ struct Workspace {
 
 struct Tab {
     id: u64,
+    /// The file's text, edited directly when there is no form or the source is showing.
     content: text_editor::Content,
+    /// The form for a note in a typed folder.
+    form: Option<Form>,
+    /// Whether the Markdown source shows instead of the form.
+    source: bool,
     /// The file the text was last saved to, if any.
     path: Option<PathBuf>,
+    /// The folder a new note is saved in.
+    folder: PathBuf,
     /// Whether the text has changed since it was last saved.
     modified: bool,
 }
 
 impl Tab {
     fn name(&self, show_extensions: bool) -> String {
-        self.path.as_deref().map_or("Untitled".into(), |path| {
-            display_name(path, show_extensions)
-        })
+        match (&self.path, &self.form) {
+            (Some(path), _) => display_name(path, show_extensions),
+            (None, Some(form)) => format!("New {}", form.ty.label()),
+            (None, None) => "Untitled".into(),
+        }
+    }
+
+    /// Whether the form shows, rather than the Markdown source.
+    fn shows_form(&self) -> bool {
+        self.form.is_some() && !self.source
+    }
+
+    /// The text to save.
+    fn text(&self) -> Result<String, String> {
+        match &self.form {
+            Some(form) if !self.source => form.to_markdown(),
+            _ => Ok(self.content.text()),
+        }
+    }
+
+    /// The note's name from its `name` field, read from the form or the source.
+    fn note_name(&self) -> Option<String> {
+        let form = self.form.as_ref()?;
+        if self.source {
+            let note = note::parse(&self.content.text()).ok()?;
+            Form::from_note(form.ty.clone(), note).name()
+        } else {
+            form.name()
+        }
     }
 }
 
@@ -154,6 +194,9 @@ enum Message {
 
     // Workspace
     ToggleFolder(PathBuf),
+    NewNoteIn(PathBuf),
+    Form(form::Message),
+    ToggleSource,
     OpenEntry(PathBuf),
     RefreshTree,
     SelectTab(u64),
@@ -491,6 +534,9 @@ impl App {
             Screen::Splash { .. } => None,
         };
         let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
+        let active_tab = workspace.and_then(Workspace::active_tab);
+        let has_form = active_tab.is_some_and(|tab| tab.form.is_some());
+        let shows_source = active_tab.is_some_and(|tab| tab.form.is_some() && !tab.shows_form());
         let when = |enabled: bool, message: Message| enabled.then_some(message);
 
         match open {
@@ -534,6 +580,12 @@ impl App {
                         Some(Message::ToggleTypeFiles(!self.settings.show_type_files)),
                     )
                     .checked(self.settings.show_type_files),
+                    item(
+                        "Show Markdown Source",
+                        when(has_form, Message::ToggleSource),
+                    )
+                    .shortcut("Ctrl+E")
+                    .checked(shows_source),
                     Entry::Separator,
                     item(
                         "Refresh File Tree",
@@ -549,8 +601,10 @@ impl App {
 
 impl Workspace {
     fn open(root: PathBuf) -> Self {
+        let tree = campaign::scan(&root);
         Workspace {
-            tree: campaign::scan(&root),
+            types: load_types(&root, &tree),
+            tree,
             status: format!("Opened {}", root.display()),
             root,
             expanded: HashSet::new(),
@@ -583,17 +637,63 @@ impl Workspace {
         self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active)
     }
 
+    /// Reads the file tree and the folders' content types again.
+    fn rescan(&mut self) {
+        self.tree = campaign::scan(&self.root);
+        self.types = load_types(&self.root, &self.tree);
+    }
+
     /// Adds a tab and shows it.
-    fn add_tab(&mut self, path: Option<PathBuf>, text: &str) {
+    fn add_tab(&mut self, path: Option<PathBuf>, folder: PathBuf, text: &str, form: Option<Form>) {
         let id = self.next_id;
         self.next_id += 1;
         self.tabs.push(Tab {
             id,
             content: text_editor::Content::with_text(text),
+            form,
+            source: false,
             path,
+            folder,
             modified: false,
         });
         self.active = Some(id);
+    }
+
+    /// The content type for a note: the one its `type:` names, or else its folder's.
+    ///
+    /// Returns a message instead if the note or the type file can't be read.
+    fn form_for(&self, path: &Path, text: &str) -> Result<Option<Form>, String> {
+        let folder = path.parent().unwrap_or(&self.root);
+        let folder_type = self.types.get(folder);
+
+        let note = match note::parse(text) {
+            Ok(note) => note,
+            Err(error) if folder_type.is_some() => {
+                return Err(format!(
+                    "{}: {error}. Showing the Markdown source.",
+                    self.relative(path)
+                ));
+            }
+            Err(_) => return Ok(None),
+        };
+
+        let named = note.front.get("type").and_then(|id| {
+            let id = note::value_to_text(id);
+            self.types.values().flatten().find(|ty| ty.id == id)
+        });
+
+        let ty = match (named, folder_type) {
+            (Some(ty), _) | (None, Some(Ok(ty))) => ty.clone(),
+            (None, Some(Err(error))) => {
+                return Err(format!(
+                    "{} has a problem: {error}",
+                    self.relative(&folder.join(types::TYPE_FILE))
+                ));
+            }
+            (None, None) => return Ok(None),
+        };
+
+        Ok(Some(Form::from_note(ty, note)))
     }
 
     /// Shows `path` in a tab, reading it from disk unless it is already open.
@@ -609,8 +709,19 @@ impl Workspace {
 
         match std::fs::read_to_string(&path) {
             Ok(text) => {
-                self.status = format!("Opened {}", self.relative(&path));
-                self.add_tab(Some(path), &text);
+                let form = if campaign::is_markdown(&path) {
+                    self.form_for(&path, &text)
+                } else {
+                    Ok(None)
+                };
+
+                self.status = match &form {
+                    Ok(_) => format!("Opened {}", self.relative(&path)),
+                    Err(problem) => problem.clone(),
+                };
+
+                let folder = path.parent().unwrap_or(&self.root).to_path_buf();
+                self.add_tab(Some(path), folder, &text, form.ok().flatten());
             }
             Err(error) => self.status = format!("Could not open {}: {error}", path.display()),
         }
@@ -632,22 +743,62 @@ impl Workspace {
         }
     }
 
-    fn save(&self, id: u64, save_as: bool) -> Task<Message> {
+    fn save(&mut self, id: u64, save_as: bool) -> Task<Message> {
         let Some(tab) = self.tabs.iter().find(|tab| tab.id == id) else {
             return Task::none();
         };
+
+        let text = match tab.text() {
+            Ok(text) => text,
+            Err(error) => {
+                self.status = format!("Could not save: {error}");
+                return Task::none();
+            }
+        };
+
+        // A note with a name field is saved as "<name>.md" in its folder, without asking.
+        if !save_as
+            && let Some(form) = &tab.form
+            && form.ty.name_field().is_some()
+        {
+            // Applied right away, so a second Ctrl+S before then can't save a new note twice.
+            let result = save_named(tab, &text, &form.ty.label());
+            return self.update(Message::Saved(id, result.map(Some)));
+        }
 
         let path = if save_as { None } else { tab.path.clone() };
         let folder = tab
             .path
             .as_ref()
             .and_then(|path| path.parent())
-            .unwrap_or(&self.root)
+            .unwrap_or(&tab.folder)
             .to_path_buf();
 
-        Task::perform(save(path, folder, tab.content.text()), move |result| {
+        Task::perform(save(path, folder, text), move |result| {
             Message::Saved(id, result)
         })
+    }
+
+    /// Opens a new note in `folder`: a blank form if the folder has a content type.
+    fn new_note_in(&mut self, folder: PathBuf) {
+        let form = match self.types.get(&folder) {
+            Some(Ok(ty)) => Some(Form::blank(ty.clone())),
+            Some(Err(error)) => {
+                self.status = format!(
+                    "{} has a problem: {error}",
+                    self.relative(&folder.join(types::TYPE_FILE))
+                );
+                None
+            }
+            None => None,
+        };
+
+        if let Some(form) = &form {
+            self.status = format!("New {} created (not saved)", form.ty.label());
+        }
+
+        self.expanded.insert(folder.clone());
+        self.add_tab(None, folder, "", form);
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -663,7 +814,46 @@ impl Workspace {
                 Task::none()
             }
             Message::RefreshTree => {
-                self.tree = campaign::scan(&self.root);
+                self.rescan();
+                Task::none()
+            }
+            Message::NewNoteIn(folder) => {
+                self.new_note_in(folder);
+                Task::none()
+            }
+            Message::Form(message) => {
+                if let Some(tab) = self.active_tab_mut()
+                    && let Some(form) = &mut tab.form
+                {
+                    tab.modified |= form.update(message);
+                }
+                Task::none()
+            }
+            Message::ToggleSource => {
+                let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
+                    return Task::none();
+                };
+                let Some(form) = &mut tab.form else {
+                    return Task::none();
+                };
+
+                if tab.source {
+                    match note::parse(&tab.content.text()) {
+                        Ok(note) => {
+                            *form = Form::from_note(form.ty.clone(), note);
+                            tab.source = false;
+                        }
+                        Err(error) => self.status = format!("Can't show the form: {error}"),
+                    }
+                } else {
+                    match form.to_markdown() {
+                        Ok(text) => {
+                            tab.content = text_editor::Content::with_text(&text);
+                            tab.source = true;
+                        }
+                        Err(error) => self.status = format!("Can't show the source: {error}"),
+                    }
+                }
                 Task::none()
             }
             Message::SelectTab(id) => {
@@ -711,7 +901,7 @@ impl Workspace {
                 Task::none()
             }
             Message::NewNote => {
-                self.add_tab(None, "");
+                self.add_tab(None, self.root.clone(), "", None);
                 Task::none()
             }
             Message::OpenFile => {
@@ -732,10 +922,11 @@ impl Workspace {
             Message::Saved(id, Ok(Some(path))) => {
                 self.status = format!("Saved {}", self.relative(&path));
                 if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+                    tab.folder = path.parent().unwrap_or(&self.root).to_path_buf();
                     tab.path = Some(path);
                     tab.modified = false;
                 }
-                self.tree = campaign::scan(&self.root);
+                self.rescan();
                 Task::none()
             }
             Message::Saved(_, Err(error)) => {
@@ -845,7 +1036,7 @@ impl Workspace {
                 ),
             };
 
-            let row = button(row![
+            let label = button(row![
                 indent,
                 text(arrow).size(13).width(14),
                 text(name).size(13)
@@ -855,7 +1046,20 @@ impl Workspace {
             .style(style::flat(c, selected))
             .on_press(message);
 
-            rows.push(row.into());
+            let row: Element<'a, Message> = match entry.children {
+                Some(_) => row![
+                    label,
+                    button(text("+").size(14))
+                        .padding([0, 8])
+                        .style(style::flat(c, false))
+                        .on_press(Message::NewNoteIn(entry.path.clone())),
+                ]
+                .align_y(Center)
+                .into(),
+                None => label.into(),
+            };
+
+            rows.push(row);
 
             if let Some(children) = &entry.children
                 && self.expanded.contains(&entry.path)
@@ -914,11 +1118,23 @@ impl Workspace {
             .into();
         };
 
+        if let Some(form) = &tab.form
+            && !tab.source
+        {
+            return container(form.view(c, Message::Form, shortcut))
+                .width(Fill)
+                .height(Fill)
+                .style(style::panel(c.background))
+                .into();
+        }
+
         text_editor(&tab.content)
             .placeholder("Start writing...")
             .on_action(Message::Edit)
             .key_binding(|key_press| {
+                // Every editor sees every key press, so only the focused one handles shortcuts.
                 if key_press.modifiers.command()
+                    && matches!(key_press.status, text_editor::Status::Focused { .. })
                     && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
                 {
                     return Some(text_editor::Binding::Custom(message));
@@ -930,6 +1146,62 @@ impl Workspace {
             .style(style::editor(c))
             .into()
     }
+}
+
+/// Reads the `_type.yaml` of every folder in the campaign.
+fn load_types(root: &Path, tree: &[Entry]) -> HashMap<PathBuf, Result<ContentType, String>> {
+    fn visit(entries: &[Entry], types: &mut HashMap<PathBuf, Result<ContentType, String>>) {
+        for entry in entries {
+            if let Some(children) = &entry.children {
+                if let Some(ty) = types::load(&entry.path) {
+                    types.insert(entry.path.clone(), ty);
+                }
+                visit(children, types);
+            }
+        }
+    }
+
+    let mut types = HashMap::new();
+    if let Some(ty) = types::load(root) {
+        types.insert(root.to_path_buf(), ty);
+    }
+    visit(tree, &mut types);
+    types
+}
+
+/// Saves a note as "<name>.md" in its folder, renaming the file if the name changed.
+fn save_named(tab: &Tab, text: &str, label: &str) -> Result<PathBuf, String> {
+    let name = tab
+        .note_name()
+        .ok_or_else(|| format!("Give the {label} a name before saving"))?;
+    campaign::validate_name(&name)?;
+
+    let folder = tab
+        .path
+        .as_ref()
+        .and_then(|path| path.parent())
+        .unwrap_or(&tab.folder);
+    let target = folder.join(format!("{name}.md"));
+
+    match &tab.path {
+        Some(old) if *old == target => {}
+        // Renaming only changes the case of the name: the file is the same on Windows.
+        Some(old)
+            if old.to_string_lossy().to_lowercase() == target.to_string_lossy().to_lowercase() =>
+        {
+            std::fs::rename(old, &target).map_err(|error| error.to_string())?;
+        }
+        _ if target.exists() => {
+            return Err(format!("{name}.md already exists in this folder"));
+        }
+        Some(old) => {
+            std::fs::rename(old, &target).map_err(|error| error.to_string())?;
+        }
+        None => {}
+    }
+
+    std::fs::write(&target, text).map_err(|error| error.to_string())?;
+    Ok(target)
 }
 
 /// Maps the Escape key, which closes menus and dialogs.
@@ -968,6 +1240,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "s" if modifiers.shift() => Some(Message::SaveAs),
         "s" => Some(Message::Save),
         "w" => Some(Message::CloseActiveTab),
+        "e" => Some(Message::ToggleSource),
         _ => None,
     }
 }
@@ -1084,7 +1357,7 @@ fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
                 .on_toggle(Message::TemplateToggled)
                 .style(style::check(c)),
             text(format!(
-                "Adds the folders: {}",
+                "Adds these folders, each with its own note fields: {}",
                 campaign::TEMPLATE_FOLDERS.join(", ")
             ))
             .size(12)

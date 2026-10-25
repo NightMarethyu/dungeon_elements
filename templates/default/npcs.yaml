@@ -1,0 +1,24 @@
+type: npc
+label: NPC
+fields:
+  - key: name
+    label: Name
+  - key: role
+    label: Role
+  - key: location
+    label: Location
+    kind: link
+  - key: disposition
+    label: Disposition
+    kind: choice
+    options: [Friendly, Neutral, Hostile, Unknown]
+  - key: appearance
+    label: Appearance
+    kind: longtext
+  - key: personality
+    label: Personality
+    kind: longtext
+  - key: notes
+    label: Notes
+    kind: longtext
+    width: full

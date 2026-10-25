@@ -1,0 +1,20 @@
+type: item
+label: Item
+fields:
+  - key: name
+    label: Name
+  - key: value
+    label: Value
+  - key: rarity
+    label: Rarity
+    kind: choice
+    options: [Common, Uncommon, Rare, Very Rare, Legendary, Artifact]
+  - key: owner
+    label: Owner
+    kind: link
+  - key: history
+    label: History
+    kind: longtext
+  - key: stats
+    label: Stats
+    kind: longtext
