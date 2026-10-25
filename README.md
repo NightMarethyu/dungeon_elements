@@ -6,6 +6,7 @@
 
 Write your world in plain Markdown, link it together like a wiki, and keep every file on your own drive.
 
+![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-blue)
 ![Status: early development](https://img.shields.io/badge/status-early%20development-orange)
 ![Language: Rust](https://img.shields.io/badge/language-Rust-b7410e?logo=rust)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
@@ -17,7 +18,9 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 > [!NOTE]
 > Dungeon Elements is in **early development**. When it starts, you can open a campaign folder or create a new one (optionally with a starter set of folders). Inside a campaign, a collapsible file tree on the left lists your folders and Markdown (`.md`) files, and each file you open gets its own tab. Everything is in the **File**, **Edit**, **View**, and **Help** menus, with shortcuts for **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), and **Close Tab** (Ctrl+W). **View** picks a color theme (Dark or High Contrast, or your own; see [Themes](#themes)) and can show file extensions and folders' `.yaml` type files.
 >
-> Folders can define the fields their notes have in a `_type.yaml` (new campaigns come with one in each starter folder). Notes in those folders open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. The **+** next to a folder makes a new note in it, the round **+** under the file tree makes a new folder (optionally with a note type), and the round **+** on a form adds a field to just that note. **Edit > Types** changes the fields of every note in a folder. **View > Show Markdown Source** (Ctrl+E) shows the file itself. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
+> Folders can define the fields their notes have in a `_type.yaml` (new campaigns come with one in each starter folder). Notes in those folders open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. The **+** next to a folder makes a new note in it, the round **+** under the file tree makes a new folder (optionally with a note type), and the round **+** on a form adds a field to just that note. **Edit > Types** changes the fields of every note in a folder. **View > Show Markdown Source** (Ctrl+E) shows the file itself.
+>
+> Campaigns stay plain files, so you can edit them in Obsidian or any text editor. When a campaign opens, Dungeon Elements checks its notes and marks any it can't show as intended with a ⚠ (the ⚠ in the status bar lists what's wrong). When you switch back to the app, open files that changed elsewhere are reloaded, and if you have unsaved changes it asks which version to keep. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
 
 ## Why Dungeon Elements?
 
@@ -52,7 +55,7 @@ Highlight a name in your notes and choose **Add link** to create an Obsidian-com
 
 | Phase | Name | Goals |
 | :---: | --- | --- |
-| **0** | _Call to Action_ | Basic iced GUI · write, save, and open Markdown · one folder per campaign · YAML metadata · detect outside edits |
+| **0** ✅ | _Call to Action_ (v0.1) | Basic iced GUI · write, save, and open Markdown · one folder per campaign · YAML metadata · detect outside edits |
 | **1** | _Inciting Incident_ | Polished file display · Obsidian-style `[[links]]` that survive renames · WYSIWYG editing · built-in dice roller |
 | **2** | _Rising Action_ | Basic SVG map editor · name and roll table generators |
 
@@ -79,13 +82,19 @@ Every color in the app comes from a theme. To make your own, copy [`themes/dark.
 
 Then choose **View > Reload Themes** and pick it from the **View** menu. Any color you leave out comes from Dark (`base: dark`) or High Contrast (`base: light`). **Help > About** shows where your themes folder is.
 
+## Download
+
+Prebuilt Windows and Linux builds are on the [Releases](https://github.com/NightMarethyu/dungeon_elements/releases) page. Unzip and run `dungeon_elements` (no installer). You can also pass a campaign folder to open it right away: `dungeon_elements path/to/my-campaign`.
+
 ## Building
 
-You need a recent stable [Rust toolchain](https://rustup.rs) (edition 2024, Rust 1.85 or newer).
+You need a recent stable [Rust toolchain](https://rustup.rs) (edition 2024, Rust 1.88 or newer).
 
 ```sh
 cargo run
 ```
+
+For an optimized build, run `cargo build --release`; the app is `target/release/dungeon_elements` (`.exe` on Windows). It is a single file with the themes and templates built in. [RELEASING.md](RELEASING.md) has the steps for packaging a release.
 
 On Windows, Rust uses the Microsoft C++ linker, so install the **Desktop development with C++** workload (MSVC build tools and a Windows SDK) from the Visual Studio Installer.
 

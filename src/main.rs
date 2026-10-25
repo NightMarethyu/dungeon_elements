@@ -1,7 +1,12 @@
 //! Dungeon Elements: a local-first campaign manager for tabletop RPGs.
 
+// Release builds on Windows open without a console window behind the app.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod campaign;
+mod check;
 mod form;
+mod icon;
 mod menu;
 mod note;
 mod settings;
@@ -12,6 +17,7 @@ mod types_editor;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
@@ -21,6 +27,7 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Subscription, Task, window};
 
 use campaign::Entry;
+use check::Problem;
 use form::Form;
 use menu::Menu;
 use settings::Settings;
@@ -35,10 +42,25 @@ fn main() -> iced::Result {
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
-        .window_size((1200.0, 800.0))
+        .window(window_settings())
         // Closing the window asks about unsaved changes first; see `Message::Exit`.
         .exit_on_close_request(false)
         .run()
+}
+
+fn window_settings() -> window::Settings {
+    #[allow(unused_mut)]
+    let mut settings = window::Settings {
+        size: iced::Size::new(1200.0, 800.0),
+        icon: icon::window_icon(),
+        ..window::Settings::default()
+    };
+    // Matches `dungeon_elements.desktop`, so Linux desktops show the right icon in the dock.
+    #[cfg(target_os = "linux")]
+    {
+        settings.platform_specific.application_id = "dungeon_elements".into();
+    }
+    settings
 }
 
 struct App {
@@ -61,7 +83,7 @@ enum Screen {
         new_campaign: Option<NewCampaign>,
         error: Option<String>,
     },
-    Workspace(Workspace),
+    Workspace(Box<Workspace>),
 }
 
 impl Default for Screen {
@@ -92,6 +114,8 @@ struct Workspace {
     tree: Vec<Entry>,
     /// The content type of each folder that has a `_type.yaml`, or what is wrong with it.
     types: HashMap<PathBuf, Result<ContentType, String>>,
+    /// What is wrong with the campaign's files, checked when it opens and is refreshed.
+    problems: Vec<Problem>,
     /// The folders in the tree that are expanded.
     expanded: HashSet<PathBuf>,
     tabs: Vec<Tab>,
@@ -119,6 +143,8 @@ enum Dialog {
     },
     /// Edit > Types: changes the fields of every folder's type.
     Types(types_editor::Editor),
+    /// Lists the campaign's files with formatting problems.
+    Problems,
 }
 
 /// A content type a new folder can start with.
@@ -158,6 +184,10 @@ struct Tab {
     folder: PathBuf,
     /// Whether the text has changed since it was last saved.
     modified: bool,
+    /// When the file was last changed on disk as of reading or saving it.
+    disk: Option<SystemTime>,
+    /// Whether the file changed outside the app while this tab had unsaved changes.
+    changed_outside: bool,
 }
 
 impl Tab {
@@ -255,6 +285,11 @@ enum Message {
     CloseDialog,
     ShowTypes,
     Types(types_editor::Message),
+    ShowProblems,
+    OpenProblem(PathBuf),
+    WindowFocused,
+    ReloadFromDisk,
+    KeepMine,
     OpenEntry(PathBuf),
     RefreshTree,
     SelectTab(u64),
@@ -299,6 +334,14 @@ impl App {
         };
         let name = app.settings.theme.clone();
         app.use_theme(&name);
+
+        // `dungeon_elements <campaign folder>` opens that campaign right away.
+        if let Some(root) = std::env::args_os().nth(1).map(PathBuf::from)
+            && root.is_dir()
+        {
+            app.screen = Screen::Workspace(Box::new(Workspace::open(root)));
+        }
+
         app
     }
 
@@ -371,7 +414,13 @@ impl App {
             }),
         };
 
-        Subscription::batch([keys, window::close_requests().map(|_| Message::Exit)])
+        // Coming back to the window is when files may have been edited in another app.
+        let focus = iced::event::listen_with(|event, _, _| match event {
+            iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
+            _ => None,
+        });
+
+        Subscription::batch([keys, focus, window::close_requests().map(|_| Message::Exit)])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -475,7 +524,7 @@ impl App {
                 }
                 Message::CampaignPicked(Some(root)) => {
                     if root.is_dir() {
-                        self.screen = Screen::Workspace(Workspace::open(root));
+                        self.screen = Screen::Workspace(Box::new(Workspace::open(root)));
                     } else {
                         *error = Some(format!("{} is not a folder", root.display()));
                     }
@@ -511,7 +560,9 @@ impl App {
                         &form.title,
                         form.with_template,
                     ) {
-                        Ok(root) => self.screen = Screen::Workspace(Workspace::open(root)),
+                        Ok(root) => {
+                            self.screen = Screen::Workspace(Box::new(Workspace::open(root)))
+                        }
                         Err(message) => form.error = Some(message),
                     }
                     Task::none()
@@ -594,7 +645,7 @@ impl App {
         use menu::{Entry, item};
 
         let workspace = match &self.screen {
-            Screen::Workspace(workspace) => Some(workspace),
+            Screen::Workspace(workspace) => Some(workspace.as_ref()),
             Screen::Splash { .. } => None,
         };
         let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
@@ -677,10 +728,17 @@ impl App {
 impl Workspace {
     fn open(root: PathBuf) -> Self {
         let tree = campaign::scan(&root);
+        let types = load_types(&root, &tree);
+        let problems = check::campaign(&root, &tree, &types);
+        let status = match problems_summary(&problems) {
+            Some(summary) => format!("Opened {}. {summary}", root.display()),
+            None => format!("Opened {}", root.display()),
+        };
         Workspace {
-            types: load_types(&root, &tree),
+            types,
+            problems,
             tree,
-            status: format!("Opened {}", root.display()),
+            status,
             root,
             expanded: HashSet::new(),
             tabs: Vec::new(),
@@ -713,10 +771,91 @@ impl Workspace {
         self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active)
     }
 
-    /// Reads the file tree and the folders' content types again.
+    /// Reads the file tree and the folders' content types again, and checks the files.
     fn rescan(&mut self) {
         self.tree = campaign::scan(&self.root);
         self.types = load_types(&self.root, &self.tree);
+        self.problems = check::campaign(&self.root, &self.tree, &self.types);
+    }
+
+    /// The problems found in the file at `path`.
+    fn problems_in<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Problem> + 'a {
+        self.problems
+            .iter()
+            .filter(move |problem| problem.path == path)
+    }
+
+    /// Looks for open files that changed on disk since they were read, for example in Obsidian.
+    ///
+    /// A tab without unsaved changes is reloaded. One with unsaved changes asks which version to keep.
+    fn check_disk(&mut self) {
+        let mut messages = Vec::new();
+
+        for index in 0..self.tabs.len() {
+            let tab = &self.tabs[index];
+            let Some(path) = tab.path.clone() else {
+                continue;
+            };
+            let now = check::modified_time(&path);
+            if now == tab.disk || tab.changed_outside {
+                continue;
+            }
+            let name = self.relative(&path);
+
+            if now.is_none() {
+                let tab = &mut self.tabs[index];
+                tab.disk = None;
+                tab.modified = true;
+                messages.push(format!(
+                    "{name} was deleted outside Dungeon Elements; save to keep it"
+                ));
+            } else if tab.modified {
+                self.tabs[index].changed_outside = true;
+                messages.push(format!(
+                    "{name} was changed outside Dungeon Elements while you were editing it"
+                ));
+            } else {
+                messages.push(match self.reload_tab(index) {
+                    Ok(()) => format!("Reloaded {name}: it was changed outside Dungeon Elements"),
+                    Err(problem) => problem,
+                });
+            }
+        }
+
+        if !messages.is_empty() {
+            self.status = messages.join(". ");
+        }
+    }
+
+    /// Reads the file of the tab at `index` again, dropping any unsaved changes.
+    fn reload_tab(&mut self, index: usize) -> Result<(), String> {
+        let Some(path) = self.tabs[index].path.clone() else {
+            return Ok(());
+        };
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("Could not read {}: {error}", self.relative(&path)))?;
+        let form = if campaign::is_markdown(&path) {
+            self.form_for(&path, &text)
+        } else {
+            Ok(None)
+        };
+
+        let tab = &mut self.tabs[index];
+        tab.content = text_editor::Content::with_text(&text);
+        tab.disk = check::modified_time(&path);
+        tab.modified = false;
+        tab.changed_outside = false;
+        match form {
+            Ok(form) => {
+                tab.form = form;
+                Ok(())
+            }
+            // The note can't be read as a form any more: show its source.
+            Err(problem) => {
+                tab.form = None;
+                Err(problem)
+            }
+        }
     }
 
     /// Rebuilds the form of every open note without unsaved changes, so it shows its new type.
@@ -735,6 +874,7 @@ impl Workspace {
                 let tab = &mut self.tabs[index];
                 tab.content = text_editor::Content::with_text(&text);
                 tab.form = form;
+                tab.disk = check::modified_time(&path);
             }
         }
     }
@@ -748,9 +888,11 @@ impl Workspace {
             content: text_editor::Content::with_text(text),
             form,
             source: false,
+            disk: path.as_deref().and_then(check::modified_time),
             path,
             folder,
             modified: false,
+            changed_outside: false,
         });
         self.active = Some(id);
     }
@@ -811,9 +953,21 @@ impl Workspace {
                     Ok(None)
                 };
 
-                self.status = match &form {
-                    Ok(_) => format!("Opened {}", self.relative(&path)),
-                    Err(problem) => problem.clone(),
+                let problems: Vec<&str> = self
+                    .problems_in(&path)
+                    .map(|problem| problem.message.as_str())
+                    .collect();
+                self.status = match (&form, problems.as_slice()) {
+                    (Err(problem), _) => problem.clone(),
+                    (Ok(_), []) => format!("Opened {}", self.relative(&path)),
+                    (Ok(_), [problem]) => {
+                        format!("Opened {}. Problem: {problem}", self.relative(&path))
+                    }
+                    (Ok(_), [problem, rest @ ..]) => format!(
+                        "Opened {}. Problem: {problem} (and {} more in Problems)",
+                        self.relative(&path),
+                        rest.len()
+                    ),
                 };
 
                 let folder = path.parent().unwrap_or(&self.root).to_path_buf();
@@ -851,6 +1005,22 @@ impl Workspace {
                 return Task::none();
             }
         };
+
+        // Don't quietly overwrite edits made in another app since the file was read.
+        if !save_as
+            && let Some(path) = &tab.path
+            && (tab.changed_outside || check::modified_time(path) != tab.disk)
+            && path.exists()
+        {
+            let name = self.relative(path);
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+                tab.changed_outside = true;
+            }
+            self.status = format!(
+                "Not saved: {name} was changed outside Dungeon Elements. Choose Reload or Keep Mine above the editor first"
+            );
+            return Task::none();
+        }
 
         // A note with a name field is saved as "<name>.md" in its folder, without asking.
         if !save_as
@@ -943,6 +1113,9 @@ impl Workspace {
         if let Dialog::Types(editor) = dialog {
             return editor.view(c).map(Message::Types);
         }
+        if let Dialog::Problems = dialog {
+            return self.problems_dialog(c);
+        }
 
         let label = |label| text(label).size(13).color(c.text_muted);
 
@@ -1021,7 +1194,9 @@ impl Workspace {
                     "Create",
                     Message::CreateFolder,
                 ),
-                Dialog::Types(_) => unreachable!("the types dialog has its own view"),
+                Dialog::Types(_) | Dialog::Problems => {
+                    unreachable!("these dialogs have their own view")
+                }
             };
 
         let mut content = column![text(title).size(22).color(c.text), fields].spacing(16);
@@ -1045,6 +1220,43 @@ impl Workspace {
 
         container(content)
             .width(440)
+            .padding(24)
+            .style(style::dialog(c))
+            .into()
+    }
+
+    /// Lists the files with problems; clicking one opens it.
+    fn problems_dialog(&self, c: Colors) -> Element<'_, Message> {
+        let rows = self.problems.iter().map(|problem| {
+            column![
+                button(text(self.relative(&problem.path)).size(13).color(c.accent))
+                    .padding(0)
+                    .style(style::flat(c, false))
+                    .on_press(Message::OpenProblem(problem.path.clone())),
+                text(&problem.message).size(13).color(c.text),
+            ]
+            .spacing(2)
+            .into()
+        });
+
+        let content = column![
+            text("Problems").size(22).color(c.text),
+            text("These files were probably edited outside Dungeon Elements, and parts of them can't be shown as intended. Nothing has been changed. Open a file to fix it, or use View > Show Markdown Source.")
+                .size(12)
+                .color(c.text_muted),
+            scrollable(column(rows).spacing(12)).height(iced::Shrink),
+            row![
+                space::horizontal(),
+                button("Close")
+                    .style(style::primary(c))
+                    .on_press(Message::CloseDialog),
+            ],
+        ]
+        .spacing(16);
+
+        container(content)
+            .width(560)
+            .max_height(560)
             .padding(24)
             .style(style::dialog(c))
             .into()
@@ -1086,6 +1298,9 @@ impl Workspace {
             }
             Message::RefreshTree => {
                 self.rescan();
+                self.status = problems_summary(&self.problems)
+                    .unwrap_or_else(|| "Refreshed; no problems found".into());
+                self.check_disk();
                 Task::none()
             }
             Message::NewNoteIn(folder) => {
@@ -1265,6 +1480,49 @@ impl Workspace {
                 self.active = Some(id);
                 Task::none()
             }
+            Message::ShowProblems => {
+                self.dialog = Some(Dialog::Problems);
+                Task::none()
+            }
+            Message::OpenProblem(path) => {
+                self.dialog = None;
+                if campaign::is_yaml(&path) {
+                    // Type files open as text; the tree only lists them when they are shown.
+                    let folder = path.parent().map(Path::to_path_buf);
+                    if let Some(folder) = folder {
+                        self.expanded.insert(folder);
+                    }
+                }
+                self.open_file(path);
+                Task::none()
+            }
+            Message::WindowFocused => {
+                self.rescan();
+                self.check_disk();
+                Task::none()
+            }
+            Message::ReloadFromDisk => {
+                if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id) == self.active) {
+                    let name = self.tabs[index]
+                        .path
+                        .as_deref()
+                        .map(|path| self.relative(path))
+                        .unwrap_or_default();
+                    self.status = match self.reload_tab(index) {
+                        Ok(()) => format!("Reloaded {name}"),
+                        Err(problem) => problem,
+                    };
+                }
+                Task::none()
+            }
+            Message::KeepMine => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.changed_outside = false;
+                    tab.disk = tab.path.as_deref().and_then(check::modified_time);
+                    self.status = "Keeping your version; saving will replace the file".into();
+                }
+                Task::none()
+            }
             Message::CloseTab(id) => {
                 let modified = self.tabs.iter().any(|tab| tab.id == id && tab.modified);
 
@@ -1328,8 +1586,10 @@ impl Workspace {
                 self.status = format!("Saved {}", self.relative(&path));
                 if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
                     tab.folder = path.parent().unwrap_or(&self.root).to_path_buf();
+                    tab.disk = check::modified_time(&path);
                     tab.path = Some(path);
                     tab.modified = false;
+                    tab.changed_outside = false;
                 }
                 self.rescan();
                 Task::none()
@@ -1353,18 +1613,40 @@ impl Workspace {
         ]
         .height(Fill);
 
-        let status = container(
-            row![
-                text(self.name()).size(12),
-                space::horizontal(),
-                text(&self.status).size(12).wrapping(text::Wrapping::None),
-            ]
-            .spacing(16),
-        )
-        .padding([3, 10])
-        .width(Fill)
-        .clip(true)
-        .style(style::status_bar(c));
+        let mut status_row = row![
+            text(self.name()).size(12),
+            space::horizontal(),
+            text(&self.status).size(12).wrapping(text::Wrapping::None),
+        ]
+        .spacing(16)
+        .align_y(Center);
+
+        if !self.problems.is_empty() {
+            let files = problem_files(&self.problems);
+            status_row = status_row.push(
+                button(
+                    text(format!(
+                        "⚠ {files} {}",
+                        if files == 1 {
+                            "problem file"
+                        } else {
+                            "problem files"
+                        }
+                    ))
+                    .size(12)
+                    .color(c.status_text),
+                )
+                .padding([0, 6])
+                .style(style::flat(c, false))
+                .on_press(Message::ShowProblems),
+            );
+        }
+
+        let status = container(status_row)
+            .padding([3, 10])
+            .width(Fill)
+            .clip(true)
+            .style(style::status_bar(c));
 
         column![body, status].into()
     }
@@ -1445,11 +1727,22 @@ impl Workspace {
                 ),
             };
 
-            let label = button(row![
-                indent,
-                text(arrow).size(13).width(14),
-                text(name).size(13)
-            ])
+            // A collapsed folder shows that something inside it has a problem.
+            let has_problem = match entry.children {
+                None => self.problems_in(&entry.path).next().is_some(),
+                Some(_) => {
+                    !self.expanded.contains(&entry.path)
+                        && self
+                            .problems
+                            .iter()
+                            .any(|problem| problem.path.starts_with(&entry.path))
+                }
+            };
+            let warning = has_problem.then(|| text(" ⚠").size(12).color(c.warning));
+
+            let label = button(
+                row![indent, text(arrow).size(13).width(14), text(name).size(13)].push(warning),
+            )
             .width(Fill)
             .padding([2, 0])
             .style(style::flat(c, selected))
@@ -1512,6 +1805,15 @@ impl Workspace {
     }
 
     fn editor(&self, c: Colors) -> Element<'_, Message> {
+        let editor = self.editor_body(c);
+
+        match self.active_tab() {
+            Some(tab) if tab.changed_outside => column![changed_outside_banner(c), editor].into(),
+            _ => editor,
+        }
+    }
+
+    fn editor_body(&self, c: Colors) -> Element<'_, Message> {
         let Some(tab) = self.active_tab() else {
             return center(
                 column![
@@ -1622,6 +1924,50 @@ fn save_named(tab: &Tab, text: &str, label: &str) -> Result<PathBuf, String> {
 
     std::fs::write(&target, text).map_err(|error| error.to_string())?;
     Ok(target)
+}
+
+/// The number of files in `problems`.
+fn problem_files(problems: &[Problem]) -> usize {
+    let files: HashSet<&Path> = problems
+        .iter()
+        .map(|problem| problem.path.as_path())
+        .collect();
+    files.len()
+}
+
+/// A line for the status bar saying how many files have problems, if any do.
+fn problems_summary(problems: &[Problem]) -> Option<String> {
+    match problem_files(problems) {
+        0 => None,
+        1 => Some("1 file has formatting problems (click ⚠ to see them)".into()),
+        files => Some(format!(
+            "{files} files have formatting problems (click ⚠ to see them)"
+        )),
+    }
+}
+
+/// Shown above a file that changed on disk while it had unsaved changes.
+fn changed_outside_banner<'a>(c: Colors) -> Element<'a, Message> {
+    container(
+        row![
+            text("This file was changed outside Dungeon Elements since you opened it.")
+                .size(13)
+                .color(c.text),
+            space::horizontal(),
+            button(text("Reload").size(13))
+                .style(style::secondary(c))
+                .on_press(Message::ReloadFromDisk),
+            button(text("Keep Mine").size(13))
+                .style(style::primary(c))
+                .on_press(Message::KeepMine),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    )
+    .padding([8, 16])
+    .width(Fill)
+    .style(style::banner(c))
+    .into()
 }
 
 /// Maps the Escape key, which closes menus and dialogs.

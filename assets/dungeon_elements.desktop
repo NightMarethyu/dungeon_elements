@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dungeon Elements
+Comment=A local-first campaign manager for tabletop RPGs
+Exec=dungeon_elements
+Icon=dungeon_elements
+Terminal=false
+Categories=Office;Game;
+StartupWMClass=dungeon_elements

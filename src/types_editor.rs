@@ -520,10 +520,12 @@ mod tests {
     use super::*;
 
     fn editor(yaml: &str) -> (PathBuf, Editor) {
+        // Each test gets its own folder, since tests run at the same time.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "dungeon_elements_types_editor_{}_{}",
             std::process::id(),
-            yaml.len()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = fs::remove_dir_all(&root);
         let items = root.join("items");
