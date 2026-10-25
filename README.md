@@ -78,13 +78,13 @@ See [PLAN.md](PLAN.md) for the full plan and checklists.
 Every color in the app comes from a theme. To make your own, copy [`themes/dark.yaml`](themes/dark.yaml), change its `name` and colors, and save it in your themes folder:
 
 - Windows: `%APPDATA%\dungeon_elements\themes`
-- Linux: `~/.config/dungeon_elements/themes`
+- Linux and macOS: `~/.config/dungeon_elements/themes`
 
 Then choose **View > Reload Themes** and pick it from the **View** menu. Any color you leave out comes from Dark (`base: dark`) or High Contrast (`base: light`). **Help > About** shows where your themes folder is.
 
 ## Download
 
-Prebuilt Windows and Linux builds are on the [Releases](https://github.com/NightMarethyu/dungeon_elements/releases) page. Unzip and run `dungeon_elements` (no installer). You can also pass a campaign folder to open it right away: `dungeon_elements path/to/my-campaign`.
+Prebuilt Windows, Linux, and macOS builds are on the [Releases](https://github.com/NightMarethyu/dungeon_elements/releases) page. Unzip and run `dungeon_elements` (on a Mac, `Dungeon Elements.app`); there's no installer. The Mac build isn't signed with an Apple Developer ID, so the first time, allow it in **System Settings > Privacy & Security > Open Anyway**. You can also pass a campaign folder to open it right away: `dungeon_elements path/to/my-campaign`.
 
 ## Building
 

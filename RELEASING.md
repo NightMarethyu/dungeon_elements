@@ -87,7 +87,17 @@ The Linux build has to be made on Linux. On Windows the easiest way is WSL with 
 
    People run it with `./dungeon_elements` after unpacking. To add it to their app menu, they copy `dungeon_elements` to `~/.local/bin/`, `dungeon_elements.png` to `~/.local/share/icons/hicolor/256x256/apps/`, and `dungeon_elements.desktop` to `~/.local/share/applications/`.
 
-## 4. Publish the release on GitHub
+## 4. Get the macOS build (from GitHub Actions)
+
+A Mac app can only be built on a Mac, so GitHub builds it for you on one of its macOS machines with the workflow in `.github/workflows/macos.yml`. It makes `Dungeon Elements.app` as a single "universal" app that runs on both Apple silicon and Intel Macs.
+
+1. The workflow runs on its own when you push a version tag (step 5 below). To build it without a tag, open the repository's **Actions** tab, pick **macOS build** on the left, click **Run workflow**, choose `main`, and click the green **Run workflow** button.
+2. Wait for the run to finish (about 10 to 15 minutes) and open it. Under **Artifacts** at the bottom, download `dungeon_elements-v0.1.0-macos-universal`.
+3. GitHub wraps every artifact in its own zip, so unzip the download once. Inside is `dungeon_elements-v0.1.0-macos-universal.zip`: that inner zip is the file to attach to the release (move it to your `dist` folder).
+
+The app has an ad-hoc signature, not an Apple Developer ID (that needs a paid Apple Developer account), so macOS warns the first time it opens. The workaround goes in the release notes (see the changelog's known limitations). If a run fails, the log on its page says why; the build hasn't been tested on a real Mac yet, so please mention any trouble a Mac user reports.
+
+## 5. Publish the release on GitHub
 
 1. Tag the release commit and push the tag (from Windows or WSL, on an up-to-date `main`):
 
@@ -96,16 +106,19 @@ The Linux build has to be made on Linux. On Windows the easiest way is WSL with 
    git push origin v0.1.0
    ```
 
+   Pushing the tag also starts the macOS build (step 4).
+
 2. On GitHub, open **Releases** > **Draft a new release**.
 3. Pick the tag `v0.1.0` and title it **Dungeon Elements v0.1.0**.
 4. Paste the `0.1.0` section of `CHANGELOG.md` as the description.
-5. Attach both files from `dist`:
+5. Attach the three files from `dist` (once the tag's macOS run from step 4 has finished):
    - `dungeon_elements-v0.1.0-windows-x86_64.zip`
    - `dungeon_elements-v0.1.0-linux-x86_64.tar.gz`
+   - `dungeon_elements-v0.1.0-macos-universal.zip`
 6. Tick **Set as a pre-release** if you want to signal that it's early (0.x), then **Publish release**.
 
 ## Notes
 
 - If the Windows build stops with "could not add the icon to the Windows executable", the resource compiler (`rc.exe`) wasn't found: make sure a Windows 10/11 SDK is ticked in the Visual Studio Installer under **Desktop development with C++**.
 - The builds aren't code-signed, so Windows SmartScreen may say it "protected your PC" the first time; **More info** > **Run anyway** opens the app. Signing needs a paid certificate and can come later.
-- To regenerate the icon files after the logo changes, render `reference/dungeon_elements_colors.svg` to PNGs at 16, 24, 32, 48, 64, 128, and 256 pixels, save the 256 one as `assets/dungeon_elements.png`, and combine them all into `assets/dungeon_elements.ico` (for example with ImageMagick: `magick icon-*.png assets/dungeon_elements.ico`). The window icon is drawn from the SVG when the app starts, so it needs no extra step.
+- To regenerate the icon files after the logo changes, render `reference/dungeon_elements_colors.svg` to PNGs at 16, 24, 32, 48, 64, 128, and 256 pixels, save the 256 one as `assets/dungeon_elements.png` and a 1024 one as `assets/dungeon_elements-1024.png` (the macOS icon is made from it), and combine them all into `assets/dungeon_elements.ico` (for example with ImageMagick: `magick icon-*.png assets/dungeon_elements.ico`). The window icon is drawn from the SVG when the app starts, so it needs no extra step.

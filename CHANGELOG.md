@@ -33,13 +33,15 @@ The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon El
 
 - A real menu bar (File, Edit, View, Help) with the logo.
 - Color themes: Dark (the default) and High Contrast, plus your own theme files (see the README). **View** can also show file extensions and `_type.yaml` files.
-- The colored logo is the app icon on the window, the taskbar, and the Windows executable.
+- The colored logo is the app icon on the window, the taskbar, the Windows executable, and the macOS app.
+- Builds for Windows, Linux, and macOS (universal, for Apple silicon and Intel).
 
 ### Known limitations
 
 - `[[links]]` are stored but not clickable yet, and Markdown isn't rendered (Phase 1).
 - **Open Campaign...** on Linux uses the desktop's file chooser portal (or `zenity`); if neither is installed, open a campaign from the command line instead.
 - Builds are not code-signed, so Windows SmartScreen may warn the first time you run the app ("More info" > "Run anyway").
+- macOS: the app is built on GitHub's Macs but hasn't been tested on one by hand yet. It isn't signed with an Apple Developer ID, so the first time, macOS says it can't check the app: open **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** (on macOS 14 and older, Control-click the app and choose **Open**). Settings and themes live in `~/.config/dungeon_elements`.
 
 [Unreleased]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/NightMarethyu/dungeon_elements/releases/tag/v0.1.0
