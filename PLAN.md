@@ -37,8 +37,8 @@ The suite will also include drawing tools and generators to allow the Game Maste
   - [x] Notes in a typed folder open as a form; raw Markdown is one toggle away (View > Show Markdown Source, Ctrl+E)
   - [x] New campaigns get a `_type.yaml` in each starter folder (from `templates/default/`)
   - [x] + on a folder makes a new note of its type
-  - [ ] + in the main pane adds a field to that note only
-  - [ ] Big + in the sidebar makes a new folder, offering a default type template
+  - [x] + in the main pane adds a field to that note only (stored as an extra front matter key or `##` section; extra keys and sections added in Obsidian show as fields too)
+  - [x] Big + in the sidebar makes a new folder, offering a default type template
   - [ ] Edit > Types dialog: types on the left, their fields on the right, add/remove fields and set their kind
 - [ ] Check files on load for edits outside software, warn of improper formatting
 
@@ -82,7 +82,7 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 - Short fields are stored in the note's YAML front matter. `longtext` fields are stored as `## Label` sections in the Markdown body, so notes stay readable in Obsidian.
 - The note's front matter records `type:`, so a note moved to another folder still knows its type.
 - The `name` field is the filename (`The One Ring.md`). The tree shows names without `.md`, like Windows Explorer, unless View > Show File Extensions is on.
-- Front matter keys and body text the type doesn't know about are kept and shown in an "Other" area. Saving never drops data added in Obsidian or another editor.
+- Front matter keys and `##` sections the type doesn't know about become fields of that note only (the main pane's + adds one; each has a Remove button). Values that can't be a field (nested lists or maps) and text before the first section are kept and shown in an "Other" area. Saving never drops data added in Obsidian or another editor.
 - A folder with no `_type.yaml` is a plain Markdown folder.
 - Later:
   - Subfolders inherit their parent's type unless they have their own `_type.yaml`.

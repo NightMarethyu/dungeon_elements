@@ -1,16 +1,21 @@
-//! The form a note in a typed folder is edited in: one input per field of its content type.
+//! The form a note in a typed folder is edited in: one input per field.
+//!
+//! The fields are the content type's, then any the note has on its own: front
+//! matter keys and `## ` sections the type doesn't list (added with the main
+//! pane's + button, or in another app like Obsidian).
 
 use iced::keyboard::{Key, Modifiers};
 use iced::widget::{
-    checkbox, column, container, pick_list, row, scrollable, space, text, text_editor, text_input,
+    button, checkbox, column, container, pick_list, row, scrollable, space, text, text_editor,
+    text_input,
 };
-use iced::{Element, Fill};
+use iced::{Center, Element, Fill};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::note::{self, Note, Section};
 use crate::style;
 use crate::theme::Colors;
-use crate::types::{ContentType, Kind, Width};
+use crate::types::{ContentType, Field, Kind, Width};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -19,6 +24,8 @@ pub enum Message {
     Check(usize, bool),
     Choice(usize, String),
     Other(text_editor::Action),
+    /// Removes a field this note has on its own.
+    Remove(usize),
 }
 
 /// What the user typed into one field.
@@ -29,13 +36,28 @@ enum Input {
     Choice(Option<String>),
 }
 
+impl Input {
+    fn empty(kind: Kind) -> Self {
+        match kind {
+            Kind::Longtext => Input::Long(text_editor::Content::new()),
+            Kind::Checkbox => Input::Check(false),
+            Kind::Choice => Input::Choice(None),
+            Kind::Text | Kind::Number | Kind::Tags | Kind::Link => Input::Text(String::new()),
+        }
+    }
+}
+
 pub struct Form {
     pub ty: ContentType,
-    /// One input per field of `ty`, in the same order.
+    /// The type's fields, then the ones only this note has.
+    fields: Vec<Field>,
+    /// The index in `fields` where this note's own fields start.
+    own: usize,
+    /// One input per field, in the same order.
     inputs: Vec<Input>,
-    /// The note's front matter as it was read, so keys the type doesn't know are kept in place.
+    /// The note's front matter as it was read, so keys stay in place when saved.
     front: Mapping,
-    /// Body text that isn't one of the type's sections, kept as it is.
+    /// The body text before the first `## ` section, kept as it is.
     other: text_editor::Content,
     /// Whether the "Other" area shows: only when the note had something to put there.
     show_other: bool,
@@ -49,9 +71,19 @@ impl Form {
 
     pub fn from_note(ty: ContentType, note: Note) -> Self {
         let mut sections: Vec<Option<Section>> = note.sections.into_iter().map(Some).collect();
+        let mut fields = ty.fields.clone();
+        let own = fields.len();
 
-        let inputs = ty
-            .fields
+        // Front matter keys the type doesn't list become fields of this note, if they can be edited as one.
+        for (key, value) in &note.front {
+            let key = note::value_to_text(key);
+            let listed = key == "type" || fields.iter().any(|field| field.key == key);
+            if let (false, Some(kind)) = (listed, kind_of(value)) {
+                fields.push(Field::for_note(&key, kind));
+            }
+        }
+
+        let mut inputs: Vec<Input> = fields
             .iter()
             .map(|field| {
                 let value = note.front.get(field.key.as_str());
@@ -83,29 +115,24 @@ impl Form {
             })
             .collect();
 
-        let mut other = vec![note.preamble];
-        other.extend(
-            sections
-                .into_iter()
-                .flatten()
-                .map(|section| format!("## {}\n\n{}", section.heading, section.body)),
-        );
-        let other = other
-            .into_iter()
-            .filter(|part| !part.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        // Sections the type doesn't list become long text fields of this note.
+        for section in sections.into_iter().flatten() {
+            fields.push(Field::for_note(&section.heading, Kind::Longtext));
+            inputs.push(Input::Long(text_editor::Content::with_text(&section.body)));
+        }
 
         let form = Form {
+            ty,
+            fields,
+            own,
             inputs,
-            other: text_editor::Content::with_text(&other),
+            other: text_editor::Content::with_text(&note.preamble),
             show_other: false,
             front: note.front,
-            ty,
         };
 
         Form {
-            show_other: !other.is_empty() || !form.extra_keys().is_empty(),
+            show_other: !note.preamble.trim().is_empty() || !form.uneditable_keys().is_empty(),
             ..form
         }
     }
@@ -140,8 +167,40 @@ impl Form {
                 self.other.perform(action);
                 return edited;
             }
+            Message::Remove(index) => {
+                if index < self.own || index >= self.fields.len() {
+                    return false;
+                }
+                let field = self.fields.remove(index);
+                self.inputs.remove(index);
+                self.front.shift_remove(field.key.as_str());
+            }
         }
         true
+    }
+
+    /// Adds a field to this note only.
+    pub fn add_field(&mut self, label: &str, kind: Kind) -> Result<(), String> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Err("Give the field a name".into());
+        }
+
+        let taken = label.eq_ignore_ascii_case("type")
+            || self.fields.iter().any(|field| {
+                field.key.eq_ignore_ascii_case(label) || field.label().eq_ignore_ascii_case(label)
+            })
+            || self
+                .front
+                .keys()
+                .any(|key| note::value_to_text(key).eq_ignore_ascii_case(label));
+        if taken {
+            return Err(format!("This note already has a field called {label:?}"));
+        }
+
+        self.fields.push(Field::for_note(label, kind));
+        self.inputs.push(Input::empty(kind));
+        Ok(())
     }
 
     /// The note's name, from its `name` field, if the type has one and it is filled in.
@@ -152,31 +211,43 @@ impl Form {
         }
     }
 
-    /// Front matter keys the type has no field for, other than `type`.
-    fn extra_keys(&self) -> Vec<(String, String)> {
+    /// The index of the field stored under front matter `key`, if there is one.
+    fn front_field(&self, key: &str) -> Option<usize> {
+        self.fields
+            .iter()
+            .position(|field| field.kind != Kind::Longtext && field.key == key)
+    }
+
+    /// Front matter keys no field covers, other than `type`, such as nested lists.
+    fn uneditable_keys(&self) -> Vec<(String, String)> {
         self.front
             .iter()
             .filter_map(|(key, value)| {
                 let key = note::value_to_text(key);
-                let known = key == "type" || self.ty.fields.iter().any(|field| field.key == key);
-                (!known).then(|| (key, note::value_to_text(value)))
+                let covered = key == "type" || self.front_field(&key).is_some();
+                (!covered).then(|| (key, note::value_to_text(value)))
             })
             .collect()
     }
 
     /// The value to store in the front matter for field `index`, or `None` to leave it out.
+    ///
+    /// The note's own fields are kept even when empty, so they don't vanish on save.
     fn front_value(&self, index: usize) -> Result<Option<Value>, String> {
-        let field = &self.ty.fields[index];
+        let field = &self.fields[index];
+        let keep_empty = index >= self.own;
 
         let value = match &self.inputs[index] {
             Input::Long(_) => None,
-            Input::Check(checked) => (*checked || self.front.contains_key(field.key.as_str()))
-                .then_some(Value::Bool(*checked)),
+            Input::Check(checked) => {
+                (*checked || keep_empty || self.front.contains_key(field.key.as_str()))
+                    .then_some(Value::Bool(*checked))
+            }
             Input::Choice(choice) => choice.clone().map(Value::String),
             Input::Text(text) => {
                 let text = text.trim();
                 if text.is_empty() {
-                    None
+                    keep_empty.then_some(Value::Null)
                 } else {
                     Some(match field.kind {
                         Kind::Number => parse_number(text)
@@ -200,8 +271,6 @@ impl Form {
 
     /// Writes the note as Markdown: front matter for short fields, `## ` sections for long ones.
     pub fn to_markdown(&self) -> Result<String, String> {
-        let field_index = |key: &str| self.ty.fields.iter().position(|field| field.key == key);
-
         let mut front = Mapping::new();
         front.insert("type".into(), self.ty.id.clone().into());
 
@@ -211,7 +280,7 @@ impl Form {
             if name == "type" {
                 continue;
             }
-            match field_index(&name) {
+            match self.front_field(&name) {
                 Some(index) => {
                     if let Some(value) = self.front_value(index)? {
                         front.insert(key.clone(), value);
@@ -223,8 +292,9 @@ impl Form {
             }
         }
 
-        for (index, field) in self.ty.fields.iter().enumerate() {
-            if !self.front.contains_key(field.key.as_str())
+        for (index, field) in self.fields.iter().enumerate() {
+            if field.kind != Kind::Longtext
+                && !self.front.contains_key(field.key.as_str())
                 && let Some(value) = self.front_value(index)?
             {
                 front.insert(field.key.clone().into(), value);
@@ -232,14 +302,15 @@ impl Form {
         }
 
         let sections: Vec<Section> = self
-            .ty
             .fields
             .iter()
             .zip(&self.inputs)
-            .filter_map(|(field, input)| match input {
+            .enumerate()
+            .filter_map(|(index, (field, input))| match input {
                 Input::Long(content) => Some(Section {
                     heading: field.label(),
                     body: content.text(),
+                    keep_empty: index >= self.own,
                 }),
                 _ => None,
             })
@@ -265,11 +336,27 @@ impl Form {
             text_editor::Binding::from_key_press(key_press)
         };
 
-        let label = |label: String| text(label).size(14).color(c.text);
+        let own = self.own;
+        // A field's label, with a button to remove it if only this note has it.
+        let label = move |index: usize, label: String| -> Element<'a, M> {
+            let label = text(label).size(14).color(c.text);
+            if index < own {
+                return label.into();
+            }
+            row![
+                label,
+                space::horizontal(),
+                button(text("Remove").size(12))
+                    .padding([0, 6])
+                    .style(style::flat(c, false))
+                    .on_press(map(Message::Remove(index))),
+            ]
+            .align_y(Center)
+            .into()
+        };
 
         let fields =
-            self.ty
-                .fields
+            self.fields
                 .iter()
                 .zip(&self.inputs)
                 .enumerate()
@@ -283,7 +370,7 @@ impl Form {
                                 _ => "",
                             };
                             column![
-                                label(field.label()),
+                                label(index, field.label()),
                                 text_input(placeholder, value)
                                     .on_input(move |value| map(Message::Text(index, value)))
                                     .size(14)
@@ -294,7 +381,7 @@ impl Form {
                             .into()
                         }
                         Input::Choice(choice) => column![
-                            label(field.label()),
+                            label(index, field.label()),
                             pick_list(field.options.as_slice(), choice.as_ref(), move |value| {
                                 map(Message::Choice(index, value))
                             })
@@ -307,16 +394,20 @@ impl Form {
                         ]
                         .spacing(6)
                         .into(),
-                        Input::Check(checked) => column![
-                            space().height(26),
-                            checkbox(*checked)
+                        Input::Check(checked) => {
+                            let check = checkbox(*checked)
                                 .label(field.label())
                                 .on_toggle(move |value| map(Message::Check(index, value)))
-                                .style(style::check(c)),
-                        ]
-                        .into(),
+                                .style(style::check(c));
+                            let header: Element<'a, M> = if index < own {
+                                space().height(20).into()
+                            } else {
+                                label(index, String::new())
+                            };
+                            column![header, check].spacing(6).into()
+                        }
                         Input::Long(content) => column![
-                            label(field.label()),
+                            label(index, field.label()),
                             text_editor(content)
                                 .on_action(move |action| map(Message::Long(index, action)))
                                 .key_binding(key_binding)
@@ -359,16 +450,15 @@ impl Form {
             .max_width(1100);
 
         if self.show_other {
-            let extras = self.extra_keys();
             let mut other = column![
-                label("Other".into()),
-                text("Content this type has no field for. It is kept as it is.")
+                text("Other").size(14).color(c.text),
+                text("Text before the first section, and properties that can't be shown as a field. Kept as they are.")
                     .size(12)
                     .color(c.text_muted),
             ]
             .spacing(6);
 
-            for (key, value) in extras {
+            for (key, value) in self.uneditable_keys() {
                 other = other.push(text(format!("{key}: {value}")).size(13).color(c.text_muted));
             }
 
@@ -377,6 +467,7 @@ impl Form {
                     .on_action(move |action| map(Message::Other(action)))
                     .key_binding(key_binding)
                     .min_height(100)
+                    .size(14)
                     .padding(8)
                     .style(style::field_editor(c)),
             );
@@ -384,9 +475,33 @@ impl Form {
             content = content.push(space().height(8)).push(other);
         }
 
+        // Room at the bottom so the last field can scroll clear of the + button.
+        content = content.push(space().height(64));
+
         scrollable(container(content).padding([24, 32]).width(Fill))
             .height(Fill)
             .into()
+    }
+}
+
+/// The kind of field that can edit a front matter value, or `None` for nested values.
+fn kind_of(value: &Value) -> Option<Kind> {
+    match value {
+        Value::Bool(_) => Some(Kind::Checkbox),
+        Value::Number(_) => Some(Kind::Number),
+        Value::Null => Some(Kind::Text),
+        Value::String(text) if text.trim().starts_with("[[") && text.trim().ends_with("]]") => {
+            Some(Kind::Link)
+        }
+        Value::String(_) => Some(Kind::Text),
+        Value::Sequence(items)
+            if items
+                .iter()
+                .all(|item| matches!(item, Value::String(_) | Value::Number(_))) =>
+        {
+            Some(Kind::Tags)
+        }
+        Value::Sequence(_) | Value::Mapping(_) | Value::Tagged(_) => None,
     }
 }
 
@@ -417,15 +532,22 @@ mod tests {
 
     #[test]
     fn fills_the_form_and_writes_it_back() {
-        let text = "---\nname: The One Ring\nweight: 0.1\nowner: '[[BBEG]]'\n---\n\nIntro.\n\n## History\n\nForged.\n\n## Secrets\n\nIt whispers.\n";
+        let text = "---\nname: The One Ring\nweight: 0.1\nowner: '[[BBEG]]'\nstats_block: {str: 1}\n---\n\nIntro.\n\n## History\n\nForged.\n\n## Secrets\n\nIt whispers.\n";
         let mut form = Form::from_note(item_type(), note::parse(text).unwrap());
 
         assert_eq!(form.name().as_deref(), Some("The One Ring"));
         assert!(form.show_other);
-        assert_eq!(form.extra_keys(), [("weight".into(), "0.1".into())]);
+        assert_eq!(form.other.text().trim_end(), "Intro.");
+
+        // The note's own fields: weight from the front matter, then the Secrets section.
+        let own: Vec<_> = form.fields[form.own..]
+            .iter()
+            .map(|field| (field.key.as_str(), field.kind))
+            .collect();
+        assert_eq!(own, [("weight", Kind::Number), ("Secrets", Kind::Longtext)]);
         assert_eq!(
-            form.other.text().trim_end(),
-            "Intro.\n\n## Secrets\n\nIt whispers."
+            form.uneditable_keys(),
+            [("stats_block".into(), "str: 1".into())]
         );
 
         // Value is the second field.
@@ -433,7 +555,11 @@ mod tests {
         let written = note::parse(&form.to_markdown().unwrap()).unwrap();
 
         let keys: Vec<_> = written.front.keys().map(note::value_to_text).collect();
-        assert_eq!(keys, ["type", "name", "weight", "owner", "value"]);
+        assert_eq!(
+            keys,
+            ["type", "name", "weight", "owner", "stats_block", "value"]
+        );
+        assert_eq!(written.front.get("weight"), Some(&Value::from(0.1)));
         assert_eq!(written.front.get("owner"), Some(&Value::from("[[BBEG]]")));
         assert_eq!(written.front.get("value"), Some(&Value::from("Priceless")));
         assert_eq!(written.preamble, "Intro.");
@@ -442,7 +568,7 @@ mod tests {
             .iter()
             .map(|s| s.heading.as_str())
             .collect();
-        assert_eq!(headings, ["Secrets", "History"]);
+        assert_eq!(headings, ["History", "Secrets"]);
     }
 
     #[test]
@@ -450,6 +576,34 @@ mod tests {
         let form = Form::blank(item_type());
         assert_eq!(form.to_markdown().unwrap(), "---\ntype: item\n---\n");
         assert_eq!(form.name(), None);
+    }
+
+    #[test]
+    fn adds_and_removes_fields_for_one_note() {
+        let mut form = Form::blank(item_type());
+
+        assert!(form.add_field("Durability", Kind::Number).is_ok());
+        assert!(form.add_field("Lore", Kind::Longtext).is_ok());
+        assert!(form.add_field("durability", Kind::Text).is_err());
+        assert!(form.add_field("Name", Kind::Text).is_err());
+        assert!(form.add_field("  ", Kind::Text).is_err());
+
+        // Empty fields of the note's own are still written, so they come back next time.
+        let text = form.to_markdown().unwrap();
+        assert_eq!(text, "---\ntype: item\nDurability: null\n---\n\n## Lore\n");
+
+        let mut again = Form::from_note(item_type(), note::parse(&text).unwrap());
+        assert_eq!(again.fields.len(), form.fields.len());
+
+        let durability = again.own;
+        again.update(Message::Remove(durability));
+        assert_eq!(
+            again.to_markdown().unwrap(),
+            "---\ntype: item\n---\n\n## Lore\n"
+        );
+
+        // The type's own fields can't be removed.
+        assert!(!again.update(Message::Remove(0)));
     }
 
     #[test]

@@ -18,6 +18,8 @@ pub struct Note {
 pub struct Section {
     pub heading: String,
     pub body: String,
+    /// Whether to write the heading even when the body is empty.
+    pub keep_empty: bool,
 }
 
 /// Splits `text` into front matter and sections.
@@ -64,6 +66,7 @@ pub fn parse(text: &str) -> Result<Note, String> {
             .map(|(heading, lines)| Section {
                 heading,
                 body: trim_blank_lines(&lines),
+                keep_empty: false,
             })
             .collect(),
     })
@@ -103,7 +106,8 @@ fn trim_blank_lines(lines: &[&str]) -> String {
     }
 }
 
-/// Writes a note: front matter, then `rest` as it is, then each section that has text.
+/// Writes a note: front matter, then `rest` as it is, then each section that has text
+/// (or is marked [`Section::keep_empty`]).
 ///
 /// `rest` comes first because text after the last section would become part of it.
 pub fn to_markdown(front: &Mapping, sections: &[Section], rest: &str) -> Result<String, String> {
@@ -130,13 +134,17 @@ pub fn to_markdown(front: &Mapping, sections: &[Section], rest: &str) -> Result<
 
     for section in sections {
         let body = section.body.trim_end();
-        if body.trim().is_empty() {
+        if body.trim().is_empty() && !section.keep_empty {
             continue;
         }
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str(&format!("## {}\n\n{body}\n", section.heading));
+        if body.trim().is_empty() {
+            text.push_str(&format!("## {}\n", section.heading));
+        } else {
+            text.push_str(&format!("## {}\n\n{body}\n", section.heading));
+        }
     }
 
     Ok(text)
@@ -221,14 +229,21 @@ mod tests {
             Section {
                 heading: "History".into(),
                 body: "  \n".into(),
+                keep_empty: false,
             },
             Section {
                 heading: "Stats".into(),
                 body: "+1".into(),
+                keep_empty: false,
+            },
+            Section {
+                heading: "Durability".into(),
+                body: String::new(),
+                keep_empty: true,
             },
         ];
         let text = to_markdown(&Mapping::new(), &sections, "").unwrap();
-        assert_eq!(text, "## Stats\n\n+1\n");
+        assert_eq!(text, "## Stats\n\n+1\n\n## Durability\n");
     }
 
     #[test]
