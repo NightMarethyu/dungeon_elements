@@ -1,0 +1,23 @@
+type: lore
+label: Lore
+fields:
+  - key: name
+    label: Name
+  - key: category
+    label: Category
+    kind: choice
+    options: [History, Faction, Religion, Culture, Magic, Creature, Other]
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: known_to_players
+    label: Known to players
+    kind: checkbox
+  - key: summary
+    label: Summary
+    kind: longtext
+    width: full
+  - key: details
+    label: Details
+    kind: longtext
+    width: full

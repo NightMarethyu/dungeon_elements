@@ -29,13 +29,15 @@ The suite will also include drawing tools and generators to allow the Game Maste
 - [x] Save folder structure for campaigns
   - campaigns have locations, quests, npcs, players, items, lore, etc.
 - [x] Different folders represent different campaigns, GM can open a folder and their campaign is there
-- [ ] Real menu bar (File, Edit, View, Help) with the logo, replacing the button row
-- [ ] Customizable color themes (see [Themes](#themes)), Dark by default
-- [ ] View menu toggles: show file extensions, show `_type.yaml` files (editable in the app's text editor)
+- [x] Real menu bar (File, Edit, View, Help) with the logo, replacing the button row
+- [x] Customizable color themes (see [Themes](#themes)), Dark by default
+- [x] View menu toggles: show file extensions, show `_type.yaml` files (editable in the app's text editor)
 - [ ] YAML metadata for formatting and to ensure links and other data work consistently
-  - [ ] Folder content types defined in `_type.yaml` (see [Content types](#content-types))
-  - [ ] Notes in a typed folder open as a form; raw Markdown is one toggle away
-  - [ ] + on a folder makes a new note of its type; + in the main pane adds a field to that note only
+  - [x] Folder content types defined in `_type.yaml` (see [Content types](#content-types))
+  - [x] Notes in a typed folder open as a form; raw Markdown is one toggle away (View > Show Markdown Source, Ctrl+E)
+  - [x] New campaigns get a `_type.yaml` in each starter folder (from `templates/default/`)
+  - [x] + on a folder makes a new note of its type
+  - [ ] + in the main pane adds a field to that note only
   - [ ] Big + in the sidebar makes a new folder, offering a default type template
   - [ ] Edit > Types dialog: types on the left, their fields on the right, add/remove fields and set their kind
 - [ ] Check files on load for edits outside software, warn of improper formatting
