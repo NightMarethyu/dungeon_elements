@@ -109,7 +109,9 @@ Play at the table and solo play. This needs panes the user can arrange, so layou
 
 - [ ] Layouts (see [Layouts](#layouts))
   - [ ] Split the main pane to show two notes side by side, and choose where each pane goes (left, right, bottom, or a tab) and its size
+  - [ ] Collapse panes (file tree, extra notes) while keeping them hidden with an arrow allowing them to be pulled back
   - [ ] Pop panes out into their own windows, and put them back
+  - [ ] Resize any pane (Click and drag pane edges)
   - [ ] Save arrangements as named layouts ("Prep", "At the table") and switch from the View menu
 - [ ] Journaling tool, built for solo play
   - [ ] A journal folder whose notes are dated sessions, added to quickly while playing
