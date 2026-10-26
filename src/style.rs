@@ -97,6 +97,16 @@ pub fn task_box(c: Colors, done: bool) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// The band across the top of the reading view's box of fields.
+pub fn infobox_header(c: Colors) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        container::Style::default()
+            .background(c.selection)
+            .color(c.text)
+            .border(Border::default().rounded(Radius::default().top(c.corner_radius.min(6.0))))
+    }
+}
+
 /// Text in a dimmer color, like a quote in the reading view.
 pub fn muted_text(c: Colors) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style::default().color(c.text_muted)

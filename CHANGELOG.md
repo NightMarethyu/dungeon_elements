@@ -16,7 +16,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ### Reading view
 
-- **Read** at the top right of the editor (or **View > Reading View**, Ctrl+R) shows a note formatted, like GitHub shows a README: the note's name as a title, its fields in a box, then its headings, lists, task lists, tables, quotes, code blocks, and pictures. **Edit** goes back to the form or the Markdown source.
+- **Read** at the top right of the editor (or **View > Reading View**, Ctrl+R) shows a note formatted, like GitHub shows a README: the note's name as a title, its fields in a box on the right like a wiki's infobox (beside the note's opening text), then its headings, lists, task lists, tables, quotes, code blocks, and pictures. **Edit** goes back to the form or the Markdown source.
 - Links in the reading view can be clicked. `[[Links]]` open the note (links to notes that don't exist yet are dimmer, and clicking one makes the note), web links open in your browser, and Markdown links to files in the campaign open them.
 - Pictures next to a note, or embedded the Obsidian way (`![[harbor.png]]`, found anywhere in the campaign), show in the reading view. PNG, JPEG, GIF, WebP, and SVG work.
 - **View > Open Notes in Reading View** opens notes formatted instead of in an editor.
