@@ -8,6 +8,8 @@ Dungeon Elements is a full campaign building suite for Table Top Role Playing Ga
 
 The suite will also include drawing tools and generators to allow the Game Master to build out worlds, cities, and dungeons. These will enable the GM to build completely custom from scratch locations to generated on the fly because the players did very unexpected things.
 
+TTRPGs stay the focus, but nothing about the app should be locked to them. With campaign templates (see [Campaign templates](#campaign-templates)), the same tool can hold a novel's world, a setting bible, or any other world-building notes, in the spirit of tools like Campfire.
+
 ## Constraints
 
 - Built in pure Rust (GUI in iced), for security and stability
@@ -84,6 +86,20 @@ Stretch goal:
   - [ ] name generators
   - [ ] roll table generators
 
+### Phase 3: climax
+
+Later additions, after the Phase 2 map work is done.
+
+- [ ] Campaign templates (see [Campaign templates](#campaign-templates))
+  - [ ] New Campaign, and opening an Obsidian vault for the first time, offer a template
+  - [ ] Save a campaign's setup as a template, and share it as a file
+  - [ ] Templates can set dice presets and suggest a game system
+  - Once this exists, Ammon builds templates for a few systems to find where it's awkward before the format settles
+- [ ] PDF manual library (see [PDF library](#pdf-library))
+  - [ ] Library folders, systems as tags, a library panel; links to PDFs open them in the system's PDF viewer
+  - [ ] Built-in PDF reader beside a note: opens at the right page, with the PDF's table of contents and the user's bookmarks
+  - [ ] Search across all manuals, and copy text into a note with a link back to the page
+
 ## Design
 
 The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo in `reference/dungeon_elements.svg`. The reference is drawn in black and white for contrast only; the app is themed. The colored logo, `reference/dungeon_elements_colors.svg`, is the app icon (window, taskbar, and the Windows `.exe`, from `assets/dungeon_elements.ico`).
@@ -94,7 +110,7 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 - Built-in themes ship with the app (the YAML lives in `themes/`): Dark (the default) and High Contrast (the reference drawing). More built-in themes later.
 - User themes are YAML files in the app's config folder (`%APPDATA%\dungeon_elements\themes` on Windows, `~/.config/dungeon_elements/themes` on Linux) and appear under View > Theme. A broken theme file is skipped with a warning, never a crash.
 - The logo is recolored to match the theme (black becomes the text color, white the background).
-- Later: a theme editor with a color picker per role and live preview.
+- Later: a theme editor (View > Theme > Edit Themes...). The user picks the main colors and accents with a color picker, sees the app update live, and saves the result as a theme file in the user themes folder, ready to use or share. Fine-tuning single roles is optional, because anything left out is worked out from the main colors or the `base`.
 
 ### Layouts
 
@@ -119,7 +135,32 @@ Customization is a big part of the app, so the window's layout should be the use
   - Subfolders inherit their parent's type unless they have their own `_type.yaml`.
   - A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note. The Quest type uses it so a step can be another quest, building quest lines (a Big Quest made of smaller quests).
   - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
-  - Campaign templates: New Campaign offers templates (e.g. D&D, Shadowdark, Cyberpunk) that set up folders and types. Templates are shareable files, so GMs can build their own and give them to friends.
+  - Campaign templates: see [Campaign templates](#campaign-templates).
+
+### Campaign templates
+
+Phase 3. Templates put the power in the user's hands: the app ships a few, and users build their own for their systems (or for things that aren't TTRPGs at all, like a novel).
+
+- A template is a shareable folder or file holding starter folders, their `_type.yaml` content types, note templates, and optionally dice presets and a suggested game system (`system: Shadowdark`). `templates/default/` is the first one.
+- New Campaign offers a template. Opening a folder (such as an Obsidian vault) that Dungeon Elements has never opened offers one too, without changing existing notes.
+- A campaign's current setup can be saved as a template from the app, to reuse or give to friends.
+- Templates and manuals stay separate. A template's `system:` only decides which manuals the [PDF library](#pdf-library) shows first, and the user can change it or leave it out.
+- The format isn't fixed until real templates for a few systems have been built and tried.
+
+### PDF library
+
+Phase 3. Easy access to the user's PDF rulebooks and other documents. It is a library and reader, not a PDF manager: the app never changes a PDF (no marking up, editing, or form filling).
+
+- **One library for the whole app**, not inside campaigns, because the same rulebooks serve many campaigns. The user adds library folders in Settings and nothing is copied. For each folder they choose how it's organized:
+  - "Each subfolder is a game system" (e.g. `Shadowdark/`, `D&D/`, `Cosmere/` become systems)
+  - "Just a pile of PDFs": manuals start in an *Unsorted* group and can be given a system from a dropdown; sorting is optional
+- **Systems are tags**, starting from the subfolder name and editable. A manual can have several, or *Any system* (oracles, random tables, GM advice). Manuals are recognized by their contents, not their path, so moving or renaming a PDF keeps its tags and bookmarks.
+- **Campaigns list the systems they use** (saved in the campaign folder, so it travels with the notes). Their manual panel shows those books first, with a "show all" switch.
+- The library (folder paths, tags, bookmarks) is saved in the app's config folder, like themes, because paths belong to one computer.
+- **Links** use Obsidian's form, `[[Player's Handbook.pdf#page=42]]`, matched against the library by name. When two systems have a book with the same name, the campaign's own system wins. Links can use the page number printed in the book or the PDF's own page number.
+- **Showing PDFs**: first in the system's PDF viewer (some viewers can't jump to a page), then in a built-in reader using the `pdfium-render` crate (PDFium has a permissive license that fits MIT; its library ships next to the app on Windows and Linux). MuPDF and Poppler are ruled out because their licenses (AGPL and GPL) don't fit. The pure-Rust `hayro` is worth checking again when this phase starts.
+- **Search** uses the text inside the PDFs, saved in a cache so it's fast. Scanned PDFs without text can't be searched; no OCR planned.
+- Making PDFs (handouts, table maps) is a separate feature that needs a different crate.
 
 ## Planned features
 
@@ -135,6 +176,7 @@ Customization is a big part of the app, so the window's layout should be the use
 - World and Lore management
   - This is the wiki-interface of the markdown files
   - allow for linking between displayed maps and the world wiki
+- PDF manual library and reader (Phase 3, see [PDF library](#pdf-library))
 - PDF generation
   - player handouts
   - table maps
