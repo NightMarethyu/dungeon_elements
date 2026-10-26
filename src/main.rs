@@ -22,8 +22,8 @@ use std::time::SystemTime;
 
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
-    Svg, button, center, checkbox, column, container, opaque, pick_list, row, rule, scrollable,
-    space, stack, svg, text, text_editor, text_input,
+    Svg, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
+    scrollable, space, stack, svg, text, text_editor, text_input,
 };
 use iced::{Center, Element, Fill, Subscription, Task, window};
 
@@ -134,6 +134,11 @@ struct Workspace {
     index: links::Index,
     /// Whether Ctrl (Cmd on macOS) is held, so a click on a link opens it.
     ctrl: bool,
+    /// The row of the file tree under the mouse: a file, a folder, or the campaign
+    /// folder itself for the space around the tree.
+    hovered: Option<PathBuf>,
+    /// The note being dragged in the file tree, and whether it has left its row yet.
+    drag: Option<(PathBuf, bool)>,
 }
 
 /// A dialog over the workspace.
@@ -307,6 +312,11 @@ enum Message {
     Form(form::Message),
     ToggleSource,
     Modifiers(Modifiers),
+    /// The mouse moved onto a row of the file tree.
+    TreeEnter(PathBuf),
+    TreeExit(PathBuf),
+    MousePressed,
+    MouseReleased,
     /// Finishes the link being typed with this link text.
     CompleteLink(String),
     /// Opens the note a link points to, creating it if there is none.
@@ -455,8 +465,15 @@ impl App {
         };
 
         // Coming back to the window is when files may have been edited in another app.
+        // Mouse buttons are watched too, for dragging notes in the file tree.
         let focus = iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+                Some(Message::MousePressed)
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                Some(Message::MouseReleased)
+            }
             _ => None,
         });
 
@@ -795,6 +812,8 @@ impl Workspace {
             dialog: None,
             index,
             ctrl: false,
+            hovered: None,
+            drag: None,
         }
     }
 
@@ -1087,7 +1106,12 @@ impl Workspace {
             };
             let task = self.update(Message::Saved(id, result.map(Some)));
             if let Some((old, new)) = renamed {
-                self.relink(&old, &new);
+                let done = format!(
+                    "Renamed {} to {}",
+                    display_name(&old, false),
+                    display_name(&new, false)
+                );
+                self.relink(&old, &new, &done);
             }
             return task;
         }
@@ -1521,6 +1545,37 @@ impl Workspace {
                 }
                 Task::none()
             }
+            Message::TreeEnter(path) => {
+                if let Some((dragged, moved)) = &mut self.drag
+                    && *dragged != path
+                {
+                    *moved = true;
+                }
+                self.hovered = Some(path);
+                Task::none()
+            }
+            Message::TreeExit(path) => {
+                if self.hovered.as_ref() == Some(&path) {
+                    self.hovered = None;
+                }
+                Task::none()
+            }
+            Message::MousePressed => {
+                self.drag = self
+                    .hovered
+                    .clone()
+                    .filter(|path| campaign::is_markdown(path))
+                    .map(|path| (path, false));
+                Task::none()
+            }
+            Message::MouseReleased => {
+                if let Some((path, true)) = self.drag.take()
+                    && let Some(folder) = self.drop_folder()
+                {
+                    self.move_note(&path, &folder);
+                }
+                Task::none()
+            }
             Message::Modifiers(modifiers) => {
                 self.ctrl = modifiers.command();
                 Task::none()
@@ -1756,7 +1811,15 @@ impl Workspace {
         let mut status_row = row![
             text(self.name()).size(12),
             space::horizontal(),
-            text(&self.status).size(12).wrapping(text::Wrapping::None),
+            text(match &self.drag {
+                Some((path, true)) => format!(
+                    "Drop {} on a folder to move it there",
+                    display_name(path, false)
+                ),
+                _ => self.status.clone(),
+            })
+            .size(12)
+            .wrapping(text::Wrapping::None),
         ]
         .spacing(16)
         .align_y(Center);
@@ -1816,10 +1879,29 @@ impl Workspace {
             column(rows).into()
         };
 
+        // The space around the tree is the campaign folder, for dropping notes there.
+        let root_area = |content: Element<'a, Message>| -> Element<'a, Message> {
+            mouse_area(content)
+                .on_enter(Message::TreeEnter(self.root.clone()))
+                .on_exit(Message::TreeExit(self.root.clone()))
+                .into()
+        };
+        let drop_root =
+            matches!(self.drag, Some((_, true))) && self.drop_folder().as_ref() == Some(&self.root);
+        let header = container(header)
+            .width(Fill)
+            .style(style::panel(if drop_root {
+                c.selection
+            } else {
+                c.sidebar
+            }))
+            .into();
+
         container(column![
-            header,
+            root_area(header),
             stack![
-                scrollable(column![tree, space().height(72)].padding([0, 4])).height(Fill),
+                scrollable(column![tree, root_area(space().height(Fill).into())].padding([0, 4]))
+                    .height(Fill),
                 corner_button(c, Message::ShowNewFolder),
             ]
             .height(Fill)
@@ -1855,11 +1937,14 @@ impl Workspace {
             };
 
             let indent = space().width(f32::from(8 + depth * 14));
+            // While a note is dragged, the folder it would land in is highlighted.
+            let drop_here = matches!(self.drag, Some((_, true)))
+                && self.drop_folder().as_ref() == Some(&entry.path);
             let (arrow, message, selected) = match &entry.children {
                 Some(_) if self.expanded.contains(&entry.path) => {
-                    ("▾", Message::ToggleFolder(entry.path.clone()), false)
+                    ("▾", Message::ToggleFolder(entry.path.clone()), drop_here)
                 }
-                Some(_) => ("▸", Message::ToggleFolder(entry.path.clone()), false),
+                Some(_) => ("▸", Message::ToggleFolder(entry.path.clone()), drop_here),
                 None => (
                     "",
                     Message::OpenEntry(entry.path.clone()),
@@ -1901,7 +1986,12 @@ impl Workspace {
                 None => label.into(),
             };
 
-            rows.push(row);
+            rows.push(
+                mouse_area(row)
+                    .on_enter(Message::TreeEnter(entry.path.clone()))
+                    .on_exit(Message::TreeExit(entry.path.clone()))
+                    .into(),
+            );
 
             if let Some(children) = &entry.children
                 && self.expanded.contains(&entry.path)
@@ -2193,7 +2283,9 @@ impl Workspace {
 
     /// Rewrites `[[links]]` across the campaign after the note at `old` was renamed to `new`,
     /// so they still point to it. Open tabs are updated too, unsaved changes and all.
-    fn relink(&mut self, old: &Path, new: &Path) {
+    ///
+    /// The status bar says `done`, then how many links changed.
+    fn relink(&mut self, old: &Path, new: &Path, done: &str) {
         let notes = markdown_files(&self.tree);
         let after = links::Index::new(&self.root, notes.iter().cloned());
         let before = links::Index::new(
@@ -2275,11 +2367,7 @@ impl Workspace {
             }
         }
 
-        let renamed = format!(
-            "Renamed {} to {}",
-            display_name(old, false),
-            display_name(new, false)
-        );
+        let renamed = done;
         self.status = match (changed_links, changed_notes) {
             (0, _) => format!("{renamed}; no links needed updating"),
             (1, _) => format!("{renamed} and updated 1 link"),
@@ -2292,6 +2380,99 @@ impl Workspace {
                 problems.join(", ")
             ));
         }
+    }
+
+    /// The folder a note dragged in the file tree would be dropped in: the folder under
+    /// the mouse, or the folder of the file under it.
+    fn drop_folder(&self) -> Option<PathBuf> {
+        let hovered = self.hovered.as_ref()?;
+        if hovered.is_dir() {
+            Some(hovered.clone())
+        } else {
+            hovered.parent().map(Path::to_path_buf)
+        }
+    }
+
+    /// Moves the note at `path` into `folder`. It takes the folder's type, keeping every
+    /// field that has something in it (fields the new type doesn't have become the note's
+    /// own), and links to it are rewritten where they need to be.
+    fn move_note(&mut self, path: &Path, folder: &Path) {
+        let Some(name) = path.file_name() else {
+            return;
+        };
+        if path.parent() == Some(folder) || !folder.starts_with(&self.root) {
+            return;
+        }
+        let target = folder.join(name);
+        let label = display_name(path, false);
+        let where_to = match folder.strip_prefix(&self.root) {
+            Ok(relative) if relative.as_os_str().is_empty() => "the campaign folder".to_string(),
+            Ok(relative) => relative.display().to_string(),
+            Err(_) => folder.display().to_string(),
+        };
+
+        if let Some(tab) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.path.as_deref() == Some(path))
+            && tab.modified
+        {
+            self.status = format!("Save {label} before moving it");
+            return;
+        }
+        if target.exists() {
+            self.status =
+                format!("Can't move {label}: {where_to} already has a note with that name");
+            return;
+        }
+
+        let ty = match self.types.get(folder) {
+            Some(Ok(ty)) => Some(ty.clone()),
+            _ => None,
+        };
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.status = format!("Could not read {label}: {error}");
+                return;
+            }
+        };
+        let retyped = ty.as_ref().and_then(|ty| retype(&text, ty, &label));
+
+        if let Err(error) = std::fs::rename(path, &target) {
+            self.status = format!("Could not move {label}: {error}");
+            return;
+        }
+        if let Some(retyped) = &retyped
+            && let Err(error) = std::fs::write(&target, retyped)
+        {
+            self.status = format!("Moved {label}, but could not give it its new type: {error}");
+        }
+
+        self.expanded.insert(folder.to_path_buf());
+        self.rescan();
+        for index in 0..self.tabs.len() {
+            if self.tabs[index].path.as_deref() == Some(path) {
+                self.tabs[index].path = Some(target.clone());
+                self.tabs[index].folder = folder.to_path_buf();
+                let _ = self.reload_tab(index);
+            }
+        }
+
+        let done = match (&ty, retyped.is_some()) {
+            (Some(ty), true) => {
+                let kind = ty.label();
+                let article =
+                    if kind.starts_with(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']) {
+                        "an"
+                    } else {
+                        "a"
+                    };
+                format!("Moved {label} to {where_to} as {article} {kind}")
+            }
+            _ => format!("Moved {label} to {where_to}"),
+        };
+        self.relink(path, &target, &done);
     }
 
     fn editor_body(&self, c: Colors, suggestions: &[(String, String)]) -> Element<'_, Message> {
@@ -2355,6 +2536,42 @@ impl Workspace {
             editor.into()
         }
     }
+}
+
+/// The text of a note moved into a folder of type `ty`: its front matter names the new
+/// type, and gets a name (`name`, from the filename) if the type wants one.
+///
+/// Every other key and section is kept as it is: what the new type doesn't have shows
+/// as the note's own fields. Returns `None` if the front matter can't be read.
+fn retype(text: &str, ty: &ContentType, name: &str) -> Option<String> {
+    let (front, body) = note::split_front_matter(text).ok()?;
+    let mut front = match front {
+        Some(yaml) => match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(yaml).ok()? {
+            serde_yaml_ng::Value::Mapping(front) => front,
+            serde_yaml_ng::Value::Null => serde_yaml_ng::Mapping::new(),
+            _ => return None,
+        },
+        None => serde_yaml_ng::Mapping::new(),
+    };
+
+    // `type` goes first, as the form writes it.
+    let mut retyped = serde_yaml_ng::Mapping::new();
+    retyped.insert("type".into(), ty.id.clone().into());
+    // The removed fields were the old type's.
+    front.shift_remove(form::REMOVED_KEY);
+    front.shift_remove("type");
+    if ty.name_field().is_some() && !front.contains_key("name") {
+        retyped.insert("name".into(), name.into());
+    }
+    retyped.extend(front);
+
+    let yaml = serde_yaml_ng::to_string(&retyped).ok()?;
+    let body = body.trim_start_matches(['\r', '\n']);
+    Some(if body.is_empty() {
+        format!("---\n{yaml}---\n")
+    } else {
+        format!("---\n{yaml}---\n\n{body}")
+    })
 }
 
 /// Lists every Markdown file in the tree.
@@ -2841,4 +3058,64 @@ fn with_md_extension(mut path: PathBuf) -> PathBuf {
     }
 
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moved_notes_take_the_new_type_and_keep_their_data() {
+        let lore = types::parse(
+            "type: lore\nfields:\n  - key: name\n  - key: category\n    kind: choice\n    options: [Myth]\n",
+        )
+        .unwrap();
+        let item = types::parse(types::STARTER_TYPES[0].1).unwrap();
+        assert_eq!(item.id, "item");
+
+        let text = "---\ntype: lore\nname: The Tide Crown\ncategory: Myth\nremoved_fields:\n- secrets\n---\n\nIntro.\n\n## History\n\nSunk.\n";
+        let moved = retype(text, &item, "The Tide Crown").unwrap();
+        assert_eq!(
+            moved,
+            "---\ntype: item\nname: The Tide Crown\ncategory: Myth\n---\n\nIntro.\n\n## History\n\nSunk.\n"
+        );
+
+        // In the form, the category is a field of the note's own, next to the item's.
+        let form = Form::from_note(item, note::parse(&moved).unwrap());
+        assert_eq!(form.name().as_deref(), Some("The Tide Crown"));
+        assert!(form.to_markdown().unwrap().contains("category: Myth"));
+
+        // A plain note gets front matter, with its filename as its name.
+        let moved = retype("Just text.\n", &lore, "Old Song").unwrap();
+        assert_eq!(
+            moved,
+            "---\ntype: lore\nname: Old Song\n---\n\nJust text.\n"
+        );
+    }
+
+    #[test]
+    fn linked_notes_are_made_in_the_fields_folder() {
+        let root =
+            std::env::temp_dir().join(format!("dungeon_elements_linked_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let locations = root.join("locations");
+        std::fs::create_dir_all(&locations).unwrap();
+        let ty = types::parse("type: location\nfields:\n  - key: name\n").unwrap();
+
+        let path =
+            create_linked_note(&root, "Smuggler's Cove", Some(&locations), Some(&ty)).unwrap();
+        assert_eq!(path, locations.join("Smuggler's Cove.md"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "---\ntype: location\nname: Smuggler's Cove\n---\n"
+        );
+        assert!(create_linked_note(&root, "Smuggler's Cove", Some(&locations), Some(&ty)).is_err());
+
+        // Body links have no folder: the note goes in the campaign folder, empty.
+        let path = create_linked_note(&root, "Drowned Vault", None, None).unwrap();
+        assert_eq!(path, root.join("Drowned Vault.md"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

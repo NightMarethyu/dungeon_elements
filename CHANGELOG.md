@@ -10,6 +10,8 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - **Edit > Insert Link** (Ctrl+K) turns the selected text into a link.
 - Links are colored in the editor, and links to notes that don't exist yet are dimmer.
 - Ctrl+click a link, or use the bar under the editor, to open the note. Following a link to a note that doesn't exist yet creates it. Link fields have an **Open** button.
+- Link fields link to a folder: a Location field suggests locations first, and typing a place that doesn't exist yet offers **+ New Location**, which makes it in the locations folder with its name filled in. Set a field's folder in **Edit > Types** (Links to).
+- Drag a note in the file tree onto another folder to move it. It becomes that folder's type and keeps the fields you filled in, and links to it are updated.
 - Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
 
 ## [0.1.0] - 2026-10-25

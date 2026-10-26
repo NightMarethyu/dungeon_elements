@@ -120,7 +120,11 @@ impl Form {
                 || ty.fields.iter().any(|field| field.key == key)
                 || fields.iter().any(|field| field.key == key);
             if let (false, Some(kind)) = (listed, kind_of(value)) {
-                fields.push(Field::for_note(&key, kind));
+                // Shown like the type's fields: `category` as "Category".
+                fields.push(Field {
+                    label: None,
+                    ..Field::for_note(&key, kind)
+                });
             }
         }
 
