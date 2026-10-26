@@ -45,6 +45,7 @@ The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon El
 ### Notes
 
 - Write notes in a text editor and save them as Markdown (`.md`) files, with **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), and **Close Tab** (Ctrl+W). Closing a tab or the window with unsaved changes asks first.
+- **File > Save All** (Ctrl+Alt+S) saves every open note with unsaved changes. New notes without a file yet ask where to go, one at a time, and the status bar says how many were saved and why any weren't.
 - Give a folder a content type in its `_type.yaml`, and its notes open as a form (like Name, Value, Rarity, History, and Stats for an item). Fields can be text, numbers, choices, tags, `[[links]]`, checkboxes, or long text. Notes are saved as Markdown with YAML front matter that Obsidian can read.
 - The **+** next to a folder makes a new note of its type, saved as `<name>.md`.
 - Add a field to a single note with the round **+** on its form, and remove any field except the name from a single note.
