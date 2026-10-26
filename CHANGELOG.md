@@ -20,6 +20,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Links in the reading view can be clicked. `[[Links]]` open the note (links to notes that don't exist yet are dimmer, and clicking one makes the note), web links open in your browser, and Markdown links to files in the campaign open them.
 - Pictures next to a note, or embedded the Obsidian way (`![[harbor.png]]`, found anywhere in the campaign), show in the reading view. PNG, JPEG, GIF, WebP, and SVG work.
 - **View > Open Notes in Reading View** opens notes formatted instead of in an editor.
+- Edit right in the reading view: click a paragraph, list, table, or heading to edit its Markdown in place, and it's formatted again when you click elsewhere or press Escape. Click a field in the box to change it (a choice shows its options, and a checkbox flips), click the title to rename the note, and click under the note to add more.
 
 ### Dice roller
 
