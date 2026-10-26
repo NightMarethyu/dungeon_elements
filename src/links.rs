@@ -231,9 +231,16 @@ impl Index {
     }
 
     /// Notes whose name contains `query`, best matches first: `(link text, label)` pairs.
+    /// Notes inside `folder`, if given, come before the rest.
     ///
     /// The label shows the folder when two notes share a name.
-    pub fn suggest(&self, query: &str, from: &Path, limit: usize) -> Vec<(String, String)> {
+    pub fn suggest(
+        &self,
+        query: &str,
+        from: &Path,
+        folder: Option<&Path>,
+        limit: usize,
+    ) -> Vec<(String, String)> {
         let query = normalize(query);
         let mut matches: Vec<&Entry> = self
             .notes
@@ -244,6 +251,7 @@ impl Index {
         let rank = |entry: &Entry| {
             let name = entry.name().to_lowercase();
             (
+                folder.is_some_and(|folder| !entry.path.starts_with(folder)),
                 !name.starts_with(&query),
                 !name.contains(&query),
                 name,
@@ -766,7 +774,7 @@ mod tests {
         );
         let from = root.join("journal/Day 1.md");
 
-        let suggestions = index.suggest("mir", &from, 8);
+        let suggestions = index.suggest("mir", &from, None, 8);
         assert_eq!(
             suggestions,
             [
@@ -775,9 +783,13 @@ mod tests {
                 ("Admiral".into(), "Admiral".into()),
             ]
         );
-        let bobs = index.suggest("bob", &from, 8);
+        let bobs = index.suggest("bob", &from, None, 8);
         assert_eq!(bobs[0].1, "items/Bob");
         assert_eq!(bobs[1].1, "npcs/Bob");
+
+        // A link field that links to NPCs lists them first.
+        let bobs = index.suggest("bob", &from, Some(&root.join("npcs")), 8);
+        assert_eq!(bobs[0].1, "npcs/Bob");
     }
 
     fn rename_in(

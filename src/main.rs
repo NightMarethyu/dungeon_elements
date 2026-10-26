@@ -156,6 +156,18 @@ enum Dialog {
     Problems,
 }
 
+/// What the link bar offers while a link is being typed.
+#[derive(Default)]
+struct Suggestions {
+    /// Notes the link could be, as `(link text, label)`.
+    notes: Vec<(String, String)>,
+    /// Whether the link is typed in a link field rather than a text editor.
+    in_field: bool,
+    /// For a link field that links to a folder: the field's index, and the label of a
+    /// button that makes the note it names there.
+    create: Option<(usize, String)>,
+}
+
 /// A content type a new folder can start with.
 #[derive(Debug, Clone, PartialEq)]
 struct Template {
@@ -1489,7 +1501,7 @@ impl Workspace {
                 }
                 Task::none()
             }
-            Message::Form(form::Message::FollowLink(target)) => self.follow_link(&target),
+            Message::Form(form::Message::FollowLink(index)) => self.follow_link_field(index),
             Message::Form(message) => {
                 let click = matches!(
                     message,
@@ -1933,43 +1945,93 @@ impl Workspace {
     }
 
     fn editor(&self, c: Colors) -> Element<'_, Message> {
-        let (suggestions, in_field) = self.link_suggestions();
-        let editor = self.editor_body(c, &suggestions);
+        let suggestions = self.link_suggestions();
+        let editor = self.editor_body(c, &suggestions.notes);
 
         let mut view = column![];
         if self.active_tab().is_some_and(|tab| tab.changed_outside) {
             view = view.push(changed_outside_banner(c));
         }
-        view.push(editor)
-            .push(self.link_bar(c, suggestions, in_field))
-            .into()
+        view.push(editor).push(self.link_bar(c, suggestions)).into()
     }
 
     /// The notes the link being typed in the active tab could be, as `(link text, label)`.
     ///
     /// The flag is true when the link is typed in a link field rather than a text editor.
-    fn link_suggestions(&self) -> (Vec<(String, String)>, bool) {
+    fn link_suggestions(&self) -> Suggestions {
+        let none = Suggestions::default();
         let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
-            return (Vec::new(), false);
+            return none;
         };
-        let query = match &tab.form {
-            Some(form) if tab.shows_form() => form.link_query(),
-            _ => links::query(&tab.content).map(|query| (query, false)),
+        let form = tab.form.as_ref().filter(|_| tab.shows_form());
+        let query = match form {
+            Some(form) => form.link_query(),
+            None => links::query(&tab.content).map(|query| (query, false)),
         };
         let Some((query, in_field)) = query else {
-            return (Vec::new(), false);
+            return none;
         };
 
-        let suggestions = self.index.suggest(&query, &tab.note_path(), SUGGESTIONS);
+        // A link field lists the notes of the folder it links to first.
+        let field = form.and_then(|form| {
+            let index = form.focused_link_field()?;
+            Some((index, form.link_field(index)?.0))
+        });
+        let folder = field.and_then(|(_, field)| self.link_folder(field));
+
+        let notes = self
+            .index
+            .suggest(&query, &tab.note_path(), folder.as_deref(), SUGGESTIONS);
         // A link field that already names a note needs no suggestions.
-        if in_field
-            && suggestions
-                .iter()
-                .any(|(link, _)| link.eq_ignore_ascii_case(query.trim()))
-        {
-            return (Vec::new(), false);
+        if in_field && self.index.resolve(&query, &tab.note_path()).is_some() {
+            return none;
         }
-        (suggestions, in_field)
+
+        // ...and offers to make the note it names, in that folder.
+        let create = field.zip(folder.as_ref()).map(|((index, _), folder)| {
+            let kind = match self.types.get(folder) {
+                Some(Ok(ty)) => ty.label(),
+                _ => "note".into(),
+            };
+            (
+                index,
+                format!(
+                    "+ New {kind}: {} (in {})",
+                    query.trim(),
+                    self.relative(folder)
+                ),
+            )
+        });
+
+        Suggestions {
+            notes,
+            in_field,
+            create,
+        }
+    }
+
+    /// The folder link field `field` links to: the one its type names, or else a folder
+    /// whose type has the field's name (so a `location` field links to Locations).
+    fn link_folder(&self, field: &types::Field) -> Option<PathBuf> {
+        if let Some(folder) = &field.folder {
+            let path = self.root.join(folder.trim_matches('/'));
+            return path.is_dir().then_some(path);
+        }
+
+        let names = [field.key.to_lowercase(), field.label().to_lowercase()];
+        let mut matches: Vec<&PathBuf> = self
+            .types
+            .iter()
+            .filter(|(_, ty)| {
+                ty.as_ref().is_ok_and(|ty| {
+                    names.contains(&ty.id.to_lowercase())
+                        || names.contains(&ty.label().to_lowercase())
+                })
+            })
+            .map(|(folder, _)| folder)
+            .collect();
+        matches.sort();
+        matches.first().map(|folder| folder.to_path_buf())
     }
 
     /// The colors `[[links]]` are shown in, in text editors.
@@ -1984,12 +2046,12 @@ impl Workspace {
 
     /// The bar under the editor: notes to link to while a `[[link]]` is being typed, or a
     /// button to open the link the cursor is in.
-    fn link_bar<'a>(
-        &self,
-        c: Colors,
-        suggestions: Vec<(String, String)>,
-        in_field: bool,
-    ) -> Element<'a, Message> {
+    fn link_bar<'a>(&self, c: Colors, suggestions: Suggestions) -> Element<'a, Message> {
+        let Suggestions {
+            notes: suggestions,
+            in_field,
+            create,
+        } = suggestions;
         let bar = |content| {
             container(content)
                 .padding([6, 16])
@@ -1998,7 +2060,8 @@ impl Workspace {
                 .into()
         };
 
-        if !suggestions.is_empty() {
+        if !suggestions.is_empty() || create.is_some() {
+            let suggestions_count = suggestions.len();
             let chips = suggestions.into_iter().map(|(link, label)| {
                 button(text(label).size(13))
                     .padding([3, 10])
@@ -2006,17 +2069,23 @@ impl Workspace {
                     .on_press(Message::CompleteLink(link))
                     .into()
             });
+            let create = create.map(|(index, label)| {
+                button(text(label).size(13))
+                    .padding([3, 10])
+                    .style(style::secondary(c))
+                    .on_press(Message::Form(form::Message::FollowLink(index)))
+            });
+            let hint = match (suggestions_count, in_field) {
+                (0, _) => "",
+                (_, true) => "Enter picks the first",
+                (_, false) => "Tab inserts the first",
+            };
+            let chips = row(chips).push(create);
             return bar(row![
                 text("Link to").size(13).color(c.text_muted),
-                row(chips).spacing(6).wrap(),
+                chips.spacing(6).wrap(),
                 space::horizontal(),
-                text(if in_field {
-                    "Enter picks the first"
-                } else {
-                    "Tab inserts the first"
-                })
-                .size(12)
-                .color(c.text_muted),
+                text(hint).size(12).color(c.text_muted),
             ]
             .spacing(10)
             .align_y(Center));
@@ -2058,9 +2127,31 @@ impl Workspace {
         .align_y(Center))
     }
 
+    /// Opens the note link field `index` of the active tab points to. If there is none,
+    /// makes it in the folder the field links to, with that folder's type.
+    fn follow_link_field(&mut self, index: usize) -> Task<Message> {
+        let Some(form) = self.active_tab().and_then(|tab| tab.form.as_ref()) else {
+            return Task::none();
+        };
+        let Some((field, target)) = form.link_field(index) else {
+            return Task::none();
+        };
+        if target.trim().is_empty() {
+            return Task::none();
+        }
+        let target = target.trim().to_string();
+        let folder = self.link_folder(field);
+        self.follow_link_into(&target, folder)
+    }
+
     /// Opens the note `target` links to from the active tab. If there is none, makes an
     /// empty one in the campaign folder (or the subfolder the link names), as Obsidian does.
     fn follow_link(&mut self, target: &str) -> Task<Message> {
+        self.follow_link_into(target, None)
+    }
+
+    /// Like [`Self::follow_link`], but a missing note is made in `folder`, if given.
+    fn follow_link_into(&mut self, target: &str, folder: Option<PathBuf>) -> Task<Message> {
         let from = self
             .active_tab()
             .map(Tab::note_path)
@@ -2072,17 +2163,28 @@ impl Workspace {
             return Task::none();
         }
 
-        match create_linked_note(&self.root, target) {
+        let ty = folder
+            .as_ref()
+            .and_then(|folder| self.types.get(folder)?.as_ref().ok())
+            .cloned();
+        match create_linked_note(&self.root, target, folder.as_deref(), ty.as_ref()) {
             Ok(path) => {
                 self.rescan();
                 if let Some(folder) = path.parent() {
                     self.expanded.insert(folder.to_path_buf());
                 }
                 self.open_file(path.clone());
-                self.status = format!(
-                    "Created {}: no note had that name yet",
-                    self.relative(&path)
-                );
+                self.status = match ty {
+                    Some(ty) => format!(
+                        "Created {} as a new {}: no note had that name yet",
+                        self.relative(&path),
+                        ty.label()
+                    ),
+                    None => format!(
+                        "Created {}: no note had that name yet",
+                        self.relative(&path)
+                    ),
+                };
             }
             Err(message) => self.status = message,
         }
@@ -2273,8 +2375,14 @@ fn markdown_files(entries: &[Entry]) -> Vec<PathBuf> {
 }
 
 /// Makes an empty note for a link to `target`, which names no note yet: `<target>.md`
-/// in the campaign folder `root`, or in the folder the target's path names.
-fn create_linked_note(root: &Path, target: &str) -> Result<PathBuf, String> {
+/// in `folder` (or else the campaign folder `root`), or in the folder the target's path
+/// names. With a type `ty`, the note gets its `type:` and its name filled in.
+fn create_linked_note(
+    root: &Path,
+    target: &str,
+    folder: Option<&Path>,
+    ty: Option<&ContentType>,
+) -> Result<PathBuf, String> {
     let target = target.trim().replace('\\', "/");
     let target = target.trim_matches('/');
     let target = target
@@ -2290,7 +2398,10 @@ fn create_linked_note(root: &Path, target: &str) -> Result<PathBuf, String> {
         return Err(format!("There is no file called {target} in this campaign"));
     }
 
-    let mut path = root.to_path_buf();
+    let mut path = match folder {
+        Some(folder) if !target.contains('/') => folder.to_path_buf(),
+        _ => root.to_path_buf(),
+    };
     for part in target.split('/') {
         campaign::validate_name(part.trim())
             .map_err(|error| format!("Can't make a note for [[{target}]]: {error}"))?;
@@ -2304,12 +2415,27 @@ fn create_linked_note(root: &Path, target: &str) -> Result<PathBuf, String> {
         ));
     }
 
+    let text = match ty {
+        Some(ty) => {
+            let mut front = serde_yaml_ng::Mapping::new();
+            front.insert("type".into(), ty.id.clone().into());
+            if ty.name_field().is_some() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                front.insert("name".into(), name.into_owned().into());
+            }
+            note::to_markdown(&front, &[], "")?
+        }
+        None => String::new(),
+    };
+
     path.as_mut_os_string().push(".md");
-    std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)
         .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
+    std::io::Write::write_all(&mut file, text.as_bytes())
+        .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
     Ok(path)
 }
 

@@ -40,8 +40,8 @@ pub enum Message {
     Other(text_editor::Action),
     /// Removes a field from this note.
     Remove(usize),
-    /// Opens the note a link field points to.
-    FollowLink(String),
+    /// Opens the note link field `index` points to, making it if there is none.
+    FollowLink(usize),
 }
 
 /// What the user typed into one field.
@@ -325,6 +325,21 @@ impl Form {
         }
     }
 
+    /// Link field `index` and the note name in it.
+    pub fn link_field(&self, index: usize) -> Option<(&Field, &str)> {
+        match (self.fields.get(index), self.inputs.get(index)) {
+            (Some(field), Some(Input::Text(value))) if field.kind == Kind::Link => {
+                Some((field, note::unlink(value)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The link field last typed in, if the focus is on one.
+    pub fn focused_link_field(&self) -> Option<usize> {
+        self.focus.filter(|&index| self.link_field(index).is_some())
+    }
+
     /// Finishes the link being typed with `link`. Returns whether the note changed.
     pub fn complete_link(&mut self, link: &str) -> bool {
         let Some(index) = self.focus else {
@@ -567,7 +582,7 @@ impl Form {
                                         button(text("Open").size(13))
                                             .padding([8, 10])
                                             .style(style::secondary(c))
-                                            .on_press(map(Message::FollowLink(value.clone()))),
+                                            .on_press(map(Message::FollowLink(index))),
                                     ]
                                     .spacing(6)
                                     .into()

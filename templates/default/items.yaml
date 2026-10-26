@@ -12,6 +12,7 @@ fields:
   - key: owner
     label: Owner
     kind: link
+    folder: npcs
   - key: history
     label: History
     kind: longtext

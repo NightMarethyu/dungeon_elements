@@ -70,7 +70,8 @@ pub struct Field {
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "Width::is_half")]
     pub width: Width,
-    /// For `link` fields: the folder to suggest notes from. Not used yet.
+    /// For `link` fields: the folder (inside the campaign, like `locations`) whose notes
+    /// are suggested first, and where a note the link names is made if there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
 }

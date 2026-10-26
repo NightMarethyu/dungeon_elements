@@ -10,6 +10,7 @@ fields:
   - key: giver
     label: Quest giver
     kind: link
+    folder: npcs
   - key: reward
     label: Reward
   - key: summary
