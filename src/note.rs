@@ -73,7 +73,7 @@ pub fn parse(text: &str) -> Result<Note, String> {
 }
 
 /// Returns the front matter's YAML (if the text starts with `---`) and the text after it.
-fn split_front_matter(text: &str) -> Result<(Option<&str>, &str), String> {
+pub fn split_front_matter(text: &str) -> Result<(Option<&str>, &str), String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
 
     let Some(rest) = text

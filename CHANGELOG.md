@@ -4,6 +4,14 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Links
+
+- Link notes the Obsidian way with `[[Note]]`. Typing `[[` closes it with `]]` and suggests notes by name under the editor; press Tab (or click one) to insert it. Link fields in forms suggest notes the same way.
+- **Edit > Insert Link** (Ctrl+K) turns the selected text into a link.
+- Links are colored in the editor, and links to notes that don't exist yet are dimmer.
+- Ctrl+click a link, or use the bar under the editor, to open the note. Following a link to a note that doesn't exist yet creates it. Link fields have an **Open** button.
+- Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
+
 ## [0.1.0] - 2026-10-25
 
 The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon Elements is in early development, so expect rough edges, and keep backups of campaigns you care about.

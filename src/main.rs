@@ -7,6 +7,7 @@ mod campaign;
 mod check;
 mod form;
 mod icon;
+mod links;
 mod menu;
 mod note;
 mod settings;
@@ -99,6 +100,10 @@ impl Default for Screen {
 const TITLE_INPUT: &str = "new-campaign-title";
 /// The widget id of the name field in the workspace's dialogs.
 const DIALOG_INPUT: &str = "dialog-name";
+/// The widget id of the text editor that shows a file's text.
+const EDITOR: &str = "editor";
+/// How many notes the link bar suggests at most.
+const SUGGESTIONS: usize = 8;
 
 /// The fields of the "New campaign" dialog.
 struct NewCampaign {
@@ -125,6 +130,10 @@ struct Workspace {
     status: String,
     /// The dialog open over the workspace, if any.
     dialog: Option<Dialog>,
+    /// The campaign's notes, for following and rewriting `[[links]]`.
+    index: links::Index,
+    /// Whether Ctrl (Cmd on macOS) is held, so a click on a link opens it.
+    ctrl: bool,
 }
 
 /// A dialog over the workspace.
@@ -212,6 +221,18 @@ impl Tab {
         }
     }
 
+    /// Whether the tab holds a note, rather than a `_type.yaml`, so links work in it.
+    fn is_note(&self) -> bool {
+        self.path.as_deref().is_none_or(campaign::is_markdown)
+    }
+
+    /// The note's path, or where it will be saved, for resolving its links.
+    fn note_path(&self) -> PathBuf {
+        self.path
+            .clone()
+            .unwrap_or_else(|| self.folder.join("Untitled.md"))
+    }
+
     /// The note's name from its `name` field, read from the form or the source.
     fn note_name(&self) -> Option<String> {
         let form = self.form.as_ref()?;
@@ -273,6 +294,12 @@ enum Message {
     NewNoteIn(PathBuf),
     Form(form::Message),
     ToggleSource,
+    Modifiers(Modifiers),
+    /// Finishes the link being typed with this link text.
+    CompleteLink(String),
+    /// Opens the note a link points to, creating it if there is none.
+    FollowLink(String),
+    InsertLink,
     ShowAddField,
     AddFieldLabel(String),
     AddFieldKind(types::Kind),
@@ -410,6 +437,7 @@ impl App {
                 keyboard::Event::KeyPressed { key, modifiers, .. } => {
                     escape(&key).or_else(|| shortcut(&key, modifiers))
                 }
+                keyboard::Event::ModifiersChanged(modifiers) => Some(Message::Modifiers(modifiers)),
                 _ => None,
             }),
         };
@@ -651,6 +679,11 @@ impl App {
         let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
         let active_tab = workspace.and_then(Workspace::active_tab);
         let has_form = active_tab.is_some_and(|tab| tab.form.is_some());
+        let can_link = active_tab.is_some_and(|tab| {
+            tab.is_note()
+                && (!tab.shows_form()
+                    || tab.form.as_ref().is_some_and(|form| form.focus().is_some()))
+        });
         let shows_source = active_tab.is_some_and(|tab| tab.form.is_some() && !tab.shows_form());
         let when = |enabled: bool, message: Message| enabled.then_some(message);
 
@@ -677,6 +710,8 @@ impl App {
                 ],
             },
             Menu::Edit => vec![
+                item("Insert Link", when(can_link, Message::InsertLink)).shortcut("Ctrl+K"),
+                Entry::Separator,
                 item(
                     "Add Field to This Note...",
                     when(
@@ -730,6 +765,7 @@ impl Workspace {
         let tree = campaign::scan(&root);
         let types = load_types(&root, &tree);
         let problems = check::campaign(&root, &tree, &types);
+        let index = links::Index::new(&root, markdown_files(&tree));
         let status = match problems_summary(&problems) {
             Some(summary) => format!("Opened {}. {summary}", root.display()),
             None => format!("Opened {}", root.display()),
@@ -745,6 +781,8 @@ impl Workspace {
             active: None,
             next_id: 0,
             dialog: None,
+            index,
+            ctrl: false,
         }
     }
 
@@ -776,6 +814,7 @@ impl Workspace {
         self.tree = campaign::scan(&self.root);
         self.types = load_types(&self.root, &self.tree);
         self.problems = check::campaign(&self.root, &self.tree, &self.types);
+        self.index = links::Index::new(&self.root, markdown_files(&self.tree));
     }
 
     /// The problems found in the file at `path`.
@@ -1028,8 +1067,17 @@ impl Workspace {
             && form.ty.name_field().is_some()
         {
             // Applied right away, so a second Ctrl+S before then can't save a new note twice.
+            let old = tab.path.clone();
             let result = save_named(tab, &text, &form.ty.label());
-            return self.update(Message::Saved(id, result.map(Some)));
+            let renamed = match (old, &result) {
+                (Some(old), Ok(new)) if old != *new => Some((old, new.clone())),
+                _ => None,
+            };
+            let task = self.update(Message::Saved(id, result.map(Some)));
+            if let Some((old, new)) = renamed {
+                self.relink(&old, &new);
+            }
+            return task;
         }
 
         let path = if save_as { None } else { tab.path.clone() };
@@ -1441,13 +1489,79 @@ impl Workspace {
                 }
                 Task::none()
             }
+            Message::Form(form::Message::FollowLink(target)) => self.follow_link(&target),
             Message::Form(message) => {
+                let click = matches!(
+                    message,
+                    form::Message::Long(_, text_editor::Action::Click(_))
+                );
+                let ctrl = self.ctrl;
                 if let Some(tab) = self.active_tab_mut()
                     && let Some(form) = &mut tab.form
                 {
                     tab.modified |= form.update(message);
+                    if click
+                        && ctrl
+                        && let Some(target) = form.link_under_cursor()
+                    {
+                        return self.follow_link(&target);
+                    }
                 }
                 Task::none()
+            }
+            Message::Modifiers(modifiers) => {
+                self.ctrl = modifiers.command();
+                Task::none()
+            }
+            Message::CompleteLink(link) => {
+                let Some(tab) = self.active_tab_mut() else {
+                    return Task::none();
+                };
+                if tab.shows_form() {
+                    let Some(form) = &mut tab.form else {
+                        return Task::none();
+                    };
+                    let focus = form.focus();
+                    tab.modified |= form.complete_link(&link);
+                    match focus {
+                        Some(index) => iced::widget::operation::focus(form::field_id(index)),
+                        None => Task::none(),
+                    }
+                } else {
+                    links::complete(&mut tab.content, &link);
+                    tab.modified = true;
+                    iced::widget::operation::focus(EDITOR)
+                }
+            }
+            Message::FollowLink(target) => self.follow_link(&target),
+            Message::InsertLink => {
+                let Some(tab) = self.active_tab_mut() else {
+                    return Task::none();
+                };
+                if !tab.is_note() {
+                    return Task::none();
+                }
+                if tab.shows_form() {
+                    let Some(form) = &mut tab.form else {
+                        return Task::none();
+                    };
+                    let focus = form.focus();
+                    if form.insert_link() {
+                        tab.modified = true;
+                        if let Some(index) = focus {
+                            return iced::widget::operation::focus(form::field_id(index));
+                        }
+                    } else {
+                        self.status =
+                            "Click in a text box first, then press Ctrl+K to add a link there"
+                                .into();
+                    }
+                    Task::none()
+                } else {
+                    links::insert(&mut tab.content);
+                    tab.modified = true;
+                    iced::widget::operation::focus(EDITOR)
+                }
             }
             Message::ToggleSource => {
                 let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
@@ -1497,6 +1611,8 @@ impl Workspace {
                 Task::none()
             }
             Message::WindowFocused => {
+                // Ctrl may have been let go in another window.
+                self.ctrl = false;
                 self.rescan();
                 self.check_disk();
                 Task::none()
@@ -1557,9 +1673,21 @@ impl Workspace {
                 }
             }
             Message::Edit(action) => {
+                let click = matches!(action, text_editor::Action::Click(_));
+                let ctrl = self.ctrl;
                 if let Some(tab) = self.active_tab_mut() {
                     tab.modified |= action.is_edit();
-                    tab.content.perform(action);
+                    if !tab.is_note() {
+                        tab.content.perform(action);
+                        return Task::none();
+                    }
+                    links::perform(&mut tab.content, action);
+                    if click
+                        && ctrl
+                        && let Some(target) = links::under_cursor(&tab.content)
+                    {
+                        return self.follow_link(&target);
+                    }
                 }
                 Task::none()
             }
@@ -1805,15 +1933,266 @@ impl Workspace {
     }
 
     fn editor(&self, c: Colors) -> Element<'_, Message> {
-        let editor = self.editor_body(c);
+        let (suggestions, in_field) = self.link_suggestions();
+        let editor = self.editor_body(c, &suggestions);
 
-        match self.active_tab() {
-            Some(tab) if tab.changed_outside => column![changed_outside_banner(c), editor].into(),
-            _ => editor,
+        let mut view = column![];
+        if self.active_tab().is_some_and(|tab| tab.changed_outside) {
+            view = view.push(changed_outside_banner(c));
+        }
+        view.push(editor)
+            .push(self.link_bar(c, suggestions, in_field))
+            .into()
+    }
+
+    /// The notes the link being typed in the active tab could be, as `(link text, label)`.
+    ///
+    /// The flag is true when the link is typed in a link field rather than a text editor.
+    fn link_suggestions(&self) -> (Vec<(String, String)>, bool) {
+        let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
+            return (Vec::new(), false);
+        };
+        let query = match &tab.form {
+            Some(form) if tab.shows_form() => form.link_query(),
+            _ => links::query(&tab.content).map(|query| (query, false)),
+        };
+        let Some((query, in_field)) = query else {
+            return (Vec::new(), false);
+        };
+
+        let suggestions = self.index.suggest(&query, &tab.note_path(), SUGGESTIONS);
+        // A link field that already names a note needs no suggestions.
+        if in_field
+            && suggestions
+                .iter()
+                .any(|(link, _)| link.eq_ignore_ascii_case(query.trim()))
+        {
+            return (Vec::new(), false);
+        }
+        (suggestions, in_field)
+    }
+
+    /// The colors `[[links]]` are shown in, in text editors.
+    fn link_colors(&self, c: Colors) -> links::Colors {
+        links::Colors {
+            link: c.accent,
+            missing: c.text_muted,
+            bold: c.accent == c.text,
+            names: self.index.names(),
         }
     }
 
-    fn editor_body(&self, c: Colors) -> Element<'_, Message> {
+    /// The bar under the editor: notes to link to while a `[[link]]` is being typed, or a
+    /// button to open the link the cursor is in.
+    fn link_bar<'a>(
+        &self,
+        c: Colors,
+        suggestions: Vec<(String, String)>,
+        in_field: bool,
+    ) -> Element<'a, Message> {
+        let bar = |content| {
+            container(content)
+                .padding([6, 16])
+                .width(Fill)
+                .style(style::panel(c.sidebar))
+                .into()
+        };
+
+        if !suggestions.is_empty() {
+            let chips = suggestions.into_iter().map(|(link, label)| {
+                button(text(label).size(13))
+                    .padding([3, 10])
+                    .style(style::secondary(c))
+                    .on_press(Message::CompleteLink(link))
+                    .into()
+            });
+            return bar(row![
+                text("Link to").size(13).color(c.text_muted),
+                row(chips).spacing(6).wrap(),
+                space::horizontal(),
+                text(if in_field {
+                    "Enter picks the first"
+                } else {
+                    "Tab inserts the first"
+                })
+                .size(12)
+                .color(c.text_muted),
+            ]
+            .spacing(10)
+            .align_y(Center));
+        }
+
+        let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
+            return space().height(0).into();
+        };
+        let target = match &tab.form {
+            Some(form) if tab.shows_form() => form.link_under_cursor(),
+            _ => links::under_cursor(&tab.content),
+        };
+        let Some(target) = target else {
+            return space().height(0).into();
+        };
+
+        let exists = self.index.resolve(&target, &tab.note_path()).is_some();
+        let (action, hint) = if exists {
+            (format!("Open {target}"), "or Ctrl+click the link")
+        } else {
+            (
+                format!("Create {target}"),
+                "No note has this name yet; this makes one in the campaign folder",
+            )
+        };
+        bar(row![
+            text(format!("[[{target}]]")).size(13).color(if exists {
+                c.accent
+            } else {
+                c.text_muted
+            }),
+            button(text(action).size(13))
+                .padding([3, 10])
+                .style(style::secondary(c))
+                .on_press(Message::FollowLink(target)),
+            text(hint).size(12).color(c.text_muted),
+        ]
+        .spacing(10)
+        .align_y(Center))
+    }
+
+    /// Opens the note `target` links to from the active tab. If there is none, makes an
+    /// empty one in the campaign folder (or the subfolder the link names), as Obsidian does.
+    fn follow_link(&mut self, target: &str) -> Task<Message> {
+        let from = self
+            .active_tab()
+            .map(Tab::note_path)
+            .unwrap_or_else(|| self.root.join("Untitled.md"));
+
+        if let Some(path) = self.index.resolve(target, &from) {
+            let path = path.to_path_buf();
+            self.open_file(path);
+            return Task::none();
+        }
+
+        match create_linked_note(&self.root, target) {
+            Ok(path) => {
+                self.rescan();
+                if let Some(folder) = path.parent() {
+                    self.expanded.insert(folder.to_path_buf());
+                }
+                self.open_file(path.clone());
+                self.status = format!(
+                    "Created {}: no note had that name yet",
+                    self.relative(&path)
+                );
+            }
+            Err(message) => self.status = message,
+        }
+        Task::none()
+    }
+
+    /// Rewrites `[[links]]` across the campaign after the note at `old` was renamed to `new`,
+    /// so they still point to it. Open tabs are updated too, unsaved changes and all.
+    fn relink(&mut self, old: &Path, new: &Path) {
+        let notes = markdown_files(&self.tree);
+        let after = links::Index::new(&self.root, notes.iter().cloned());
+        let before = links::Index::new(
+            &self.root,
+            notes.iter().map(|path| {
+                if path == new {
+                    old.to_path_buf()
+                } else {
+                    path.clone()
+                }
+            }),
+        );
+        let rename = links::Rename {
+            old,
+            new,
+            before: &before,
+            after: &after,
+        };
+
+        let mut changed_links = 0;
+        let mut changed_notes = 0;
+        let mut problems = Vec::new();
+
+        for path in &notes {
+            let tab = self
+                .tabs
+                .iter()
+                .position(|tab| tab.path.as_ref() == Some(path));
+            let was = check::modified_time(path);
+
+            let Ok(text) = std::fs::read_to_string(path) else {
+                problems.push(self.relative(path));
+                continue;
+            };
+            if let Some((text, count)) = links::relink_note(&text, path, &rename) {
+                if std::fs::write(path, text).is_err() {
+                    problems.push(self.relative(path));
+                    continue;
+                }
+                changed_links += count;
+                changed_notes += 1;
+
+                if let Some(index) = tab {
+                    if self.tabs[index].modified {
+                        // Only the links changed on disk, so don't treat it as an outside edit.
+                        if self.tabs[index].disk == was {
+                            self.tabs[index].disk = check::modified_time(path);
+                        }
+                    } else {
+                        let _ = self.reload_tab(index);
+                    }
+                }
+            }
+        }
+
+        // Unsaved changes in open tabs get their links rewritten as well.
+        for index in 0..self.tabs.len() {
+            let tab = &self.tabs[index];
+            if !tab.modified || !tab.is_note() {
+                continue;
+            }
+            let path = tab.note_path();
+            let Ok(text) = tab.text() else {
+                problems.push(tab.name(true));
+                continue;
+            };
+            let Some((text, _)) = links::relink_note(&text, &path, &rename) else {
+                continue;
+            };
+
+            let tab = &mut self.tabs[index];
+            match &tab.form {
+                Some(form) if !tab.source => {
+                    if let Ok(note) = note::parse(&text) {
+                        tab.form = Some(Form::from_note(form.ty.clone(), note));
+                    }
+                }
+                _ => tab.content = text_editor::Content::with_text(&text),
+            }
+        }
+
+        let renamed = format!(
+            "Renamed {} to {}",
+            display_name(old, false),
+            display_name(new, false)
+        );
+        self.status = match (changed_links, changed_notes) {
+            (0, _) => format!("{renamed}; no links needed updating"),
+            (1, _) => format!("{renamed} and updated 1 link"),
+            (links, 1) => format!("{renamed} and updated {links} links in 1 note"),
+            (links, notes) => format!("{renamed} and updated {links} links in {notes} notes"),
+        };
+        if !problems.is_empty() {
+            self.status.push_str(&format!(
+                ". Could not update the links in {}",
+                problems.join(", ")
+            ));
+        }
+    }
+
+    fn editor_body(&self, c: Colors, suggestions: &[(String, String)]) -> Element<'_, Message> {
         let Some(tab) = self.active_tab() else {
             return center(
                 column![
@@ -1829,21 +2208,30 @@ impl Workspace {
             .into();
         };
 
+        let accept = suggestions
+            .first()
+            .map(|(link, _)| Message::CompleteLink(link.clone()));
+
         if let Some(form) = &tab.form
             && !tab.source
         {
-            let form = container(form.view(c, Message::Form, shortcut))
-                .width(Fill)
-                .height(Fill)
-                .style(style::panel(c.background));
+            let form =
+                container(form.view(c, Message::Form, shortcut, self.link_colors(c), accept))
+                    .width(Fill)
+                    .height(Fill)
+                    .style(style::panel(c.background));
 
             return stack![form, corner_button(c, Message::ShowAddField)].into();
         }
 
-        text_editor(&tab.content)
+        let editor = text_editor(&tab.content)
+            .id(EDITOR)
             .placeholder("Start writing...")
             .on_action(Message::Edit)
-            .key_binding(|key_press| {
+            .key_binding(move |key_press| {
+                if let Some(binding) = links::tab_binding(&key_press, &accept) {
+                    return Some(binding);
+                }
                 // Every editor sees every key press, so only the focused one handles shortcuts.
                 if key_press.modifiers.command()
                     && matches!(key_press.status, text_editor::Status::Focused { .. })
@@ -1855,9 +2243,74 @@ impl Workspace {
             })
             .padding(16)
             .height(Fill)
-            .style(style::editor(c))
-            .into()
+            .style(style::editor(c));
+
+        if tab.is_note() {
+            editor
+                .highlight_with::<links::Highlighter>(self.link_colors(c), links::format)
+                .into()
+        } else {
+            editor.into()
+        }
     }
+}
+
+/// Lists every Markdown file in the tree.
+fn markdown_files(entries: &[Entry]) -> Vec<PathBuf> {
+    fn visit(entries: &[Entry], files: &mut Vec<PathBuf>) {
+        for entry in entries {
+            match &entry.children {
+                Some(children) => visit(children, files),
+                None if campaign::is_markdown(&entry.path) => files.push(entry.path.clone()),
+                None => {}
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    visit(entries, &mut files);
+    files
+}
+
+/// Makes an empty note for a link to `target`, which names no note yet: `<target>.md`
+/// in the campaign folder `root`, or in the folder the target's path names.
+fn create_linked_note(root: &Path, target: &str) -> Result<PathBuf, String> {
+    let target = target.trim().replace('\\', "/");
+    let target = target.trim_matches('/');
+    let target = target
+        .strip_suffix(".md")
+        .or_else(|| target.strip_suffix(".MD"))
+        .unwrap_or(target);
+    if Path::new(target).extension().is_some_and(|extension| {
+        // Links can point to images and other files, which aren't notes to create.
+        ["png", "jpg", "jpeg", "gif", "svg", "webp", "pdf", "canvas"]
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
+    }) {
+        return Err(format!("There is no file called {target} in this campaign"));
+    }
+
+    let mut path = root.to_path_buf();
+    for part in target.split('/') {
+        campaign::validate_name(part.trim())
+            .map_err(|error| format!("Can't make a note for [[{target}]]: {error}"))?;
+        path.push(part.trim());
+    }
+    let folder = path.parent().unwrap_or(root);
+    if !folder.is_dir() {
+        return Err(format!(
+            "Can't make a note for [[{target}]]: there is no folder {}",
+            folder.strip_prefix(root).unwrap_or(folder).display()
+        ));
+    }
+
+    path.as_mut_os_string().push(".md");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
+    Ok(path)
 }
 
 /// Lists every folder in the tree, parents before their subfolders.
@@ -2007,6 +2460,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "s" => Some(Message::Save),
         "w" => Some(Message::CloseActiveTab),
         "e" => Some(Message::ToggleSource),
+        "k" => Some(Message::InsertLink),
         _ => None,
     }
 }

@@ -12,6 +12,7 @@ use iced::widget::{
 use iced::{Center, Element, Fill};
 use serde_yaml_ng::{Mapping, Value};
 
+use crate::links;
 use crate::note::{self, Note, Section};
 use crate::style;
 use crate::theme::Colors;
@@ -19,6 +20,11 @@ use crate::types::{ContentType, Field, Kind, Width};
 
 /// The front matter key listing the type's fields this note doesn't use.
 pub const REMOVED_KEY: &str = "removed_fields";
+
+/// The widget id of the input for field `index`, so it can be focused again.
+pub fn field_id(index: usize) -> String {
+    format!("form-field-{index}")
+}
 
 /// Whether front matter `key` is one the form manages itself, rather than a field.
 pub fn is_reserved(key: &str) -> bool {
@@ -34,6 +40,8 @@ pub enum Message {
     Other(text_editor::Action),
     /// Removes a field from this note.
     Remove(usize),
+    /// Opens the note a link field points to.
+    FollowLink(String),
 }
 
 /// What the user typed into one field.
@@ -71,6 +79,8 @@ pub struct Form {
     other: text_editor::Content,
     /// Whether the "Other" area shows: only when the note had something to put there.
     show_other: bool,
+    /// The field last typed or clicked in, which link suggestions are for.
+    focus: Option<usize>,
 }
 
 impl Form {
@@ -160,6 +170,7 @@ impl Form {
             inputs,
             other: text_editor::Content::with_text(&note.preamble),
             show_other: false,
+            focus: None,
             front: note.front,
         };
 
@@ -175,15 +186,20 @@ impl Form {
             Message::Text(index, value) => {
                 if let Some(Input::Text(text)) = self.inputs.get_mut(index) {
                     *text = value;
+                    self.focus = Some(index);
                 }
             }
             Message::Long(index, action) => {
                 let edited = action.is_edit();
                 if let Some(Input::Long(content)) = self.inputs.get_mut(index) {
-                    content.perform(action);
+                    if !matches!(action, text_editor::Action::Scroll { .. }) {
+                        self.focus = Some(index);
+                    }
+                    links::perform(content, action);
                 }
                 return edited;
             }
+            Message::FollowLink(_) => return false,
             Message::Check(index, value) => {
                 if let Some(Input::Check(checked)) = self.inputs.get_mut(index) {
                     *checked = value;
@@ -205,6 +221,7 @@ impl Form {
                 }
                 let field = self.fields.remove(index);
                 self.inputs.remove(index);
+                self.focus = None;
                 self.front.shift_remove(field.key.as_str());
 
                 if index < self.own {
@@ -269,6 +286,7 @@ impl Form {
             self.inputs.insert(index, Input::empty(field.kind));
             self.fields.insert(index, field);
             self.own += 1;
+            self.focus = None;
             return Ok(());
         }
 
@@ -287,6 +305,64 @@ impl Form {
         self.fields.push(Field::for_note(label, kind));
         self.inputs.push(Input::empty(kind));
         Ok(())
+    }
+
+    /// The field last typed or clicked in.
+    pub fn focus(&self) -> Option<usize> {
+        self.focus
+    }
+
+    /// The link being typed in the field last typed in: the text after an unclosed `[[`
+    /// in a long text field, or what a link field holds. The flag is true for a link field.
+    pub fn link_query(&self) -> Option<(String, bool)> {
+        let index = self.focus?;
+        match (&self.inputs[index], self.fields[index].kind) {
+            (Input::Long(content), _) => links::query(content).map(|query| (query, false)),
+            (Input::Text(value), Kind::Link) if !value.trim().is_empty() => {
+                Some((value.clone(), true))
+            }
+            _ => None,
+        }
+    }
+
+    /// Finishes the link being typed with `link`. Returns whether the note changed.
+    pub fn complete_link(&mut self, link: &str) -> bool {
+        let Some(index) = self.focus else {
+            return false;
+        };
+        match &mut self.inputs[index] {
+            Input::Long(content) => {
+                links::complete(content, link);
+                true
+            }
+            Input::Text(value) if self.fields[index].kind == Kind::Link => {
+                *value = link.to_string();
+                // The link is done, so stop suggesting notes for it.
+                self.focus = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The target of the link the cursor is in, in the long text field last typed in.
+    pub fn link_under_cursor(&self) -> Option<String> {
+        match &self.inputs[self.focus?] {
+            Input::Long(content) => links::under_cursor(content),
+            _ => None,
+        }
+    }
+
+    /// Wraps the selection in the long text field last typed in as a `[[link]]`.
+    /// Returns whether there was such a field.
+    pub fn insert_link(&mut self) -> bool {
+        match self.focus.map(|index| &mut self.inputs[index]) {
+            Some(Input::Long(content)) => {
+                links::insert(content);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The note's name, from its `name` field, if the type has one and it is filled in.
@@ -414,14 +490,22 @@ impl Form {
         note::to_markdown(&front, &sections, &self.other.text())
     }
 
+    /// Shows the form. Long text fields color `[[links]]` with `link_colors`, and Tab
+    /// (or Enter in a link field) sends `accept` to finish the link being typed.
     pub fn view<'a, M: Clone + 'a>(
         &'a self,
         c: Colors,
         map: fn(Message) -> M,
         shortcut: fn(&Key, Modifiers) -> Option<M>,
+        link_colors: links::Colors,
+        accept: Option<M>,
     ) -> Element<'a, M> {
         // Every editor sees every key press, so only the focused one handles shortcuts.
+        let accept_tab = accept.clone();
         let key_binding = move |key_press: text_editor::KeyPress| {
+            if let Some(binding) = links::tab_binding(&key_press, &accept_tab) {
+                return Some(binding);
+            }
             if key_press.modifiers.command()
                 && matches!(key_press.status, text_editor::Status::Focused { .. })
                 && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
@@ -463,16 +547,37 @@ impl Form {
                                 Kind::Link => "Name of another note",
                                 _ => "",
                             };
-                            column![
-                                label(index, field.label()),
-                                text_input(placeholder, value)
-                                    .on_input(move |value| map(Message::Text(index, value)))
-                                    .size(14)
-                                    .padding(8)
-                                    .style(style::input(c)),
-                            ]
-                            .spacing(6)
-                            .into()
+                            let mut input = text_input(placeholder, value)
+                                .id(field_id(index))
+                                .on_input(move |value| map(Message::Text(index, value)))
+                                .size(14)
+                                .padding(8)
+                                .style(style::input(c));
+                            if field.kind == Kind::Link
+                                && self.focus == Some(index)
+                                && let Some(accept) = &accept
+                            {
+                                input = input.on_submit(accept.clone());
+                            }
+
+                            let input: Element<'a, M> =
+                                if field.kind == Kind::Link && !value.trim().is_empty() {
+                                    row![
+                                        input,
+                                        button(text("Open").size(13))
+                                            .padding([8, 10])
+                                            .style(style::secondary(c))
+                                            .on_press(map(Message::FollowLink(value.clone()))),
+                                    ]
+                                    .spacing(6)
+                                    .into()
+                                } else {
+                                    input.into()
+                                };
+
+                            column![label(index, field.label()), input]
+                                .spacing(6)
+                                .into()
                         }
                         Input::Choice(choice) => column![
                             label(index, field.label()),
@@ -499,8 +604,13 @@ impl Form {
                         Input::Long(content) => column![
                             label(index, field.label()),
                             text_editor(content)
+                                .id(field_id(index))
                                 .on_action(move |action| map(Message::Long(index, action)))
-                                .key_binding(key_binding)
+                                .key_binding(key_binding.clone())
+                                .highlight_with::<links::Highlighter>(
+                                    link_colors.clone(),
+                                    links::format,
+                                )
                                 .min_height(140)
                                 .size(14)
                                 .padding(8)
