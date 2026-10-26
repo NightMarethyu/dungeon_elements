@@ -14,6 +14,8 @@ pub struct Settings {
     pub show_extensions: bool,
     /// Whether the file tree shows `.yaml` files, such as each folder's `_type.yaml`.
     pub show_type_files: bool,
+    /// Whether notes open in the reading view, formatted, rather than in an editor.
+    pub open_in_reading: bool,
 }
 
 impl Default for Settings {
@@ -22,6 +24,7 @@ impl Default for Settings {
             theme: crate::theme::DEFAULT.into(),
             show_extensions: false,
             show_type_files: false,
+            open_in_reading: false,
         }
     }
 }

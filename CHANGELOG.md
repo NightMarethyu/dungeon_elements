@@ -14,6 +14,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Drag a note in the file tree onto another folder to move it. It becomes that folder's type and keeps the fields you filled in, and links to it are updated.
 - Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
 
+### Reading view
+
+- **Read** at the top right of the editor (or **View > Reading View**, Ctrl+R) shows a note formatted, like GitHub shows a README: the note's name as a title, its fields in a box, then its headings, lists, task lists, tables, quotes, code blocks, and pictures. **Edit** goes back to the form or the Markdown source.
+- Links in the reading view can be clicked. `[[Links]]` open the note (links to notes that don't exist yet are dimmer, and clicking one makes the note), web links open in your browser, and Markdown links to files in the campaign open them.
+- Pictures next to a note, or embedded the Obsidian way (`![[harbor.png]]`, found anywhere in the campaign), show in the reading view. PNG, JPEG, GIF, WebP, and SVG work.
+- **View > Open Notes in Reading View** opens notes formatted instead of in an editor.
+
 ### Dice roller
 
 - The d20 button at the right of the tab bar opens a dice roller along the bottom of the window. Click a die (d20, d12, d10, d100, d8, d6, or d4) to roll it; the result shows on the left.

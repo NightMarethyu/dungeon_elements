@@ -47,7 +47,11 @@ The suite will also include drawing tools and generators to allow the Game Maste
 
 ### Phase 1: inciting incident
 
-- [ ] Display markdown files in a nice way
+- [x] Display markdown files in a nice way
+  - [x] Reading view (Edit / Read at the top right, Ctrl+R): the note's name as a title, its fields as a box of properties, then the body as formatted Markdown with headings, lists, task lists, tables, quotes, code blocks, rules and pictures, like GitHub shows a README
+  - [x] `[[Links]]` in it can be clicked (dimmer when the note doesn't exist yet), web links open in the browser, and `![[picture.png]]` embeds show the picture
+  - [x] View > Open Notes in Reading View, for opening notes formatted
+  - [ ] Pictures from the web, syntax colors in code blocks, and embedding one note in another (`![[Note]]` shows as a link for now)
 - [x] Allow internal linking of files, make this easy highlight text and select "add link" (right-click context menu or file menu) will check if a file already exists with that name and link it, if a file doesn't exist it will create one. Links formatted in Obsidian compatible [[link text]] format
   - [x] Typing `[[` in a text editor (or a long text field) closes it with `]]` and suggests notes by name; Tab or a click inserts one. Link fields suggest notes the same way (Enter picks the first)
   - [x] Edit > Insert Link (Ctrl+K) wraps the selected text in `[[ ]]`

@@ -68,6 +68,40 @@ pub fn banner(c: Colors) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// A box in the reading view, like a note's properties or a code block.
+pub fn card(c: Colors) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        container::Style::default()
+            .background(c.field_background)
+            .color(c.text)
+            .border(
+                Border::default()
+                    .color(c.border)
+                    .width(c.border_width.max(1.0))
+                    .rounded(c.corner_radius.min(6.0)),
+            )
+    }
+}
+
+/// A task's box in a list in the reading view, filled in when the task is done.
+pub fn task_box(c: Colors, done: bool) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        container::Style::default()
+            .background(if done { c.accent } else { c.field_background })
+            .border(
+                Border::default()
+                    .color(if done { c.accent } else { c.border })
+                    .width(c.border_width.max(1.0))
+                    .rounded(c.corner_radius.min(4.0)),
+            )
+    }
+}
+
+/// Text in a dimmer color, like a quote in the reading view.
+pub fn muted_text(c: Colors) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style::default().color(c.text_muted)
+}
+
 /// An open dropdown menu.
 pub fn dropdown(c: Colors) -> impl Fn(&Theme) -> container::Style {
     move |_| {
