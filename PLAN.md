@@ -95,6 +95,9 @@ Later additions, after the Phase 2 map work is done.
   - [ ] Save a campaign's setup as a template, and share it as a file
   - [ ] Templates can set dice presets and suggest a game system
   - Once this exists, Ammon builds templates for a few systems to find where it's awkward before the format settles
+- [ ] Settings: reuse a world in another campaign or book (see [Settings](#settings))
+  - [ ] Mark folders as setting and export them, or start a new campaign from an existing setting (a copy)
+  - [ ] Later: a shared setting that several campaigns use, so edits show up in all of them
 - [ ] PDF manual library (see [PDF library](#pdf-library))
   - [ ] Library folders, systems as tags, a library panel; links to PDFs open them in the system's PDF viewer
   - [ ] Built-in PDF reader beside a note: opens at the right page, with the PDF's table of contents and the user's bookmarks
@@ -146,6 +149,15 @@ Phase 3. Templates put the power in the user's hands: the app ships a few, and u
 - A campaign's current setup can be saved as a template from the app, to reuse or give to friends.
 - Templates and manuals stay separate. A template's `system:` only decides which manuals the [PDF library](#pdf-library) shows first, and the user can change it or leave it out.
 - The format isn't fixed until real templates for a few systems have been built and tried.
+
+### Settings
+
+Phase 3. For writers, and for GMs who run several games in one world: a world built once can be reused without copying notes by hand. A spin-off book or a new campaign with a different cast starts with the setting ready.
+
+- A campaign marks which folders are its **setting** (for example lore, locations, factions, history) and which belong to this story only (players, quests, journal, the cast). The setting can also be all of it.
+- **Export setting** saves those folders, their types and their notes as one shareable folder or file, without the story-only parts. Links from setting notes to story-only notes are listed so the user can decide what to do with them.
+- **New campaign from a setting** copies it in, so the two can change on their own. This works with Obsidian too, because the notes are ordinary files in the vault. It sits beside templates: a template gives the shape (folders and types), a setting gives the world (the notes).
+- Later: a **shared setting**, one setting folder that several campaigns point to. Edits show up in all of them, and links resolve across the campaign and its setting. Obsidian can't see folders outside the vault, so this needs care (a folder link inside the vault, or an Obsidian-friendly option to copy instead).
 
 ### PDF library
 
