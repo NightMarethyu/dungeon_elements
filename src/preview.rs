@@ -2,16 +2,18 @@
 //!
 //! The note's name becomes its title, its other front matter fields a box of properties
 //! like a wiki's infobox, and its body is rendered with iced's Markdown widget. `[[Links]]`
-//! are turned into Markdown links first so they can be clicked, and `![[picture.png]]`
-//! embeds show the picture.
+//! are turned into Markdown links first so they can be clicked, `![[picture.png]]` embeds
+//! show the picture, and `![[Note]]` embeds show the other note's text in a box. Pictures
+//! can also come from the web, and code blocks are colored by their language.
 //!
 //! The page can be edited in place: the body is split into blocks (a paragraph, a list, a
 //! table...), and clicking one or a field asks for an editor to show in its place.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use iced::advanced::text::Highlight;
 use iced::mouse::Interaction;
@@ -23,18 +25,22 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
 
-use crate::links::{self, Names};
+use crate::code;
+use crate::links::{self, Index, Names};
 use crate::note;
 use crate::style;
 use crate::theme::Colors;
 use crate::types::{ContentType, Kind, title_case};
+use crate::web;
 
-/// Links to notes are written `note:<target>`; embedded pictures `embed:<name>`.
+/// Links to notes are written `note:<target>`; embedded pictures `embed:<name>`, and
+/// embedded notes `embed-note:<target>`, with any `#heading`.
 const NOTE: &str = "note:";
 const EMBED: &str = "embed:";
+const EMBED_NOTE: &str = "embed-note:";
 
 /// The file types shown as pictures.
-const PICTURES: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+pub const PICTURES: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 
 /// The widest the page gets, so lines stay easy to read on a wide window.
 const PAGE_WIDTH: f32 = 860.0;
@@ -51,7 +57,22 @@ pub struct Preview {
     properties: Vec<Property>,
     blocks: Vec<Block>,
     /// The files that pictures point to, by the URL in the Markdown.
-    pictures: Arc<HashMap<Uri, PathBuf>>,
+    pictures: HashMap<Uri, PathBuf>,
+    /// The notes embedded in this one, by the URL in the Markdown.
+    embeds: HashMap<Uri, Embed>,
+    /// The colored parts of each code block, by a hash of its language and code, made
+    /// the first time the block is shown. `None` for a language without colors.
+    code: RefCell<HashMap<u64, Option<Vec<code::Line>>>>,
+}
+
+/// A note shown inside another, with `![[Note]]` or `![[Note#Heading]]`.
+struct Embed {
+    /// The note's name and heading, shown above it.
+    title: String,
+    /// The link to the note, to open it.
+    target: String,
+    /// The note's text (or the heading's section), or why it can't be shown.
+    content: Result<markdown::Content, String>,
 }
 
 /// A front matter field in the box of fields.
@@ -101,8 +122,14 @@ pub struct Editing<'a, M> {
 impl Preview {
     /// Parses the text of the note at `path` (which may not be saved yet), labelling its
     /// fields from `ty` when it has a type. Embedded pictures are looked for next to the
-    /// note, then anywhere in the campaign folder `root`.
-    pub fn new(source: &str, ty: Option<&ContentType>, path: &Path, root: &Path) -> Self {
+    /// note, then anywhere in the campaign folder `root`; embedded notes in `index`.
+    pub fn new(
+        source: &str,
+        ty: Option<&ContentType>,
+        path: &Path,
+        root: &Path,
+        index: &Index,
+    ) -> Self {
         let (front, body) = match note::split_front_matter(source) {
             Ok((Some(yaml), body)) => match serde_yaml_ng::from_str::<Mapping>(yaml) {
                 Ok(front) => (front, body),
@@ -137,17 +164,35 @@ impl Preview {
         let blocks: Vec<Block> = block_ranges(body)
             .into_iter()
             .map(|range| Block {
-                content: markdown::Content::parse(&with_markdown_links(&body[range.clone()])),
+                content: markdown::Content::parse(&pictures_apart(&rewrite_links(
+                    &body[range.clone()],
+                    true,
+                ))),
                 range: range.start + offset..range.end + offset,
             })
             .collect();
 
         let folder = path.parent().unwrap_or(root);
-        let pictures = blocks
-            .iter()
-            .flat_map(|block| block.content.images())
-            .filter_map(|url| Some((url.clone(), find_picture(url, folder, root)?)))
-            .collect();
+        let mut pictures: HashMap<Uri, PathBuf> = HashMap::new();
+        let mut embeds = HashMap::new();
+        for url in blocks.iter().flat_map(|block| block.content.images()) {
+            if let Some(link) = url.strip_prefix(EMBED_NOTE) {
+                let embed = Embed::new(link, body, path, index);
+                let target = link.split('#').next().unwrap_or(link);
+                if let (Ok(content), Some(file)) = (&embed.content, index.resolve(target, path)) {
+                    // Pictures in the embedded note are found from its own folder.
+                    let folder = file.parent().unwrap_or(root);
+                    for url in content.images() {
+                        if let Some(file) = find_picture(url, folder, root) {
+                            pictures.entry(url.clone()).or_insert(file);
+                        }
+                    }
+                }
+                embeds.insert(url.clone(), embed);
+            } else if let Some(file) = find_picture(url, folder, root) {
+                pictures.insert(url.clone(), file);
+            }
+        }
 
         Preview {
             source: source.to_string(),
@@ -156,8 +201,30 @@ impl Preview {
             kind: ty.map(ContentType::label),
             properties,
             blocks,
-            pictures: Arc::new(pictures),
+            pictures,
+            embeds,
+            code: RefCell::default(),
         }
+    }
+
+    /// Whether other notes are shown in this one.
+    pub fn has_embeds(&self) -> bool {
+        !self.embeds.is_empty()
+    }
+
+    /// The web addresses of the pictures in the note, and in the notes it embeds.
+    pub fn web_pictures(&self) -> impl Iterator<Item = &str> {
+        let embedded = self
+            .embeds
+            .values()
+            .filter_map(|embed| embed.content.as_ref().ok());
+        self.blocks
+            .iter()
+            .map(|block| &block.content)
+            .chain(embedded)
+            .flat_map(|content| content.images())
+            .map(String::as_str)
+            .filter(|url| web::is_web(url))
     }
 
     pub fn source(&self) -> &str {
@@ -179,12 +246,16 @@ impl Preview {
         &'a self,
         c: Colors,
         names: Names,
+        web: &'a web::Pictures,
         mut edit: Editing<'a, M>,
     ) -> Element<'a, M> {
         let reader = Reader {
             c,
             names,
-            pictures: self.pictures.clone(),
+            pictures: &self.pictures,
+            embeds: &self.embeds,
+            web,
+            code: &self.code,
         };
         let settings = markdown::Settings {
             code_size: 13.into(),
@@ -274,7 +345,7 @@ impl Preview {
         &'a self,
         index: usize,
         settings: markdown::Settings,
-        reader: &Reader,
+        reader: &Reader<'a>,
         edit: &mut Editing<'a, M>,
     ) -> Element<'a, M> {
         match edit.block.take() {
@@ -320,7 +391,7 @@ impl Preview {
         &'a self,
         c: Colors,
         settings: markdown::Settings,
-        reader: &Reader,
+        reader: &Reader<'a>,
         edit: &mut Editing<'a, M>,
     ) -> Element<'a, M> {
         let mut header = column![].spacing(2).align_x(Center).width(Fill);
@@ -531,7 +602,7 @@ fn value_markdown(value: &Value) -> Option<String> {
         || text
             .find(|c: char| !c.is_ascii_digit())
             .is_some_and(|end| end > 0 && text[end..].starts_with(['.', ')']));
-    let text = with_markdown_links(&text.replace('\n', " "));
+    let text = rewrite_links(&text.replace('\n', " "), false);
     Some(if block_start {
         format!("\\{text}")
     } else {
@@ -539,10 +610,133 @@ fn value_markdown(value: &Value) -> Option<String> {
     })
 }
 
+impl Embed {
+    /// Reads the note that `link` (`Note` or `Note#Heading`) names, from the note at
+    /// `path`, whose body is `body`.
+    fn new(link: &str, body: &str, path: &Path, index: &Index) -> Embed {
+        let (target, heading) = match link.split_once('#') {
+            Some((target, heading)) => (target.trim(), Some(heading.trim())),
+            None => (link.trim(), None),
+        };
+        let name = Path::new(target)
+            .file_name()
+            .map_or(target.to_string(), |name| {
+                name.to_string_lossy().into_owned()
+            });
+        let title = match heading {
+            Some(heading) => format!("{name} > {heading}"),
+            None => name.clone(),
+        };
+
+        let content = match index.resolve(target, path) {
+            // A note showing itself shows its text as it is now, saved or not.
+            Some(file) if file == path => Ok(body.to_string()),
+            Some(file) => std::fs::read_to_string(file)
+                .map(|text| match note::split_front_matter(&text) {
+                    Ok((_, body)) => body.to_string(),
+                    Err(_) => text,
+                })
+                .map_err(|_| format!("Could not read {title}")),
+            None => Err(format!(
+                "There is no note called {target} yet. Click to make it."
+            )),
+        };
+        let content = content.and_then(|text| match heading {
+            Some(heading) => section(&text, heading)
+                .map(str::to_string)
+                .ok_or_else(|| format!("{name} has no heading called {heading}")),
+            None => Ok(text),
+        });
+
+        Embed {
+            title,
+            target: target.to_string(),
+            // Notes embedded in an embedded note show as links, so notes that embed each
+            // other don't go on forever.
+            content: content.map(|text| markdown::Content::parse(&rewrite_links(&text, false))),
+        }
+    }
+}
+
+/// Puts a picture that follows text in a paragraph on a paragraph of its own. iced's
+/// Markdown widget would otherwise take the text before it as the picture's description,
+/// which isn't shown once the picture is.
+fn pictures_apart(markdown: &str) -> String {
+    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+
+    let mut breaks = Vec::new();
+    let mut depth = 0;
+    let mut text_before = false;
+    for (event, range) in Parser::new(markdown).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Image { .. }) if depth == 1 && text_before => {
+                breaks.push(range.start);
+            }
+            Event::Start(_) => depth += 1,
+            Event::End(TagEnd::Image) => text_before = false,
+            Event::End(_) => depth -= 1,
+            Event::Text(text) if depth == 1 && !text.trim().is_empty() => text_before = true,
+            Event::Code(_) if depth == 1 => text_before = true,
+            _ => {}
+        }
+    }
+
+    let mut out = markdown.to_string();
+    for at in breaks.into_iter().rev() {
+        out.insert_str(at, "\n\n");
+    }
+    out
+}
+
+/// The part of `text` under the heading `heading`, from it down to the next heading as
+/// big or bigger, or `None` if there is no such heading. Headings are matched like
+/// Obsidian: without case, and ignoring extra spaces.
+fn section<'t>(text: &'t str, heading: &str) -> Option<&'t str> {
+    let wanted = heading
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    fn level(line: &str) -> Option<(usize, &str)> {
+        let hashes = line.len() - line.trim_start_matches('#').len();
+        ((1..=6).contains(&hashes) && line[hashes..].starts_with([' ', '\t']))
+            .then(|| (hashes, line[hashes..].trim().trim_end_matches('#').trim()))
+    }
+
+    let mut in_code = false;
+    let mut start = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code = !in_code;
+        } else if !in_code && let Some((size, title)) = level(line.trim_end()) {
+            match start {
+                Some((_, wanted_size)) if size <= wanted_size => {
+                    return start.map(|(from, _)| text[from..offset].trim_end());
+                }
+                None if title
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+                    == wanted =>
+                {
+                    start = Some((offset, size));
+                }
+                _ => {}
+            }
+        }
+        offset += line.len();
+    }
+    start.map(|(from, _)| text[from..].trim_end())
+}
+
 /// Rewrites the `[[links]]` in `text` as Markdown links the reading view can click:
 /// `[[Note|shown]]` becomes `[shown](<note:Note>)`, and `![[picture.png]]` a picture.
-/// Embeds of notes show as links to them.
-pub fn with_markdown_links(text: &str) -> String {
+/// With `embed_notes`, `![[Note]]` becomes a picture with an `embed-note:` URL, which the
+/// reading view shows as the note; otherwise embeds of notes show as links to them.
+fn rewrite_links(text: &str, embed_notes: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
 
@@ -564,8 +758,17 @@ pub fn with_markdown_links(text: &str) -> String {
         }
 
         out.push_str(&text[last..link.range.start]);
+        let extension = Path::new(target).extension();
         if embed && is_picture(Path::new(target)) {
             out.push_str(&format!("![{}](<{EMBED}{target}>)", escape(&shown)));
+        } else if embed
+            && embed_notes
+            && extension.is_none_or(|extension| extension.eq_ignore_ascii_case("md"))
+            // Obsidian's links to blocks, `#^id`, aren't supported yet.
+            && !inner.contains("#^")
+        {
+            let link = inner.split('|').next().unwrap_or(inner).trim();
+            out.push_str(&format!("![{}](<{EMBED_NOTE}{link}>)", escape(&shown)));
         } else {
             out.push_str(&format!("[{}](<{NOTE}{target}>)", escape(&shown)));
         }
@@ -588,7 +791,7 @@ fn escape(text: &str) -> String {
     out
 }
 
-fn is_picture(path: &Path) -> bool {
+pub fn is_picture(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| PICTURES.contains(&extension.to_ascii_lowercase().as_str()))
@@ -606,11 +809,38 @@ fn find_picture(url: &str, folder: &Path, root: &Path) -> Option<PathBuf> {
                 find_file(root, file_name, 0)
             });
     }
-    if url.contains("://") {
-        return None;
-    }
+    // A full path works too, written like `C:/Pictures/map.png` or `file:///C:/...`.
+    let url = match url.get(..7) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("file://") => {
+            let path = &url[7..];
+            // `file:///C:/x` is `C:/x` on Windows.
+            match path.get(2..3) {
+                Some(":") if path.starts_with('/') => &path[1..],
+                _ => path,
+            }
+        }
+        _ if url.contains("://") => return None,
+        _ => url,
+    };
+    // Joining a full path gives that path.
     let path = folder.join(decode(url));
     (path.is_file() && is_picture(&path)).then_some(path)
+}
+
+/// The text to embed the picture `file` in the note at `note` with `![[...]]`: its file
+/// name, or its path in the campaign `root` if another picture has that name.
+pub fn picture_link(file: &Path, note: &Path, root: &Path) -> String {
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
+    let folder = note.parent().unwrap_or(root);
+    if find_picture(&format!("{EMBED}{name}"), folder, root).as_deref() == Some(file) {
+        return name.into_owned();
+    }
+    file.strip_prefix(root)
+        .unwrap_or(file)
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Looks through `folder` and its subfolders for a file called `name`, ignoring case.
@@ -673,13 +903,80 @@ fn markdown_style(c: Colors) -> markdown::Style {
 }
 
 /// Shows Markdown in the theme's colors.
-struct Reader {
+struct Reader<'a> {
     c: Colors,
     names: Names,
-    pictures: Arc<HashMap<Uri, PathBuf>>,
+    pictures: &'a HashMap<Uri, PathBuf>,
+    embeds: &'a HashMap<Uri, Embed>,
+    web: &'a web::Pictures,
+    code: &'a RefCell<HashMap<u64, Option<Vec<code::Line>>>>,
 }
 
-impl<'a> markdown::Viewer<'a, Uri> for Reader {
+impl<'a> Reader<'a> {
+    /// A box saying why a picture isn't shown, under its description.
+    fn no_picture(
+        &self,
+        settings: markdown::Settings,
+        alt: &markdown::Text,
+        why: String,
+    ) -> Element<'a, Uri> {
+        container(
+            column![
+                rich_text(alt.spans(settings.style)).size(settings.text_size),
+                text(why)
+                    .size(settings.text_size * 0.85)
+                    .color(self.c.text_muted),
+            ]
+            .spacing(4),
+        )
+        .padding([8, 12])
+        .style(style::card(self.c))
+        .into()
+    }
+
+    /// A note embedded in this one: its name, which opens it, over its text.
+    fn embed(&self, settings: markdown::Settings, embed: &'a Embed) -> Element<'a, Uri> {
+        let link = format!("{NOTE}{}", embed.target);
+        let missing = !self.names.contains(&embed.target);
+        let title = rich_text([Span::new(embed.title.as_str())
+            .link(link)
+            .color(if missing {
+                self.c.text_muted
+            } else {
+                self.c.accent
+            })
+            .font(Font {
+                weight: font::Weight::Bold,
+                ..Font::DEFAULT
+            })])
+        .size(settings.text_size * 0.9)
+        .on_link_click(|url: Uri| url);
+
+        let body: Element<'a, Uri> = match &embed.content {
+            Ok(content) if content.items().is_empty() => text("This note has no text yet.")
+                .size(settings.text_size)
+                .color(self.c.text_muted)
+                .into(),
+            Ok(content) => markdown::view_with(content.items(), settings, self),
+            Err(why) => text(why.clone())
+                .size(settings.text_size)
+                .color(self.c.text_muted)
+                .into(),
+        };
+
+        row![
+            rule::vertical(3).style(style::accent_rule(self.c)),
+            column![title, body]
+                .spacing(settings.spacing.0 * 0.75)
+                .width(Fill),
+        ]
+        .height(Length::Shrink)
+        .spacing(14)
+        .into()
+    }
+}
+
+impl<'a> markdown::Viewer<'a, Uri> for Reader<'a> {
     fn on_link_click(url: Uri) -> Uri {
         url
     }
@@ -691,6 +988,26 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader {
         _title: &'a str,
         alt: &markdown::Text,
     ) -> Element<'a, Uri> {
+        if url.starts_with(EMBED_NOTE)
+            && let Some(embed) = self.embeds.get(url)
+        {
+            return self.embed(settings, embed);
+        }
+        if web::is_web(url) {
+            return match self.web.get(url) {
+                Some(web::Picture::Image(handle)) => image(handle.clone()).into(),
+                Some(web::Picture::Svg(handle)) => {
+                    Svg::new(handle.clone()).width(Length::Shrink).into()
+                }
+                Some(web::Picture::Failed(why)) => {
+                    self.no_picture(settings, alt, format!("Could not load {url}: {why}"))
+                }
+                Some(web::Picture::Loading) | None => {
+                    self.no_picture(settings, alt, format!("Loading {url}..."))
+                }
+            };
+        }
+
         match self.pictures.get(url) {
             Some(path)
                 if path
@@ -702,25 +1019,11 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader {
                     .into()
             }
             Some(path) => image(image::Handle::from_path(path)).into(),
-            None => {
-                let what = if url.contains("://") {
-                    "Pictures from the web aren't shown"
-                } else {
-                    "Picture not found"
-                };
-                container(
-                    column![
-                        rich_text(alt.spans(settings.style)).size(settings.text_size),
-                        text(format!("{what}: {}", url.trim_start_matches(EMBED)))
-                            .size(settings.text_size * 0.85)
-                            .color(self.c.text_muted),
-                    ]
-                    .spacing(4),
-                )
-                .padding([8, 12])
-                .style(style::card(self.c))
-                .into()
-            }
+            None => self.no_picture(
+                settings,
+                alt,
+                format!("Picture not found: {}", url.trim_start_matches(EMBED)),
+            ),
         }
     }
 
@@ -775,17 +1078,48 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader {
     fn code_block(
         &self,
         settings: markdown::Settings,
-        _language: Option<&'a str>,
-        _code: &'a str,
+        language: Option<&'a str>,
+        code: &'a str,
         lines: &'a [markdown::Text],
     ) -> Element<'a, Uri> {
-        let lines = column(lines.iter().map(|line| {
-            rich_text(line.spans(settings.style))
+        let line = |spans: Vec<Span<'a, Uri>>| -> Element<'a, Uri> {
+            rich_text(spans)
                 .on_link_click(Self::on_link_click)
                 .font(settings.style.code_block_font)
                 .size(settings.code_size)
                 .into()
-        }));
+        };
+
+        let parts = language.and_then(|language| {
+            let mut hasher = DefaultHasher::new();
+            (language, code).hash(&mut hasher);
+            self.code
+                .borrow_mut()
+                .entry(hasher.finish())
+                .or_insert_with(|| code::highlight(language, code))
+                .clone()
+        });
+        let lines = match parts {
+            Some(parts) => column(code.lines().zip(parts).map(|(text, parts)| {
+                line(
+                    parts
+                        .into_iter()
+                        .filter_map(|(range, token)| {
+                            let span = Span::new(text.get(range)?);
+                            Some(match token.color(self.c) {
+                                Some(color) => span.color(color),
+                                None => span,
+                            })
+                        })
+                        .collect(),
+                )
+            })),
+            None => column(
+                lines
+                    .iter()
+                    .map(|text| line(text.spans(settings.style).to_vec())),
+            ),
+        };
 
         container(
             scrollable(container(lines).padding(settings.code_size)).direction(
@@ -882,19 +1216,24 @@ mod tests {
     #[test]
     fn rewrites_wiki_links() {
         assert_eq!(
-            with_markdown_links("Ask [[Old Tom]] or [[npcs/Ann|the smith]]."),
+            rewrite_links("![[Keep]] ![[Keep#Gate|x]] ![[Keep#^abc]] ![[a.pdf]]", true),
+            "![Keep](<embed-note:Keep>) ![x](<embed-note:Keep#Gate>) \
+             [Keep > ^abc](<note:Keep>) [a.pdf](<note:a.pdf>)"
+        );
+        assert_eq!(
+            rewrite_links("Ask [[Old Tom]] or [[npcs/Ann|the smith]].", false),
             "Ask [Old Tom](<note:Old Tom>) or [the smith](<note:npcs/Ann>)."
         );
         assert_eq!(
-            with_markdown_links("See [[Keep#Gate]] and ![[Keep]]"),
+            rewrite_links("See [[Keep#Gate]] and ![[Keep]]", false),
             "See [Keep > Gate](<note:Keep>) and [Keep](<note:Keep>)"
         );
         assert_eq!(
-            with_markdown_links("![[maps/Town.png]]"),
+            rewrite_links("![[maps/Town.png]]", false),
             "![maps/Town.png](<embed:maps/Town.png>)"
         );
         // Code is left alone.
-        assert_eq!(with_markdown_links("`[[x]]`"), "`[[x]]`");
+        assert_eq!(rewrite_links("`[[x]]`", false), "`[[x]]`");
     }
 
     #[test]
@@ -926,17 +1265,36 @@ mod tests {
     fn titles_with_the_name_unless_the_body_has_one() {
         let path = Path::new("/campaign/npcs/Ann.md");
         let root = Path::new("/campaign");
-        let named = Preview::new("---\nname: Ann\n---\nHello\n", None, path, root);
+        let named = Preview::new(
+            "---\nname: Ann\n---\nHello\n",
+            None,
+            path,
+            root,
+            &Index::default(),
+        );
         assert_eq!(named.title.as_deref(), Some("Ann"));
 
-        let titled = Preview::new("---\nname: Ann\n---\n# Ann the Smith\n", None, path, root);
+        let titled = Preview::new(
+            "---\nname: Ann\n---\n# Ann the Smith\n",
+            None,
+            path,
+            root,
+            &Index::default(),
+        );
         assert_eq!(titled.title, None);
     }
 
     #[test]
     fn puts_the_opening_text_beside_the_fields() {
         let lead = |body: &str| {
-            Preview::new(body, None, Path::new("/c/a.md"), Path::new("/c")).lead_length()
+            Preview::new(
+                body,
+                None,
+                Path::new("/c/a.md"),
+                Path::new("/c"),
+                &Index::default(),
+            )
+            .lead_length()
         };
         assert_eq!(lead("Intro.\n\nMore.\n\n## History\n\nOld.\n"), 2);
         assert_eq!(lead("## Appearance\n\nTall.\n\n## Notes\n\nx\n"), 2);
@@ -959,8 +1317,106 @@ mod tests {
         );
 
         let note = "---\nname: Ann\n---\nHello\n";
-        let preview = Preview::new(note, None, Path::new("/c/a.md"), Path::new("/c"));
+        let preview = Preview::new(
+            note,
+            None,
+            Path::new("/c/a.md"),
+            Path::new("/c"),
+            &Index::default(),
+        );
         assert_eq!(&note[preview.block_range(0).unwrap()], "Hello");
+    }
+
+    #[test]
+    fn puts_pictures_after_text_apart() {
+        assert_eq!(
+            pictures_apart("Map: ![m](a.png) end"),
+            "Map: \n\n![m](a.png) end"
+        );
+        assert_eq!(pictures_apart("![m](a.png)\n"), "![m](a.png)\n");
+        // Inside a list, a blank line would end the list.
+        assert_eq!(pictures_apart("- Map: ![m](a.png)"), "- Map: ![m](a.png)");
+    }
+
+    #[test]
+    fn embeds_a_heading_section() {
+        let text = "Intro\n\n## Gate\n\nOld.\n\n### Guards\n\nTwo.\n\n```\n## not a heading\n```\n\n## Keep\n\nTall.\n";
+        assert_eq!(
+            section(text, "gate"),
+            Some("## Gate\n\nOld.\n\n### Guards\n\nTwo.\n\n```\n## not a heading\n```")
+        );
+        assert_eq!(section(text, "Keep"), Some("## Keep\n\nTall."));
+        assert_eq!(section(text, "Moat"), None);
+    }
+
+    #[test]
+    fn shows_another_note_inside() {
+        let root =
+            std::env::temp_dir().join(format!("dungeon_elements_embed_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let keep = root.join("Keep.md");
+        std::fs::write(
+            &keep,
+            "---\nname: Keep\n---\nTall walls.\n\n## Gate\n\nOld.\n",
+        )
+        .unwrap();
+        let index = Index::new(&root, [keep]);
+        let note = root.join("Town.md");
+
+        let preview = Preview::new(
+            "![[Keep]]\n\n![[Keep#Gate]]\n\n![[Moat]]\n",
+            None,
+            &note,
+            &root,
+            &index,
+        );
+        let text = |url: &str| {
+            let embed = &preview.embeds[url];
+            embed
+                .content
+                .as_ref()
+                .map(|content| content.items().len())
+                .map_err(Clone::clone)
+        };
+        assert_eq!(text("embed-note:Keep"), Ok(3));
+        assert_eq!(text("embed-note:Keep#Gate"), Ok(2));
+        assert!(text("embed-note:Moat").is_err());
+        assert_eq!(preview.embeds["embed-note:Keep#Gate"].title, "Keep > Gate");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn finds_pictures_by_full_path() {
+        let picture = std::env::current_dir().unwrap().join("assets/die_icons");
+        let picture = std::fs::read_dir(picture)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| is_picture(p))
+            .unwrap();
+        let url = picture.to_string_lossy().replace('\\', "/");
+        assert_eq!(
+            find_picture(&url, Path::new("/elsewhere"), Path::new("/elsewhere")),
+            Some(picture.clone())
+        );
+        let file_url = if url.starts_with('/') {
+            format!("file://{url}")
+        } else {
+            format!("file:///{url}")
+        };
+        assert_eq!(
+            find_picture(&file_url, Path::new("/elsewhere"), Path::new("/elsewhere")),
+            Some(picture)
+        );
+        assert_eq!(
+            find_picture(
+                "https://example.com/a.png",
+                Path::new("/c"),
+                Path::new("/c")
+            ),
+            None
+        );
     }
 
     #[test]

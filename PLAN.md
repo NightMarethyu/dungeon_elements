@@ -54,7 +54,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Reading view (Edit / Read at the top right, Ctrl+R): the note's name as a title, its fields in a wiki-style box on the right half beside the opening text, then the body as formatted Markdown with headings, lists, task lists, tables, quotes, code blocks, rules and pictures, like GitHub shows a README
   - [x] `[[Links]]` in it can be clicked (dimmer when the note doesn't exist yet), web links open in the browser, and `![[picture.png]]` embeds show the picture
   - [x] View > Open Notes in Reading View, for opening notes formatted
-  - [ ] Pictures from the web, syntax colors in code blocks, and embedding one note in another (`![[Note]]` shows as a link for now)
+  - [x] Pictures from the web, syntax colors in code blocks, and embedding one note in another (`![[Note]]` and `![[Note#Heading]]` show the note's text in a box). Edit > Insert Picture (or dropping a picture on the window) copies a picture from anywhere on the computer into the campaign's `pictures` folder and embeds it
 - [x] Allow internal linking of files, make this easy highlight text and select "add link" (right-click context menu or file menu) will check if a file already exists with that name and link it, if a file doesn't exist it will create one. Links formatted in Obsidian compatible [[link text]] format
   - [x] Typing `[[` in a text editor (or a long text field) closes it with `]]` and suggests notes by name; Tab or a click inserts one. Link fields suggest notes the same way (Enter picks the first)
   - [x] Edit > Insert Link (Ctrl+K) wraps the selected text in `[[ ]]`
@@ -230,6 +230,7 @@ Phase 5. The GM shares parts of the campaign with players without sharing their 
 
 ## Planned features
 
-All the planned features are now placed in the phases above. New ideas go here until they find their phase.
-
+- Focus mode for writers
+  - Full screen app with just what looks like a piece of paper and a background of the user's choosing
+- Timer for specific sprints for writing or for in game timed things like Shadowdark's torch timer
 - More to come as I have more ideas!

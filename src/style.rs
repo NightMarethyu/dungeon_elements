@@ -140,6 +140,16 @@ pub fn separator(c: Colors) -> impl Fn(&Theme) -> rule::Style {
     }
 }
 
+/// The line beside a note embedded in another in the reading view.
+pub fn accent_rule(c: Colors) -> impl Fn(&Theme) -> rule::Style {
+    move |_| rule::Style {
+        color: c.accent,
+        radius: Radius::default(),
+        fill_mode: rule::FillMode::Full,
+        snap: true,
+    }
+}
+
 /// A tab in the tab bar. The active tab blends into the editor below it.
 pub fn tab(c: Colors, active: bool) -> impl Fn(&Theme) -> container::Style {
     move |_| {

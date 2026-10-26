@@ -123,7 +123,8 @@ pub fn normalize(target: &str) -> String {
 /// The campaign's notes, for finding the note a link points to.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
-    notes: Vec<Entry>,
+    /// Shared, so the index is cheap to copy.
+    notes: Arc<Vec<Entry>>,
     /// Every name a link can use to reach a note, as [`normalize`]d: each note's
     /// path in the campaign and every shorter path ending in its filename.
     names: Names,
@@ -184,7 +185,7 @@ impl Index {
         }
 
         Index {
-            notes,
+            notes: Arc::new(notes),
             names: Names(Arc::new(names)),
         }
     }
