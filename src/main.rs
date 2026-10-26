@@ -11,6 +11,7 @@ mod icon;
 mod links;
 mod menu;
 mod note;
+mod preview;
 mod settings;
 mod style;
 mod theme;
@@ -32,6 +33,7 @@ use campaign::Entry;
 use check::Problem;
 use form::Form;
 use menu::Menu;
+use preview::Preview;
 use settings::Settings;
 use theme::{Colors, Theme};
 use types::ContentType;
@@ -144,6 +146,8 @@ struct Workspace {
     drag: Option<(PathBuf, bool)>,
     /// The dice roller along the bottom of the main pane, when it is open.
     dice: dice::Roller,
+    /// Whether notes open in the reading view rather than an editor.
+    open_in_reading: bool,
 }
 
 /// A dialog over the workspace.
@@ -209,6 +213,8 @@ struct Tab {
     form: Option<Form>,
     /// Whether the Markdown source shows instead of the form.
     source: bool,
+    /// The formatted note, while the reading view shows instead of the form or source.
+    preview: Option<Preview>,
     /// The file the text was last saved to, if any.
     path: Option<PathBuf>,
     /// The folder a new note is saved in.
@@ -230,9 +236,21 @@ impl Tab {
         }
     }
 
-    /// Whether the form shows, rather than the Markdown source.
+    /// Whether the form shows, rather than the Markdown source or the reading view.
     fn shows_form(&self) -> bool {
-        self.form.is_some() && !self.source
+        self.form.is_some() && !self.source && !self.reading()
+    }
+
+    /// Whether the reading view shows the note formatted, instead of an editor.
+    fn reading(&self) -> bool {
+        self.preview.is_some()
+    }
+
+    /// The note formatted for the reading view.
+    fn make_preview(&self, root: &Path) -> Preview {
+        let text = self.text().unwrap_or_else(|_| self.content.text());
+        let ty = self.form.as_ref().map(|form| &form.ty);
+        Preview::new(&text, ty, &self.note_path(), root)
     }
 
     /// The text to save.
@@ -316,6 +334,13 @@ enum Message {
     NewNoteIn(PathBuf),
     Form(form::Message),
     ToggleSource,
+    /// Switches the active tab between the reading view and editing.
+    ToggleReading,
+    /// Shows the active tab in the reading view (true) or an editor (false).
+    SetReading(bool),
+    ToggleOpenInReading(bool),
+    /// A link in the reading view was clicked.
+    PreviewLink(String),
     Modifiers(Modifiers),
     /// The mouse moved onto a row of the file tree.
     TreeEnter(PathBuf),
@@ -396,7 +421,10 @@ impl App {
         if let Some(root) = std::env::args_os().nth(1).map(PathBuf::from)
             && root.is_dir()
         {
-            app.screen = Screen::Workspace(Box::new(Workspace::open(root)));
+            app.screen = Screen::Workspace(Box::new(Workspace::open(
+                root,
+                app.settings.open_in_reading,
+            )));
         }
 
         app
@@ -567,6 +595,14 @@ impl App {
                 self.save_settings();
                 return Task::none();
             }
+            Message::ToggleOpenInReading(on) => {
+                self.settings.open_in_reading = on;
+                self.save_settings();
+                if let Screen::Workspace(workspace) = &mut self.screen {
+                    workspace.open_in_reading = on;
+                }
+                return Task::none();
+            }
             Message::ShowAbout => {
                 self.about = true;
                 return Task::none();
@@ -601,7 +637,10 @@ impl App {
                 }
                 Message::CampaignPicked(Some(root)) => {
                     if root.is_dir() {
-                        self.screen = Screen::Workspace(Box::new(Workspace::open(root)));
+                        self.screen = Screen::Workspace(Box::new(Workspace::open(
+                            root,
+                            self.settings.open_in_reading,
+                        )));
                     } else {
                         *error = Some(format!("{} is not a folder", root.display()));
                     }
@@ -638,7 +677,10 @@ impl App {
                         form.with_template,
                     ) {
                         Ok(root) => {
-                            self.screen = Screen::Workspace(Box::new(Workspace::open(root)))
+                            self.screen = Screen::Workspace(Box::new(Workspace::open(
+                                root,
+                                self.settings.open_in_reading,
+                            )))
                         }
                         Err(message) => form.error = Some(message),
                     }
@@ -665,7 +707,9 @@ impl App {
                     self.screen = Screen::default();
                     return Task::none();
                 }
-                workspace.update(message)
+                let task = workspace.update(message);
+                workspace.refresh_preview();
+                task
             }
         }
     }
@@ -728,12 +772,16 @@ impl App {
         let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
         let active_tab = workspace.and_then(Workspace::active_tab);
         let has_form = active_tab.is_some_and(|tab| tab.form.is_some());
+        let can_read = active_tab.is_some_and(Tab::is_note);
+        let reading = active_tab.is_some_and(Tab::reading);
         let can_link = active_tab.is_some_and(|tab| {
             tab.is_note()
+                && !tab.reading()
                 && (!tab.shows_form()
                     || tab.form.as_ref().is_some_and(|form| form.focus().is_some()))
         });
-        let shows_source = active_tab.is_some_and(|tab| tab.form.is_some() && !tab.shows_form());
+        let shows_source =
+            active_tab.is_some_and(|tab| tab.form.is_some() && tab.source && !tab.reading());
         let when = |enabled: bool, message: Message| enabled.then_some(message);
 
         match open {
@@ -790,12 +838,20 @@ impl App {
                         Some(Message::ToggleTypeFiles(!self.settings.show_type_files)),
                     )
                     .checked(self.settings.show_type_files),
+                    item("Reading View", when(can_read, Message::ToggleReading))
+                        .shortcut("Ctrl+R")
+                        .checked(reading),
                     item(
                         "Show Markdown Source",
                         when(has_form, Message::ToggleSource),
                     )
                     .shortcut("Ctrl+E")
                     .checked(shows_source),
+                    item(
+                        "Open Notes in Reading View",
+                        Some(Message::ToggleOpenInReading(!self.settings.open_in_reading)),
+                    )
+                    .checked(self.settings.open_in_reading),
                     Entry::Separator,
                     item(
                         "Refresh File Tree",
@@ -810,7 +866,7 @@ impl App {
 }
 
 impl Workspace {
-    fn open(root: PathBuf) -> Self {
+    fn open(root: PathBuf, open_in_reading: bool) -> Self {
         let tree = campaign::scan(&root);
         let types = load_types(&root, &tree);
         let problems = check::campaign(&root, &tree, &types);
@@ -835,6 +891,7 @@ impl Workspace {
             hovered: None,
             drag: None,
             dice: dice::Roller::default(),
+            open_in_reading,
         }
     }
 
@@ -974,11 +1031,13 @@ impl Workspace {
     fn add_tab(&mut self, path: Option<PathBuf>, folder: PathBuf, text: &str, form: Option<Form>) {
         let id = self.next_id;
         self.next_id += 1;
+        let read = self.open_in_reading && path.as_deref().is_some_and(campaign::is_markdown);
         self.tabs.push(Tab {
             id,
             content: text_editor::Content::with_text(text),
             form,
             source: false,
+            preview: None,
             disk: path.as_deref().and_then(check::modified_time),
             path,
             folder,
@@ -986,6 +1045,35 @@ impl Workspace {
             changed_outside: false,
         });
         self.active = Some(id);
+        if read {
+            self.read_active_tab();
+        }
+    }
+
+    /// Shows the active tab in the reading view.
+    fn read_active_tab(&mut self) {
+        let root = self.root.clone();
+        if let Some(tab) = self.active_tab_mut()
+            && tab.preview.is_none()
+        {
+            tab.preview = Some(tab.make_preview(&root));
+        }
+    }
+
+    /// Formats the active tab's note again if it changed while in the reading view, like
+    /// when it was edited outside the app or a link in it was renamed.
+    fn refresh_preview(&mut self) {
+        let root = self.root.clone();
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let Some(preview) = &tab.preview else {
+            return;
+        };
+        let text = tab.text().unwrap_or_else(|_| tab.content.text());
+        if preview.source() != text {
+            tab.preview = Some(tab.make_preview(&root));
+        }
     }
 
     /// The content type for a note: the one its `type:` names, or else its folder's.
@@ -1659,6 +1747,53 @@ impl Workspace {
                     iced::widget::operation::focus(EDITOR)
                 }
             }
+            Message::ToggleReading => {
+                let reading = self.active_tab().is_some_and(Tab::reading);
+                self.update(Message::SetReading(!reading))
+            }
+            Message::SetReading(true) => {
+                if self.active_tab().is_some_and(Tab::is_note) {
+                    self.read_active_tab();
+                }
+                Task::none()
+            }
+            Message::SetReading(false) => {
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.preview = None;
+                }
+                Task::none()
+            }
+            Message::PreviewLink(url) => {
+                let Some(tab) = self.active_tab() else {
+                    return Task::none();
+                };
+                match preview::click(&url, &tab.note_path()) {
+                    // A note followed from the reading view is read too, unless it's new.
+                    Some(preview::Click::Note(target)) => {
+                        let exists = self.index.resolve(&target, &tab.note_path()).is_some();
+                        let task = self.follow_link(&target);
+                        if exists {
+                            self.read_active_tab();
+                        }
+                        task
+                    }
+                    Some(preview::Click::File(path)) => {
+                        self.open_file(path);
+                        if self.active_tab().is_some_and(Tab::is_note) {
+                            self.read_active_tab();
+                        }
+                        Task::none()
+                    }
+                    Some(preview::Click::Web(url)) => {
+                        self.status = match open_in_browser(&url) {
+                            Ok(()) => format!("Opened {url} in your browser"),
+                            Err(error) => format!("Could not open {url}: {error}"),
+                        };
+                        Task::none()
+                    }
+                    None => Task::none(),
+                }
+            }
             Message::ToggleSource => {
                 let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
                     return Task::none();
@@ -1667,6 +1802,10 @@ impl Workspace {
                     return Task::none();
                 };
 
+                // From the reading view, go to whichever editor was asked for.
+                if tab.preview.take().is_some() && tab.source {
+                    return Task::none();
+                }
                 if tab.source {
                     match note::parse(&tab.content.text()) {
                         Ok(note) => {
@@ -2076,20 +2215,38 @@ impl Workspace {
             tooltip::Position::Left,
         );
 
-        container(
-            row![
-                scrollable(row(tabs).spacing(1))
-                    .direction(scrollable::Direction::Horizontal(
-                        scrollable::Scrollbar::new().width(3).scroller_width(3),
-                    ))
-                    .width(Fill),
-                container(roll).padding([0, 6]),
-            ]
-            .align_y(Center),
-        )
-        .width(Fill)
-        .style(style::panel(c.sidebar))
-        .into()
+        let mut bar = row![
+            scrollable(row(tabs).spacing(1))
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::new().width(3).scroller_width(3),
+                ))
+                .width(Fill),
+        ]
+        .align_y(Center);
+
+        // Edit and Read switch a note between its editor and the reading view.
+        if let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) {
+            let switch = |label, read: bool| {
+                let selected = tab.reading() == read;
+                button(text(label).size(13))
+                    .padding([4, 10])
+                    .style(style::flat(c, selected))
+                    .on_press(Message::SetReading(read))
+            };
+            let switch = tooltip(
+                row![switch("Edit", false), switch("Read", true)].spacing(2),
+                container(text("Switch between editing and reading (Ctrl+R)").size(12))
+                    .padding([2, 6])
+                    .style(style::dropdown(c)),
+                tooltip::Position::Bottom,
+            );
+            bar = bar.push(container(switch).padding([0, 6]));
+        }
+
+        container(bar.push(container(roll).padding([0, 6])))
+            .width(Fill)
+            .style(style::panel(c.sidebar))
+            .into()
     }
 
     fn editor(&self, c: Colors) -> Element<'_, Message> {
@@ -2100,7 +2257,11 @@ impl Workspace {
         if self.active_tab().is_some_and(|tab| tab.changed_outside) {
             view = view.push(changed_outside_banner(c));
         }
-        view.push(editor).push(self.link_bar(c, suggestions)).into()
+        view = view.push(editor);
+        if !self.active_tab().is_some_and(Tab::reading) {
+            view = view.push(self.link_bar(c, suggestions));
+        }
+        view.into()
     }
 
     /// The notes the link being typed in the active tab could be, as `(link text, label)`.
@@ -2322,6 +2483,10 @@ impl Workspace {
                     self.expanded.insert(folder.to_path_buf());
                 }
                 self.open_file(path.clone());
+                // A new note is empty, so it opens ready to write in.
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.preview = None;
+                }
                 self.status = match ty {
                     Some(ty) => format!(
                         "Created {} as a new {}: no note had that name yet",
@@ -2548,6 +2713,18 @@ impl Workspace {
             .style(style::panel(c.background))
             .into();
         };
+
+        if let Some(preview) = &tab.preview {
+            return container(
+                preview
+                    .view(c, self.index.names())
+                    .map(Message::PreviewLink),
+            )
+            .width(Fill)
+            .height(Fill)
+            .style(style::panel(c.background))
+            .into();
+        }
 
         let accept = suggestions
             .first()
@@ -2861,6 +3038,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "s" => Some(Message::Save),
         "w" => Some(Message::CloseActiveTab),
         "e" => Some(Message::ToggleSource),
+        "r" => Some(Message::ToggleReading),
         "k" => Some(Message::InsertLink),
         _ => None,
     }
@@ -3110,6 +3288,18 @@ async fn save(
 /// Appends `.md` to `path` unless it already ends in it, so notes are always Markdown.
 ///
 /// YAML files, like a folder's `_type.yaml`, keep their extension.
+/// Opens `url` in the default web browser.
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command.arg(url).spawn().map(|_| ())
+}
+
 fn with_md_extension(mut path: PathBuf) -> PathBuf {
     if !campaign::is_markdown(&path) && !campaign::is_yaml(&path) {
         path.as_mut_os_string().push(".md");

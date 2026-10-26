@@ -9,7 +9,9 @@ repository = "https://github.com/NightMarethyu/dungeon_elements"
 
 [dependencies]
 fastrand = "2"
-iced = { version = "0.14", features = ["advanced", "svg"] }
+iced = { version = "0.14", features = ["advanced", "image-without-codecs", "markdown", "svg"] }
+# Pictures in the reading view; iced's own `image` feature would add every format.
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 resvg = "0.45"
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }

@@ -233,7 +233,7 @@ pub fn key_from(name: &str) -> String {
 }
 
 /// Turns `snake_case` or `kebab-case` into "Title Case".
-fn title_case(key: &str) -> String {
+pub fn title_case(key: &str) -> String {
     key.split(['_', '-', ' '])
         .filter(|word| !word.is_empty())
         .map(|word| {
