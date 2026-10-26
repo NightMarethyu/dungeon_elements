@@ -5,6 +5,7 @@
 
 mod campaign;
 mod check;
+mod dice;
 mod form;
 mod icon;
 mod links;
@@ -23,7 +24,7 @@ use std::time::SystemTime;
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
     Svg, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
-    scrollable, space, stack, svg, text, text_editor, text_input,
+    scrollable, space, stack, svg, text, text_editor, text_input, tooltip,
 };
 use iced::{Center, Element, Fill, Subscription, Task, window};
 
@@ -72,6 +73,8 @@ struct App {
     theme: usize,
     /// The logo colored for the menu bar, and for the splash screen.
     logos: (svg::Handle, svg::Handle),
+    /// The dice roller's icons, in the theme's colors.
+    dice: dice::Icons,
     /// The dropdown menu that is open, if any.
     menu: Option<Menu>,
     /// Whether the "About" dialog is showing.
@@ -139,6 +142,8 @@ struct Workspace {
     hovered: Option<PathBuf>,
     /// The note being dragged in the file tree, and whether it has left its row yet.
     drag: Option<(PathBuf, bool)>,
+    /// The dice roller along the bottom of the main pane, when it is open.
+    dice: dice::Roller,
 }
 
 /// A dialog over the workspace.
@@ -354,6 +359,8 @@ enum Message {
     SaveAs,
     Saved(u64, Result<Option<PathBuf>, String>),
     CloseActiveTab,
+    ToggleDice,
+    Dice(dice::Message),
 }
 
 impl App {
@@ -378,6 +385,7 @@ impl App {
                 svg::Handle::from_memory(LOGO.as_bytes()),
                 svg::Handle::from_memory(LOGO.as_bytes()),
             ),
+            dice: dice::Icons::new(theme::built_in()[0].colors),
             menu: None,
             about: false,
         };
@@ -417,6 +425,7 @@ impl App {
 
         let c = self.colors();
         self.logos = (logo(c, c.menu_bar), logo(c, c.background));
+        self.dice = dice::Icons::new(c);
     }
 
     /// Shows `message` in the status bar, or under the buttons on the splash screen.
@@ -674,7 +683,7 @@ impl App {
 
         let body = match &self.screen {
             Screen::Splash { error, .. } => splash(c, &self.logos.1, error.as_deref()),
-            Screen::Workspace(workspace) => workspace.view(c, &self.settings),
+            Screen::Workspace(workspace) => workspace.view(c, &self.settings, &self.dice),
         };
 
         let edge = rule::horizontal(c.border_width.max(1.0)).style(style::separator(c));
@@ -825,6 +834,7 @@ impl Workspace {
             ctrl: false,
             hovered: None,
             drag: None,
+            dice: dice::Roller::default(),
         }
     }
 
@@ -1391,6 +1401,14 @@ impl Workspace {
                 self.open_file(path);
                 Task::none()
             }
+            Message::ToggleDice => {
+                self.dice.open = !self.dice.open;
+                Task::none()
+            }
+            Message::Dice(message) => {
+                self.dice.update(message);
+                Task::none()
+            }
             Message::RefreshTree => {
                 self.rescan();
                 self.status = problems_summary(&self.problems)
@@ -1809,8 +1827,18 @@ impl Workspace {
         }
     }
 
-    fn view<'a>(&'a self, c: Colors, settings: &Settings) -> Element<'a, Message> {
-        let main = column![self.tab_bar(c, settings), self.editor(c)];
+    fn view<'a>(
+        &'a self,
+        c: Colors,
+        settings: &Settings,
+        dice: &dice::Icons,
+    ) -> Element<'a, Message> {
+        let mut main = column![self.tab_bar(c, settings, dice), self.editor(c)];
+        if self.dice.open {
+            main = main
+                .push(rule::horizontal(c.border_width.max(1.0)).style(style::separator(c)))
+                .push(self.dice.view(c, dice).map(Message::Dice));
+        }
 
         let body = row![
             self.sidebar(c, settings),
@@ -2012,7 +2040,7 @@ impl Workspace {
         }
     }
 
-    fn tab_bar(&self, c: Colors, settings: &Settings) -> Element<'_, Message> {
+    fn tab_bar(&self, c: Colors, settings: &Settings, dice: &dice::Icons) -> Element<'_, Message> {
         let tabs = self.tabs.iter().map(|tab| {
             let active = Some(tab.id) == self.active;
             let close_label = if tab.modified { "●" } else { "×" };
@@ -2035,10 +2063,29 @@ impl Workspace {
             .into()
         });
 
+        // The d20 at the right opens and closes the dice roller.
+        let roll = button(Svg::new(dice.roll.clone()).width(28).height(28))
+            .padding(3)
+            .style(style::flat(c, self.dice.open))
+            .on_press(Message::ToggleDice);
+        let roll = tooltip(
+            roll,
+            container(text("Dice roller").size(12))
+                .padding([2, 6])
+                .style(style::dropdown(c)),
+            tooltip::Position::Left,
+        );
+
         container(
-            scrollable(row(tabs).spacing(1)).direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new().width(3).scroller_width(3),
-            )),
+            row![
+                scrollable(row(tabs).spacing(1))
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::new().width(3).scroller_width(3),
+                    ))
+                    .width(Fill),
+                container(roll).padding([0, 6]),
+            ]
+            .align_y(Center),
         )
         .width(Fill)
         .style(style::panel(c.sidebar))

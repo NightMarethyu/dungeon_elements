@@ -14,6 +14,11 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Drag a note in the file tree onto another folder to move it. It becomes that folder's type and keeps the fields you filled in, and links to it are updated.
 - Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
 
+### Dice roller
+
+- The d20 button at the right of the tab bar opens a dice roller along the bottom of the window. Click a die (d20, d12, d10, d100, d8, d6, or d4) to roll it; the result shows on the left.
+- Type a number in a die's **Count** box to roll several at once. Each result shows, with their total, and the last few rolls are listed under it.
+
 ## [0.1.0] - 2026-10-25
 
 The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon Elements is in early development, so expect rough edges, and keep backups of campaigns you care about.

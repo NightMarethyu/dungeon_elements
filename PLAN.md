@@ -62,7 +62,10 @@ The suite will also include drawing tools and generators to allow the Game Maste
   - [x] Drag a note in the file tree onto a folder (or a note in it) to move it there. It takes the folder's type and keeps every field that has something in it; fields the new type doesn't have become the note's own. Links that named its old folder are rewritten
   - [ ] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke
 - [ ] Syntax-highlighting and live preview
-- [ ] Built-in dice roller, keep everything close without needing to leave the app
+- [x] Built-in dice roller, keep everything close without needing to leave the app
+  - [x] The d20 button at the right of the tab bar opens a pane along the bottom of the main pane (`reference/dungeon_elements_layout_plan_with_roll_results.png`): the result on the left, and a button for each die (d20, d12, d10, d100, d8, d6, d4) on the right
+  - [x] Each die has a Count box; clicking the die (or pressing Enter in its box) rolls that many and shows each result, their total, and the few rolls before
+  - [ ] Dice expressions like `2d6+3`, advantage and disadvantage, and rolling from a note's fields
 
 Stretch goal:
 
@@ -86,6 +89,15 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 - User themes are YAML files in the app's config folder (`%APPDATA%\dungeon_elements\themes` on Windows, `~/.config/dungeon_elements/themes` on Linux) and appear under View > Theme. A broken theme file is skipped with a warning, never a crash.
 - The logo is recolored to match the theme (black becomes the text color, white the background).
 - Later: a theme editor with a color picker per role and live preview.
+
+### Layouts
+
+Customization is a big part of the app, so the window's layout should be the user's to arrange too. Not started; for later in development.
+
+- Panes (the file tree, the editor, the dice roller, and later maps, roll tables and the journal) can pop out into their own windows, and be put back.
+- The user chooses where each pane appears in the main window (left, right, bottom, or as a tab), and resizes it.
+- An arrangement can be saved as a named layout (for example "Prep" and "At the table") and switched from the View menu. Layouts are saved in the app's config folder, like themes, so they can be shared.
+- The default layout is the one in `reference/dungeon_elements_layout_plan.png`.
 
 ### Content types
 
