@@ -48,7 +48,7 @@ The suite will also include drawing tools and generators to allow the Game Maste
 ### Phase 1: inciting incident
 
 - [x] Display markdown files in a nice way
-  - [x] Reading view (Edit / Read at the top right, Ctrl+R): the note's name as a title, its fields as a box of properties, then the body as formatted Markdown with headings, lists, task lists, tables, quotes, code blocks, rules and pictures, like GitHub shows a README
+  - [x] Reading view (Edit / Read at the top right, Ctrl+R): the note's name as a title, its fields in a wiki-style box on the right half beside the opening text, then the body as formatted Markdown with headings, lists, task lists, tables, quotes, code blocks, rules and pictures, like GitHub shows a README
   - [x] `[[Links]]` in it can be clicked (dimmer when the note doesn't exist yet), web links open in the browser, and `![[picture.png]]` embeds show the picture
   - [x] View > Open Notes in Reading View, for opening notes formatted
   - [ ] Pictures from the web, syntax colors in code blocks, and embedding one note in another (`![[Note]]` shows as a link for now)

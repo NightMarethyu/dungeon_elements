@@ -13,7 +13,7 @@ use iced::advanced::text::Highlight;
 use iced::widget::markdown::{self, HeadingLevel, Uri};
 use iced::widget::text::Span;
 use iced::widget::{Svg, column, container, image, rich_text, row, rule, scrollable, svg, text};
-use iced::{Element, Fill, Font, Length, border, font, padding};
+use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::links::{self, Names};
@@ -38,6 +38,9 @@ pub struct Preview {
     source: String,
     /// The note's `name`, shown as a heading unless the body starts with one.
     title: Option<String>,
+    /// The note's name and type, shown at the top of the box of fields.
+    name: Option<String>,
+    kind: Option<String>,
     /// The front matter fields worth showing, as (label, value).
     properties: Vec<(String, markdown::Content)>,
     body: markdown::Content,
@@ -75,10 +78,11 @@ impl Preview {
             .lines()
             .find(|line| !line.trim().is_empty())
             .is_some_and(|line| line.starts_with("# "));
-        let title = front
+        let name = front
             .get("name")
             .map(note::value_to_text)
-            .filter(|name| !name.trim().is_empty() && !starts_with_title);
+            .filter(|name| !name.trim().is_empty());
+        let title = name.clone().filter(|_| !starts_with_title);
 
         let properties = properties(&front, ty)
             .into_iter()
@@ -96,6 +100,8 @@ impl Preview {
         Preview {
             source: source.to_string(),
             title,
+            name,
+            kind: ty.map(ContentType::label),
             properties,
             body,
             pictures: Arc::new(pictures),
@@ -133,28 +139,11 @@ impl Preview {
             );
         }
 
-        if !self.properties.is_empty() {
-            let rows = self.properties.iter().map(|(label, value)| {
-                row![
-                    text(label.clone())
-                        .size(settings.text_size)
-                        .color(c.text_muted)
-                        .width(160),
-                    container(markdown::view_with(value.items(), settings, &reader)).width(Fill),
-                ]
-                .spacing(12)
-                .into()
-            });
-            page = page.push(
-                container(column(rows).spacing(8))
-                    .padding([10, 14])
-                    .width(Fill)
-                    .style(style::card(c)),
-            );
-        }
-
-        if self.body.items().is_empty() {
-            if self.title.is_none() && self.properties.is_empty() {
+        let items = self.body.items();
+        if self.properties.is_empty() {
+            if !items.is_empty() {
+                page = page.push(markdown::view_with(items, settings, &reader));
+            } else if self.title.is_none() {
                 page = page.push(
                     text("This note is empty. Switch to Edit to write in it.")
                         .size(settings.text_size)
@@ -162,7 +151,20 @@ impl Preview {
                 );
             }
         } else {
-            page = page.push(markdown::view_with(self.body.items(), settings, &reader));
+            // Like a wiki's infobox, the fields sit in a box on the right, beside the
+            // note's opening text; the rest of the note runs full width under them.
+            let lead = lead_length(items);
+            page = page.push(
+                row![
+                    container(markdown::view_with(&items[..lead], settings, &reader))
+                        .width(Length::FillPortion(1)),
+                    container(self.infobox(c, settings, &reader)).width(Length::FillPortion(1)),
+                ]
+                .spacing(24),
+            );
+            if lead < items.len() {
+                page = page.push(markdown::view_with(&items[lead..], settings, &reader));
+            }
         }
 
         scrollable(
@@ -173,6 +175,82 @@ impl Preview {
         .height(Fill)
         .into()
     }
+}
+
+impl Preview {
+    /// The box of the note's fields: its name and type across the top, then a row for
+    /// each field.
+    fn infobox<'a>(
+        &'a self,
+        c: Colors,
+        settings: markdown::Settings,
+        reader: &Reader,
+    ) -> Element<'a, Uri> {
+        let mut header = column![].spacing(2).align_x(Center).width(Fill);
+        if let Some(name) = &self.name {
+            header = header.push(
+                text(name.clone())
+                    .size(settings.text_size * 1.2)
+                    .font(Font {
+                        weight: font::Weight::Bold,
+                        ..Font::DEFAULT
+                    })
+                    .align_x(Center),
+            );
+        }
+        if let Some(kind) = &self.kind {
+            header = header.push(
+                text(kind.clone())
+                    .size(settings.text_size * 0.85)
+                    .color(c.text_muted),
+            );
+        }
+
+        let rows = self.properties.iter().map(|(label, value)| {
+            row![
+                text(label.clone())
+                    .size(settings.text_size)
+                    .font(Font {
+                        weight: font::Weight::Bold,
+                        ..Font::DEFAULT
+                    })
+                    .width(Length::FillPortion(2)),
+                container(markdown::view_with(value.items(), settings, reader))
+                    .width(Length::FillPortion(3)),
+            ]
+            .spacing(12)
+            .into()
+        });
+
+        let mut infobox = column![].spacing(10);
+        if self.name.is_some() || self.kind.is_some() {
+            infobox = infobox.push(
+                container(header)
+                    .padding([8, 12])
+                    .width(Fill)
+                    .style(style::infobox_header(c)),
+            );
+        }
+        infobox = infobox.push(container(column(rows).spacing(8)).padding([0, 14]));
+
+        container(infobox)
+            .padding(padding::bottom(12))
+            .width(Fill)
+            .style(style::card(c))
+            .into()
+    }
+}
+
+/// How many of a note's first Markdown items go beside the box of fields: everything
+/// before its second heading (or its first, if the note doesn't start with one).
+fn lead_length(items: &[markdown::Item]) -> usize {
+    let starts_with_heading = matches!(items.first(), Some(markdown::Item::Heading(..)));
+    items
+        .iter()
+        .enumerate()
+        .skip(usize::from(starts_with_heading))
+        .find(|(_, item)| matches!(item, markdown::Item::Heading(..)))
+        .map_or(items.len(), |(index, _)| index)
 }
 
 /// What clicking the link to `url`, in the note at `path`, should do.
@@ -656,6 +734,18 @@ mod tests {
 
         let titled = Preview::new("---\nname: Ann\n---\n# Ann the Smith\n", None, path, root);
         assert_eq!(titled.title, None);
+    }
+
+    #[test]
+    fn puts_the_opening_text_beside_the_fields() {
+        let items: Vec<_> = markdown::parse("Intro.\n\nMore.\n\n## History\n\nOld.\n").collect();
+        assert_eq!(lead_length(&items), 2);
+
+        let items: Vec<_> = markdown::parse("## Appearance\n\nTall.\n\n## Notes\n\nx\n").collect();
+        assert_eq!(lead_length(&items), 2);
+
+        let items: Vec<_> = markdown::parse("Just text.\n").collect();
+        assert_eq!(lead_length(&items), 1);
     }
 
     #[test]
