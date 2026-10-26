@@ -19,6 +19,8 @@ pulldown-cmark = { version = "0.12", default-features = false }
 serde_yaml_ng = "0.10"
 # Syntax colors in code blocks; the pure Rust regex engine keeps Windows builds simple.
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"] }
+# Deleting from the file tree sends files to the Recycle Bin / Trash.
+trash = "5.2"
 # Pictures from the web, trusting the computer's own certificates.
 ureq = { version = "3.5", features = ["platform-verifier"] }
 

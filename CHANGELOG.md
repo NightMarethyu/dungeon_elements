@@ -14,6 +14,15 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Drag a note in the file tree onto another folder to move it. It becomes that folder's type and keeps the fields you filled in, and links to it are updated.
 - Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
 
+### Right-click menus
+
+- Right-click a note or folder in the file tree to open it (or open it in the reading view), rename it, move it to another folder, delete it, copy a `[[link]]` to it, or show it in Explorer. Folders also offer **New Note Here**, **New Folder Here**, and their note fields (**Edit > Types**). Right-click the space around the tree for a new note or folder at the top of the campaign.
+- Deleting asks first and sends the note or folder to the Recycle Bin (the Trash on Linux), so it can be brought back.
+- Renaming a note changes its name field too. Renaming or moving a folder moves everything in it, updates the links to its notes, and points link fields that linked to it at its new place.
+- Right-click a tab to save it, close it, close the others, close the tabs to its right, or close them all.
+- Right-click in a text editor (a note's text, a long text field, or a block you're editing in the reading view) to cut, copy, paste, or select all, open or create the `[[link]]` you clicked, or insert a link or picture. Right-clicking puts the cursor where you clicked, unless text is selected.
+- Right-click a form or the reading view to add a field, switch views, add text at the end, copy a link to the note, or find it in the file tree.
+
 ### Reading view
 
 - **Read** at the top right of the editor (or **View > Reading View**, Ctrl+R) shows a note formatted, like GitHub shows a README: the note's name as a title, its fields in a box on the right like a wiki's infobox (beside the note's opening text), then its headings, lists, task lists, tables, quotes, code blocks, and pictures. **Edit** goes back to the form or the Markdown source.
