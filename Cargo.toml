@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/NightMarethyu/dungeon_elements"
 
 [dependencies]
+fastrand = "2"
 iced = { version = "0.14", features = ["advanced", "svg"] }
 resvg = "0.45"
 rfd = "0.17"
