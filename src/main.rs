@@ -188,6 +188,20 @@ impl std::fmt::Display for FolderChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.label)
     }
+    /// How a File > Save All is going, until every note in it is saved or not.
+    save_all: Option<SaveAll>,
+}
+
+/// A File > Save All in progress.
+#[derive(Default)]
+struct SaveAll {
+    /// The notes not saved, or given up on, yet.
+    pending: usize,
+    saved: usize,
+    /// Notes whose save dialog was cancelled.
+    skipped: usize,
+    /// Why notes were not saved, one line each.
+    problems: Vec<String>,
 }
 
 /// A dialog over the workspace.
@@ -481,6 +495,7 @@ enum Message {
     FilePicked(Option<PathBuf>),
     Save,
     SaveAs,
+    SaveAll,
     Saved(u64, Result<Option<PathBuf>, String>),
     CloseActiveTab,
     ToggleDice,
@@ -940,6 +955,8 @@ impl App {
             Screen::Splash { .. } => None,
         };
         let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
+        let has_unsaved =
+            workspace.is_some_and(|workspace| workspace.tabs.iter().any(|tab| tab.modified));
         let active_tab = workspace.and_then(Workspace::active_tab);
         let has_form = active_tab.is_some_and(|tab| tab.form.is_some());
         let can_read = active_tab.is_some_and(Tab::is_note);
@@ -963,6 +980,7 @@ impl App {
                     Entry::Separator,
                     item("Save", when(has_tab, Message::Save)).shortcut("Ctrl+S"),
                     item("Save As...", when(has_tab, Message::SaveAs)).shortcut("Ctrl+Shift+S"),
+                    item("Save All", when(has_unsaved, Message::SaveAll)).shortcut("Ctrl+Alt+S"),
                     Entry::Separator,
                     item("Close Tab", when(has_tab, Message::CloseActiveTab)).shortcut("Ctrl+W"),
                     item("Close Campaign", Some(Message::CloseCampaign)),
@@ -1066,6 +1084,7 @@ impl Workspace {
             open_in_reading,
             web: web::Pictures::new(),
             context: None,
+            save_all: None,
         }
     }
 
@@ -1511,7 +1530,7 @@ impl Workspace {
         let text = match tab.text() {
             Ok(text) => text,
             Err(error) => {
-                self.status = format!("Could not save: {error}");
+                self.not_saved(id, format!("Could not save: {error}"));
                 return Task::none();
             }
         };
@@ -1526,8 +1545,11 @@ impl Workspace {
             if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
                 tab.changed_outside = true;
             }
-            self.status = format!(
-                "Not saved: {name} was changed outside Dungeon Elements. Choose Reload or Keep Mine above the editor first"
+            self.not_saved(
+                id,
+                format!(
+                    "Not saved: {name} was changed outside Dungeon Elements. Choose Reload or Keep Mine above the editor first"
+                ),
             );
             return Task::none();
         }
@@ -1567,6 +1589,95 @@ impl Workspace {
         Task::perform(save(path, folder, text), move |result| {
             Message::Saved(id, result)
         })
+    }
+
+    /// Saves every tab with unsaved changes. Notes without a file yet ask where to go one
+    /// at a time, and the status bar sums up once they are all done.
+    fn save_all(&mut self) -> Task<Message> {
+        let ids: Vec<u64> = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.modified)
+            .map(|tab| tab.id)
+            .collect();
+        if ids.is_empty() {
+            self.status = "Nothing to save".into();
+            return Task::none();
+        }
+
+        // One more than the notes, so notes saved right away (and their renames' status)
+        // can't sum it up before the loop is done.
+        self.save_all = Some(SaveAll {
+            pending: ids.len() + 1,
+            ..SaveAll::default()
+        });
+        // One after another, so only one save dialog is open at a time.
+        let tasks = ids
+            .into_iter()
+            .fold(Task::none(), |tasks, id| tasks.chain(self.save(id, false)));
+        if let Some(batch) = &mut self.save_all {
+            batch.pending -= 1;
+        }
+        self.finish_save_all();
+        tasks
+    }
+
+    /// Reports that tab `id` was not saved, in the Save All summary if one is going.
+    fn not_saved(&mut self, id: u64, problem: String) {
+        match &mut self.save_all {
+            Some(batch) => {
+                let name = self
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == id)
+                    .map(|tab| tab.name(false))
+                    .unwrap_or_default();
+                let problem = problem
+                    .strip_prefix("Could not save: ")
+                    .map(|why| format!("{name}: {why}"))
+                    .unwrap_or(problem);
+                batch.pending = batch.pending.saturating_sub(1);
+                batch.problems.push(problem);
+                self.finish_save_all();
+            }
+            None => self.status = problem,
+        }
+    }
+
+    /// Counts a note as saved in a Save All, if one is going, or as not saved when its
+    /// save dialog was cancelled.
+    fn saved_one(&mut self, saved: bool) {
+        if let Some(batch) = &mut self.save_all {
+            batch.pending = batch.pending.saturating_sub(1);
+            match saved {
+                true => batch.saved += 1,
+                false => batch.skipped += 1,
+            }
+            self.finish_save_all();
+        }
+    }
+
+    /// Sums up a Save All in the status bar once every note in it is done.
+    fn finish_save_all(&mut self) {
+        let Some(batch) = self.save_all.take_if(|batch| batch.pending == 0) else {
+            return;
+        };
+        let notes = |count: usize| match count {
+            1 => "1 note".to_string(),
+            count => format!("{count} notes"),
+        };
+        let mut status = format!("Saved {}", notes(batch.saved));
+        if batch.skipped > 0 {
+            status += &format!(". {} not saved (cancelled)", notes(batch.skipped));
+        }
+        match batch.problems.as_slice() {
+            [] => {}
+            [problem] => status += &format!(". Not saved: {problem}"),
+            [problem, more @ ..] => {
+                status += &format!(". Not saved: {problem} (and {} more)", more.len())
+            }
+        }
+        self.status = status;
     }
 
     /// The types a new folder can start with: none, the default template's, and the campaign's own.
@@ -1900,6 +2011,7 @@ impl Workspace {
             Message::Save
                 | Message::SaveAs
                 | Message::SaveTab(_)
+                | Message::SaveAll
                 | Message::SelectTab(_)
                 | Message::CloseTab(_)
                 | Message::CloseActiveTab
@@ -2483,6 +2595,7 @@ impl Workspace {
                 Some(id) => self.save(id, true),
                 None => Task::none(),
             },
+            Message::SaveAll => self.save_all(),
             Message::Saved(id, Ok(Some(path))) => {
                 self.status = format!("Saved {}", self.relative(&path));
                 if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
@@ -2494,10 +2607,16 @@ impl Workspace {
                 }
                 self.rescan();
                 self.refresh_embeds(id);
+                self.saved_one(true);
                 Task::none()
             }
-            Message::Saved(_, Err(error)) => {
-                self.status = format!("Could not save: {error}");
+            // The save dialog was cancelled.
+            Message::Saved(_, Ok(None)) => {
+                self.saved_one(false);
+                Task::none()
+            }
+            Message::Saved(id, Err(error)) => {
+                self.not_saved(id, format!("Could not save: {error}"));
                 Task::none()
             }
             Message::OpenContextMenu(target, position) => {
@@ -4308,6 +4427,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     match c.to_ascii_lowercase().as_str() {
         "n" => Some(Message::NewNote),
         "o" => Some(Message::OpenFile),
+        "s" if modifiers.alt() => Some(Message::SaveAll),
         "s" if modifiers.shift() => Some(Message::SaveAs),
         "s" => Some(Message::Save),
         "w" => Some(Message::CloseActiveTab),
