@@ -499,8 +499,19 @@ impl App {
             _ => {}
         }
 
-        // Anything else, such as picking a menu item, closes the open menu.
-        self.menu = None;
+        // Anything else, such as picking a menu item, closes the open menu. Messages that
+        // only track the mouse and keyboard don't: the click that opens a menu sends one.
+        let tracking = matches!(
+            message,
+            Message::Modifiers(_)
+                | Message::TreeEnter(_)
+                | Message::TreeExit(_)
+                | Message::MousePressed
+                | Message::MouseReleased
+        );
+        if !tracking {
+            self.menu = None;
+        }
 
         match message {
             Message::CloseMenu => return Task::none(),
