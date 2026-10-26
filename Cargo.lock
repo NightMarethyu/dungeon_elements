@@ -717,6 +717,7 @@ dependencies = [
  "fastrand",
  "iced",
  "image",
+ "pulldown-cmark",
  "resvg",
  "rfd",
  "serde",

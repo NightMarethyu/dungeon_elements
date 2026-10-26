@@ -44,6 +44,13 @@ pub enum Message {
     FollowLink(usize),
 }
 
+/// What a short field holds, from [`Form::short_field`].
+pub enum FieldValue<'a> {
+    Text(&'a str),
+    Check(bool),
+    Choice(Option<&'a str>),
+}
+
 /// What the user typed into one field.
 enum Input {
     Text(String),
@@ -393,6 +400,20 @@ impl Form {
             Some(Input::Text(name)) if !name.trim().is_empty() => Some(name.trim().to_string()),
             _ => None,
         }
+    }
+
+    /// The field stored under front matter `key` and what it holds, for editing it outside
+    /// the form, like in the reading view. Long text fields are body sections, so they
+    /// have none.
+    pub fn short_field(&self, key: &str) -> Option<(usize, &Field, FieldValue<'_>)> {
+        let index = self.front_field(key)?;
+        let value = match &self.inputs[index] {
+            Input::Text(text) => FieldValue::Text(text),
+            Input::Check(checked) => FieldValue::Check(*checked),
+            Input::Choice(choice) => FieldValue::Choice(choice.as_deref()),
+            Input::Long(_) => return None,
+        };
+        Some((index, &self.fields[index], value))
     }
 
     /// The index of the field stored under front matter `key`, if there is one.

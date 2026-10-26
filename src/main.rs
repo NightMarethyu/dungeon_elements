@@ -107,6 +107,9 @@ const TITLE_INPUT: &str = "new-campaign-title";
 const DIALOG_INPUT: &str = "dialog-name";
 /// The widget id of the text editor that shows a file's text.
 const EDITOR: &str = "editor";
+/// The editor for a block of the reading view, and the input for one of its fields.
+const BLOCK_EDITOR: &str = "block-editor";
+const FIELD_EDITOR: &str = "field-editor";
 /// How many notes the link bar suggests at most.
 const SUGGESTIONS: usize = 8;
 
@@ -215,6 +218,8 @@ struct Tab {
     source: bool,
     /// The formatted note, while the reading view shows instead of the form or source.
     preview: Option<Preview>,
+    /// What is being edited in the reading view, if anything.
+    edit: Option<ReadEdit>,
     /// The file the text was last saved to, if any.
     path: Option<PathBuf>,
     /// The folder a new note is saved in.
@@ -225,6 +230,20 @@ struct Tab {
     disk: Option<SystemTime>,
     /// Whether the file changed outside the app while this tab had unsaved changes.
     changed_outside: bool,
+}
+
+/// Something being edited in place in the reading view.
+enum ReadEdit {
+    /// Block `index` of the preview (or new text at the end, when `index` is the number of
+    /// blocks), which is at `range` in the note's text. Its text goes back into the note
+    /// when editing it ends.
+    Block {
+        index: usize,
+        range: std::ops::Range<usize>,
+        content: text_editor::Content,
+    },
+    /// The field with this front matter key, edited straight in the form.
+    Field(String),
 }
 
 impl Tab {
@@ -244,6 +263,21 @@ impl Tab {
     /// Whether the reading view shows the note formatted, instead of an editor.
     fn reading(&self) -> bool {
         self.preview.is_some()
+    }
+
+    /// Replaces the note's text, reading it into the form again if it shows one.
+    fn set_text(&mut self, text: &str) {
+        match &self.form {
+            Some(form) if !self.source => match note::parse(text) {
+                Ok(note) => self.form = Some(Form::from_note(form.ty.clone(), note)),
+                // Text the form can't read stays as it is, in the source.
+                Err(_) => {
+                    self.content = text_editor::Content::with_text(text);
+                    self.source = true;
+                }
+            },
+            _ => self.content = text_editor::Content::with_text(text),
+        }
     }
 
     /// The note formatted for the reading view.
@@ -341,6 +375,15 @@ enum Message {
     ToggleOpenInReading(bool),
     /// A link in the reading view was clicked.
     PreviewLink(String),
+    /// Edits block `index` of the reading view in place.
+    EditBlock(usize),
+    BlockEdit(text_editor::Action),
+    /// Edits the field with this front matter key in the reading view.
+    EditField(String),
+    /// Adds text at the end of the note in the reading view.
+    AddText,
+    /// Puts what was edited in the reading view back into the note.
+    FinishEditing,
     Modifiers(Modifiers),
     /// The mouse moved onto a row of the file tree.
     TreeEnter(PathBuf),
@@ -555,7 +598,11 @@ impl App {
             Message::Escape => {
                 match &mut self.screen {
                     Screen::Splash { new_campaign, .. } if !self.about => *new_campaign = None,
-                    Screen::Workspace(workspace) if !self.about => workspace.dialog = None,
+                    Screen::Workspace(workspace) if !self.about => {
+                        if workspace.dialog.take().is_none() {
+                            workspace.finish_editing();
+                        }
+                    }
                     _ => {}
                 }
                 self.about = false;
@@ -990,6 +1037,7 @@ impl Workspace {
 
         let tab = &mut self.tabs[index];
         tab.content = text_editor::Content::with_text(&text);
+        tab.edit = None;
         tab.disk = check::modified_time(&path);
         tab.modified = false;
         tab.changed_outside = false;
@@ -1038,6 +1086,7 @@ impl Workspace {
             form,
             source: false,
             preview: None,
+            edit: None,
             disk: path.as_deref().and_then(check::modified_time),
             path,
             folder,
@@ -1058,6 +1107,39 @@ impl Workspace {
         {
             tab.preview = Some(tab.make_preview(&root));
         }
+    }
+
+    /// Puts the text typed into the reading view's block editor back into the note, and
+    /// stops editing. Returns how many more blocks the note has than before, so a block
+    /// index from before can be moved along.
+    fn finish_editing(&mut self) -> isize {
+        let root = self.root.clone();
+        let Some(tab) = self.active_tab_mut() else {
+            return 0;
+        };
+        let Some(ReadEdit::Block { range, content, .. }) = tab.edit.take() else {
+            return 0;
+        };
+        let Some(preview) = &tab.preview else {
+            return 0;
+        };
+        let blocks = preview.block_count();
+        let text = tab.text().unwrap_or_else(|_| tab.content.text());
+        // The note can't have changed while the block was edited, but check anyway.
+        if text != preview.source() || text.get(range.clone()).is_none() {
+            return 0;
+        }
+
+        let new = replace_block(&text, range, &content.text());
+        if new == text {
+            return 0;
+        }
+        tab.set_text(&new);
+        tab.modified = true;
+        let preview = tab.make_preview(&root);
+        let added = preview.block_count() as isize - blocks as isize;
+        tab.preview = Some(preview);
+        added
     }
 
     /// Formats the active tab's note again if it changed while in the reading view, like
@@ -1478,6 +1560,28 @@ impl Workspace {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // Leaving what is being edited in the reading view puts it back into the note first.
+        if matches!(
+            message,
+            Message::Save
+                | Message::SaveAs
+                | Message::SelectTab(_)
+                | Message::CloseTab(_)
+                | Message::CloseActiveTab
+                | Message::CloseCampaign
+                | Message::ToggleSource
+                | Message::SetReading(_)
+                | Message::PreviewLink(_)
+                | Message::FollowLink(_)
+                | Message::NewNote
+                | Message::OpenEntry(_)
+                | Message::EditField(_)
+                | Message::AddText
+                | Message::FinishEditing
+        ) {
+            self.finish_editing();
+        }
+
         match message {
             Message::ToggleFolder(path) => {
                 if !self.expanded.remove(&path) {
@@ -1644,6 +1748,14 @@ impl Workspace {
             }
             Message::Form(form::Message::FollowLink(index)) => self.follow_link_field(index),
             Message::Form(message) => {
+                // Picking a choice in the reading view finishes editing that field.
+                let picked = matches!(message, form::Message::Choice(..));
+                if picked
+                    && let Some(tab) = self.active_tab_mut()
+                    && matches!(tab.edit, Some(ReadEdit::Field(_)))
+                {
+                    tab.edit = None;
+                }
                 let click = matches!(
                     message,
                     form::Message::Long(_, text_editor::Action::Click(_))
@@ -1763,6 +1875,75 @@ impl Workspace {
                 }
                 Task::none()
             }
+            Message::EditBlock(index) => {
+                let editing = match self.active_tab().and_then(|tab| tab.edit.as_ref()) {
+                    Some(ReadEdit::Block { index, .. }) => Some(*index),
+                    _ => None,
+                };
+                let added = self.finish_editing();
+                // Blocks after the one just edited moved if it became more or fewer blocks.
+                let index = match editing {
+                    Some(edited) if index > edited => index.saturating_add_signed(added),
+                    _ => index,
+                };
+                if let Some(tab) = self.active_tab_mut()
+                    && let Some(preview) = &tab.preview
+                    && let Some(range) = preview.block_range(index)
+                {
+                    let content = text_editor::Content::with_text(&preview.source()[range.clone()]);
+                    tab.edit = Some(ReadEdit::Block {
+                        index,
+                        range,
+                        content,
+                    });
+                    return iced::widget::operation::focus(BLOCK_EDITOR);
+                }
+                Task::none()
+            }
+            Message::AddText => {
+                if let Some(tab) = self.active_tab_mut()
+                    && let Some(preview) = &tab.preview
+                {
+                    let end = preview.source().len();
+                    tab.edit = Some(ReadEdit::Block {
+                        index: preview.block_count(),
+                        range: end..end,
+                        content: text_editor::Content::new(),
+                    });
+                    return iced::widget::operation::focus(BLOCK_EDITOR);
+                }
+                Task::none()
+            }
+            Message::BlockEdit(action) => {
+                if let Some(tab) = self.active_tab_mut()
+                    && let Some(ReadEdit::Block { content, .. }) = &mut tab.edit
+                {
+                    tab.modified |= action.is_edit();
+                    links::perform(content, action);
+                }
+                Task::none()
+            }
+            Message::EditField(key) => {
+                let Some(tab) = self.active_tab_mut() else {
+                    return Task::none();
+                };
+                let Some(form) = &mut tab.form else {
+                    return Task::none();
+                };
+                match form.short_field(&key) {
+                    // A checkbox just flips.
+                    Some((index, _, form::FieldValue::Check(checked))) => {
+                        tab.modified |= form.update(form::Message::Check(index, !checked));
+                        Task::none()
+                    }
+                    Some(_) => {
+                        tab.edit = Some(ReadEdit::Field(key));
+                        iced::widget::operation::focus(FIELD_EDITOR)
+                    }
+                    None => Task::none(),
+                }
+            }
+            Message::FinishEditing => Task::none(),
             Message::PreviewLink(url) => {
                 let Some(tab) = self.active_tab() else {
                     return Task::none();
@@ -2715,15 +2896,33 @@ impl Workspace {
         };
 
         if let Some(preview) = &tab.preview {
-            return container(
-                preview
-                    .view(c, self.index.names())
-                    .map(Message::PreviewLink),
-            )
-            .width(Fill)
-            .height(Fill)
-            .style(style::panel(c.background))
-            .into();
+            let mut editing = preview::Editing {
+                on_link: Message::PreviewLink,
+                on_block: Message::EditBlock,
+                on_field: Message::EditField,
+                on_add: Message::AddText,
+                on_page: Message::FinishEditing,
+                block: None,
+                field: None,
+            };
+            match &tab.edit {
+                Some(ReadEdit::Block { index, content, .. }) => {
+                    editing.block = Some((*index, block_editor(c, content, self.link_colors(c))));
+                }
+                Some(ReadEdit::Field(key)) => {
+                    editing.field = tab
+                        .form
+                        .as_ref()
+                        .and_then(|form| field_input(c, form, key))
+                        .map(|input| (key.clone(), input));
+                }
+                None => {}
+            }
+            return container(preview.view(c, self.index.names(), editing))
+                .width(Fill)
+                .height(Fill)
+                .style(style::panel(c.background))
+                .into();
         }
 
         let accept = suggestions
@@ -3288,6 +3487,91 @@ async fn save(
 /// Appends `.md` to `path` unless it already ends in it, so notes are always Markdown.
 ///
 /// YAML files, like a folder's `_type.yaml`, keep their extension.
+/// The note's `text` with the block at `range` replaced by `edited`. Text added at the
+/// end (an empty range there) gets a blank line before it, and a block edited down to
+/// nothing takes the blank lines around it with it.
+fn replace_block(text: &str, range: std::ops::Range<usize>, edited: &str) -> String {
+    let edited = edited.trim_matches(['\n', '\r']).trim_end();
+    let (before, after) = (&text[..range.start], &text[range.end..]);
+
+    if edited.trim().is_empty() || (range.is_empty() && after.is_empty()) {
+        let before = before.trim_end();
+        let after = after.trim_start().trim_end();
+        let mut parts: Vec<&str> = [before, edited, after]
+            .into_iter()
+            .filter(|part| !part.trim().is_empty())
+            .collect();
+        if parts.is_empty() {
+            parts.push("");
+        }
+        let mut joined = parts.join("\n\n");
+        if !joined.is_empty() {
+            joined.push('\n');
+        }
+        return joined;
+    }
+
+    format!("{before}{edited}{after}")
+}
+
+/// The editor for a block of the note in the reading view.
+fn block_editor(
+    c: Colors,
+    content: &text_editor::Content,
+    link_colors: links::Colors,
+) -> Element<'_, Message> {
+    text_editor(content)
+        .id(BLOCK_EDITOR)
+        .on_action(Message::BlockEdit)
+        .key_binding(|key_press| {
+            if matches!(key_press.key, Key::Named(keyboard::key::Named::Escape)) {
+                return Some(text_editor::Binding::Custom(Message::FinishEditing));
+            }
+            // Every editor sees every key press, so only the focused one handles shortcuts.
+            if key_press.modifiers.command()
+                && matches!(key_press.status, text_editor::Status::Focused { .. })
+                && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
+            {
+                return Some(text_editor::Binding::Custom(message));
+            }
+            text_editor::Binding::from_key_press(key_press)
+        })
+        .size(15)
+        .padding(8)
+        .style(style::field_editor(c))
+        .highlight_with::<links::Highlighter>(link_colors, links::format)
+        .into()
+}
+
+/// The input for the field with front matter `key` in the reading view, if it has one.
+fn field_input<'a>(c: Colors, form: &'a Form, key: &str) -> Option<Element<'a, Message>> {
+    let (index, field, value) = form.short_field(key)?;
+    match value {
+        form::FieldValue::Text(value) => Some(
+            text_input(&field.label(), value)
+                .id(FIELD_EDITOR)
+                .on_input(move |value| Message::Form(form::Message::Text(index, value)))
+                .on_submit(Message::FinishEditing)
+                .size(15)
+                .padding([4, 8])
+                .style(style::input(c))
+                .into(),
+        ),
+        form::FieldValue::Choice(selected) => Some(
+            pick_list(
+                field.options.clone(),
+                selected.map(str::to_string),
+                move |choice| Message::Form(form::Message::Choice(index, choice)),
+            )
+            .text_size(15)
+            .style(style::choice(c))
+            .menu_style(style::choice_menu(c))
+            .into(),
+        ),
+        form::FieldValue::Check(_) => None,
+    }
+}
+
 /// Opens `url` in the default web browser.
 fn open_in_browser(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
@@ -3311,6 +3595,27 @@ fn with_md_extension(mut path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edited_blocks_go_back_into_the_note() {
+        let text = "---\nname: Ann\n---\nOne.\n\nTwo.\n\nThree.\n";
+        let two = text.find("Two.").unwrap();
+        let range = two..two + 4;
+
+        assert_eq!(
+            replace_block(text, range.clone(), "Second\n\nparagraph.\n"),
+            "---\nname: Ann\n---\nOne.\n\nSecond\n\nparagraph.\n\nThree.\n"
+        );
+        assert_eq!(
+            replace_block(text, range, "  \n"),
+            "---\nname: Ann\n---\nOne.\n\nThree.\n"
+        );
+        assert_eq!(
+            replace_block(text, text.len()..text.len(), "Four."),
+            "---\nname: Ann\n---\nOne.\n\nTwo.\n\nThree.\n\nFour.\n"
+        );
+        assert_eq!(replace_block("", 0..0, "Hi"), "Hi\n");
+    }
 
     #[test]
     fn moved_notes_take_the_new_type_and_keep_their_data() {

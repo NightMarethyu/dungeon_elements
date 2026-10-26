@@ -1,18 +1,25 @@
 //! The reading view: a note shown as formatted Markdown, the way GitHub shows a README.
 //!
-//! The note's name becomes its title, its other front matter fields a table of
-//! properties, and its body is rendered with iced's Markdown widget. `[[Links]]` are turned
-//! into Markdown links first so they can be clicked, and `![[picture.png]]` embeds show the
-//! picture.
+//! The note's name becomes its title, its other front matter fields a box of properties
+//! like a wiki's infobox, and its body is rendered with iced's Markdown widget. `[[Links]]`
+//! are turned into Markdown links first so they can be clicked, and `![[picture.png]]`
+//! embeds show the picture.
+//!
+//! The page can be edited in place: the body is split into blocks (a paragraph, a list, a
+//! table...), and clicking one or a field asks for an editor to show in its place.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iced::advanced::text::Highlight;
+use iced::mouse::Interaction;
 use iced::widget::markdown::{self, HeadingLevel, Uri};
 use iced::widget::text::Span;
-use iced::widget::{Svg, column, container, image, rich_text, row, rule, scrollable, svg, text};
+use iced::widget::{
+    Svg, column, container, image, mouse_area, rich_text, row, rule, scrollable, svg, text,
+};
 use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
 
@@ -41,11 +48,25 @@ pub struct Preview {
     /// The note's name and type, shown at the top of the box of fields.
     name: Option<String>,
     kind: Option<String>,
-    /// The front matter fields worth showing, as (label, value).
-    properties: Vec<(String, markdown::Content)>,
-    body: markdown::Content,
+    properties: Vec<Property>,
+    blocks: Vec<Block>,
     /// The files that pictures point to, by the URL in the Markdown.
     pictures: Arc<HashMap<Uri, PathBuf>>,
+}
+
+/// A front matter field in the box of fields.
+struct Property {
+    key: String,
+    label: String,
+    /// `None` for a field of the note's type that is empty.
+    value: Option<markdown::Content>,
+}
+
+/// A paragraph, heading, list, table, or other top-level piece of the note's body.
+struct Block {
+    /// Where it is in the note's text.
+    range: Range<usize>,
+    content: markdown::Content,
 }
 
 /// What clicking a link in the reading view does.
@@ -57,6 +78,24 @@ pub enum Click {
     Web(String),
     /// Opens a file a Markdown link points to, like `[Map](maps/Town.md)`.
     File(PathBuf),
+}
+
+/// The messages the page sends, and the editor shown in place of what is being edited.
+pub struct Editing<'a, M> {
+    /// A link was clicked.
+    pub on_link: fn(Uri) -> M,
+    /// Block `index` was clicked.
+    pub on_block: fn(usize) -> M,
+    /// The field with this front matter key was clicked (the title is `name`).
+    pub on_field: fn(String) -> M,
+    /// The space for adding text at the end was clicked.
+    pub on_add: M,
+    /// Somewhere else on the page was clicked.
+    pub on_page: M,
+    /// The editor for block `index` (or, at the number of blocks, for new text at the end).
+    pub block: Option<(usize, Element<'a, M>)>,
+    /// The input for the field with this key.
+    pub field: Option<(String, Element<'a, M>)>,
 }
 
 impl Preview {
@@ -86,14 +125,27 @@ impl Preview {
 
         let properties = properties(&front, ty)
             .into_iter()
-            .map(|(label, value)| (label, markdown::Content::parse(&value)))
+            .map(|(key, label, value)| Property {
+                key,
+                label,
+                value: value.map(|value| markdown::Content::parse(&value)),
+            })
             .collect();
 
-        let body = markdown::Content::parse(&with_markdown_links(body));
+        // `body` is the end of `source`, so this is where it starts in it.
+        let offset = source.len() - body.len();
+        let blocks: Vec<Block> = block_ranges(body)
+            .into_iter()
+            .map(|range| Block {
+                content: markdown::Content::parse(&with_markdown_links(&body[range.clone()])),
+                range: range.start + offset..range.end + offset,
+            })
+            .collect();
+
         let folder = path.parent().unwrap_or(root);
-        let pictures = body
-            .images()
+        let pictures = blocks
             .iter()
+            .flat_map(|block| block.content.images())
             .filter_map(|url| Some((url.clone(), find_picture(url, folder, root)?)))
             .collect();
 
@@ -103,7 +155,7 @@ impl Preview {
             name,
             kind: ty.map(ContentType::label),
             properties,
-            body,
+            blocks,
             pictures: Arc::new(pictures),
         }
     }
@@ -112,9 +164,23 @@ impl Preview {
         &self.source
     }
 
-    /// The page, producing the URL of each link that is clicked. `names` are the notes
-    /// that exist, so links to missing ones can be dimmed like in the editor.
-    pub fn view(&self, c: Colors, names: Names) -> Element<'_, Uri> {
+    /// Where block `index` is in the note's text, or `None` if there is no such block.
+    pub fn block_range(&self, index: usize) -> Option<Range<usize>> {
+        self.blocks.get(index).map(|block| block.range.clone())
+    }
+
+    pub fn block_count(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// The page. `names` are the notes that exist, so links to missing ones can be dimmed
+    /// like in the editor.
+    pub fn view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        names: Names,
+        mut edit: Editing<'a, M>,
+    ) -> Element<'a, M> {
         let reader = Reader {
             c,
             names,
@@ -126,66 +192,137 @@ impl Preview {
         };
 
         let mut page = column![].spacing(20);
-        if let Some(title) = &self.title {
-            page = page.push(
-                column![
-                    text(title.clone()).size(settings.h1_size).font(Font {
+        let title = match edit.field.take() {
+            Some((key, input)) if key == "name" => Some(input),
+            field => {
+                edit.field = field;
+                self.title.as_ref().map(|title| {
+                    let title = text(title.clone()).size(settings.h1_size).font(Font {
                         weight: font::Weight::Bold,
                         ..Font::DEFAULT
-                    }),
-                    rule::horizontal(1).style(style::separator(c)),
-                ]
-                .spacing(8),
-            );
+                    });
+                    mouse_area(title)
+                        .on_press((edit.on_field)("name".into()))
+                        .interaction(Interaction::Text)
+                        .into()
+                })
+            }
+        };
+        if let Some(title) = title {
+            page = page
+                .push(column![title, rule::horizontal(1).style(style::separator(c))].spacing(8));
         }
 
-        let items = self.body.items();
+        let blocks = |range: Range<usize>, edit: &mut Editing<'a, M>| {
+            column(range.map(|index| self.block(index, settings, &reader, edit)))
+                .spacing(settings.spacing)
+        };
+
         if self.properties.is_empty() {
-            if !items.is_empty() {
-                page = page.push(markdown::view_with(items, settings, &reader));
-            } else if self.title.is_none() {
-                page = page.push(
-                    text("This note is empty. Switch to Edit to write in it.")
-                        .size(settings.text_size)
-                        .color(c.text_muted),
-                );
-            }
+            page = page.push(blocks(0..self.blocks.len(), &mut edit));
         } else {
             // Like a wiki's infobox, the fields sit in a box on the right, beside the
             // note's opening text; the rest of the note runs full width under them.
-            let lead = lead_length(items);
+            let lead = self.lead_length();
+            let beside = blocks(0..lead, &mut edit);
+            let infobox = self.infobox(c, settings, &reader, &mut edit);
             page = page.push(
                 row![
-                    container(markdown::view_with(&items[..lead], settings, &reader))
-                        .width(Length::FillPortion(1)),
-                    container(self.infobox(c, settings, &reader)).width(Length::FillPortion(1)),
+                    container(beside).width(Length::FillPortion(1)),
+                    container(infobox).width(Length::FillPortion(1)),
                 ]
                 .spacing(24),
             );
-            if lead < items.len() {
-                page = page.push(markdown::view_with(&items[lead..], settings, &reader));
-            }
+            page = page.push(blocks(lead..self.blocks.len(), &mut edit));
         }
 
+        // Text added at the end goes here.
+        let add: Element<'a, M> = match edit.block.take() {
+            Some((index, editor)) if index >= self.blocks.len() => editor,
+            _ => {
+                let hint = if self.blocks.is_empty() {
+                    "This note has no text yet. Click here to write."
+                } else {
+                    "Click here to add more."
+                };
+                mouse_area(
+                    container(text(hint).size(settings.text_size).color(c.text_muted))
+                        .padding(padding::top(8).bottom(40))
+                        .width(Fill),
+                )
+                .on_press(edit.on_add.clone())
+                .interaction(Interaction::Text)
+                .into()
+            }
+        };
+        page = page.push(add);
+
         scrollable(
-            container(container(page).max_width(PAGE_WIDTH))
-                .center_x(Fill)
-                .padding([28, 36]),
+            mouse_area(
+                container(container(page).max_width(PAGE_WIDTH))
+                    .center_x(Fill)
+                    .padding([28, 36]),
+            )
+            .on_press(edit.on_page),
         )
         .height(Fill)
         .into()
     }
-}
 
-impl Preview {
+    /// Block `index`, or its editor if it is being edited.
+    fn block<'a, M: Clone + 'a>(
+        &'a self,
+        index: usize,
+        settings: markdown::Settings,
+        reader: &Reader,
+        edit: &mut Editing<'a, M>,
+    ) -> Element<'a, M> {
+        match edit.block.take() {
+            Some((editing, editor)) if editing == index => return editor,
+            other => edit.block = other,
+        }
+
+        let items = self.blocks[index].content.items();
+        let mut block =
+            container(markdown::view_with(items, settings, reader).map(edit.on_link)).width(Fill);
+        // Each block is laid out on its own, so headings get their space above here.
+        if index > 0 && matches!(items.first(), Some(markdown::Item::Heading(..))) {
+            block = block.padding(padding::top(settings.text_size / 2.0));
+        }
+
+        mouse_area(block)
+            .on_press((edit.on_block)(index))
+            .interaction(Interaction::Text)
+            .into()
+    }
+
+    /// How many of the note's first blocks go beside the box of fields: everything
+    /// before its second heading (or its first, if the note doesn't start with one).
+    fn lead_length(&self) -> usize {
+        let is_heading = |block: &Block| {
+            matches!(
+                block.content.items().first(),
+                Some(markdown::Item::Heading(..))
+            )
+        };
+        let starts_with_heading = self.blocks.first().is_some_and(is_heading);
+        self.blocks
+            .iter()
+            .enumerate()
+            .skip(usize::from(starts_with_heading))
+            .find(|(_, block)| is_heading(block))
+            .map_or(self.blocks.len(), |(index, _)| index)
+    }
+
     /// The box of the note's fields: its name and type across the top, then a row for
-    /// each field.
-    fn infobox<'a>(
+    /// each field. Clicking a field edits it.
+    fn infobox<'a, M: Clone + 'a>(
         &'a self,
         c: Colors,
         settings: markdown::Settings,
         reader: &Reader,
-    ) -> Element<'a, Uri> {
+        edit: &mut Editing<'a, M>,
+    ) -> Element<'a, M> {
         let mut header = column![].spacing(2).align_x(Center).width(Fill);
         if let Some(name) = &self.name {
             header = header.push(
@@ -206,21 +343,40 @@ impl Preview {
             );
         }
 
-        let rows = self.properties.iter().map(|(label, value)| {
-            row![
-                text(label.clone())
+        let rows = self.properties.iter().map(|property| {
+            let label = text(property.label.clone())
+                .size(settings.text_size)
+                .font(Font {
+                    weight: font::Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .width(Length::FillPortion(2));
+
+            match edit.field.take() {
+                Some((key, input)) if key == property.key => {
+                    return row![label, container(input).width(Length::FillPortion(3))]
+                        .spacing(12)
+                        .align_y(Center)
+                        .into();
+                }
+                other => edit.field = other,
+            }
+
+            let value: Element<'a, M> = match &property.value {
+                Some(value) => {
+                    markdown::view_with(value.items(), settings, reader).map(edit.on_link)
+                }
+                None => text("—")
                     .size(settings.text_size)
-                    .font(Font {
-                        weight: font::Weight::Bold,
-                        ..Font::DEFAULT
-                    })
-                    .width(Length::FillPortion(2)),
-                container(markdown::view_with(value.items(), settings, reader))
-                    .width(Length::FillPortion(3)),
-            ]
-            .spacing(12)
-            .into()
+                    .color(c.text_muted)
+                    .into(),
+            };
+            mouse_area(row![label, container(value).width(Length::FillPortion(3))].spacing(12))
+                .on_press((edit.on_field)(property.key.clone()))
+                .interaction(Interaction::Pointer)
+                .into()
         });
+        let rows: Vec<Element<'a, M>> = rows.collect();
 
         let mut infobox = column![].spacing(10);
         if self.name.is_some() || self.kind.is_some() {
@@ -241,16 +397,45 @@ impl Preview {
     }
 }
 
-/// How many of a note's first Markdown items go beside the box of fields: everything
-/// before its second heading (or its first, if the note doesn't start with one).
-fn lead_length(items: &[markdown::Item]) -> usize {
-    let starts_with_heading = matches!(items.first(), Some(markdown::Item::Heading(..)));
-    items
-        .iter()
-        .enumerate()
-        .skip(usize::from(starts_with_heading))
-        .find(|(_, item)| matches!(item, markdown::Item::Heading(..)))
-        .map_or(items.len(), |(index, _)| index)
+/// Splits a note's body into its top-level blocks, as byte ranges without the blank
+/// lines between them.
+fn block_ranges(body: &str) -> Vec<Range<usize>> {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let mut ranges = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+
+    for (event, range) in Parser::new_ext(body, options).into_offset_iter() {
+        match event {
+            Event::Start(_) => {
+                if depth == 0 {
+                    start = range.start;
+                }
+                depth += 1;
+            }
+            Event::End(_) => {
+                depth -= 1;
+                if depth == 0 {
+                    ranges.push(start..range.end);
+                }
+            }
+            // Rules and the like stand alone.
+            _ if depth == 0 => ranges.push(range),
+            _ => {}
+        }
+    }
+
+    ranges
+        .into_iter()
+        .map(|range| {
+            let trimmed = body[range.clone()].trim_end();
+            range.start..range.start + trimmed.len()
+        })
+        .filter(|range| !range.is_empty())
+        .collect()
 }
 
 /// What clicking the link to `url`, in the note at `path`, should do.
@@ -280,22 +465,30 @@ pub fn click(url: &str, path: &Path) -> Option<Click> {
     note.is_file().then_some(Click::File(note))
 }
 
-/// The front matter fields to show as properties, as (label, Markdown value).
+/// The front matter fields to show as properties, as (key, label, Markdown value).
 ///
-/// The type's fields come first, in its order and with its labels; then the note's own.
-/// The name (shown as the title), long text fields (which are body sections), the keys
-/// the app manages, and empty values are left out.
-fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String)> {
+/// The type's fields come first, in its order and with its labels, empty ones too so they
+/// can be filled in; then the note's own, if they have a value. The name (shown as the
+/// title), long text fields (which are body sections), fields removed from this note, and
+/// the keys the app manages are left out.
+fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String, Option<String>)> {
     let fields = ty.map(|ty| ty.fields.as_slice()).unwrap_or_default();
+    let removed = front
+        .get(crate::form::REMOVED_KEY)
+        .map(note::value_to_text)
+        .unwrap_or_default();
+    let removed: Vec<&str> = removed.split(',').map(str::trim).collect();
     let mut shown = Vec::new();
 
     for field in fields {
-        if field.key == "name" || field.kind == Kind::Longtext {
+        if field.key == "name"
+            || field.kind == Kind::Longtext
+            || removed.contains(&field.key.as_str())
+        {
             continue;
         }
-        if let Some(value) = front.get(field.key.as_str()).and_then(value_markdown) {
-            shown.push((field.label(), value));
-        }
+        let value = front.get(field.key.as_str()).and_then(value_markdown);
+        shown.push((field.key.clone(), field.label(), value));
     }
 
     for (key, value) in front {
@@ -314,7 +507,7 @@ fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String)
             } else {
                 title_case(key)
             };
-            shown.push((label, value));
+            shown.push((key.clone(), label, Some(value)));
         }
     }
 
@@ -718,9 +911,13 @@ mod tests {
         assert_eq!(
             properties(&front, Some(&ty)),
             vec![
-                ("Lives in".to_string(), "[Town](<note:Town>)".to_string()),
-                ("Mood".to_string(), "\\# grumpy".to_string()),
-                ("Alive".to_string(), "Yes".to_string()),
+                (
+                    "home".into(),
+                    "Lives in".into(),
+                    Some("[Town](<note:Town>)".into())
+                ),
+                ("mood".into(), "Mood".into(), Some("\\# grumpy".into())),
+                ("alive".into(), "Alive".into(), Some("Yes".into())),
             ]
         );
     }
@@ -738,14 +935,32 @@ mod tests {
 
     #[test]
     fn puts_the_opening_text_beside_the_fields() {
-        let items: Vec<_> = markdown::parse("Intro.\n\nMore.\n\n## History\n\nOld.\n").collect();
-        assert_eq!(lead_length(&items), 2);
+        let lead = |body: &str| {
+            Preview::new(body, None, Path::new("/c/a.md"), Path::new("/c")).lead_length()
+        };
+        assert_eq!(lead("Intro.\n\nMore.\n\n## History\n\nOld.\n"), 2);
+        assert_eq!(lead("## Appearance\n\nTall.\n\n## Notes\n\nx\n"), 2);
+        assert_eq!(lead("Just text.\n"), 1);
+    }
 
-        let items: Vec<_> = markdown::parse("## Appearance\n\nTall.\n\n## Notes\n\nx\n").collect();
-        assert_eq!(lead_length(&items), 2);
+    #[test]
+    fn splits_the_body_into_blocks() {
+        let body = "Intro\nstill intro.\n\n## Notes\n\n- a\n- b\n\n```\ncode\n\nmore\n```\n\n---\n";
+        let blocks: Vec<&str> = block_ranges(body).into_iter().map(|r| &body[r]).collect();
+        assert_eq!(
+            blocks,
+            [
+                "Intro\nstill intro.",
+                "## Notes",
+                "- a\n- b",
+                "```\ncode\n\nmore\n```",
+                "---"
+            ]
+        );
 
-        let items: Vec<_> = markdown::parse("Just text.\n").collect();
-        assert_eq!(lead_length(&items), 1);
+        let note = "---\nname: Ann\n---\nHello\n";
+        let preview = Preview::new(note, None, Path::new("/c/a.md"), Path::new("/c"));
+        assert_eq!(&note[preview.block_range(0).unwrap()], "Hello");
     }
 
     #[test]
