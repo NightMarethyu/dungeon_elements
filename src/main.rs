@@ -160,6 +160,8 @@ struct Workspace {
     web: web::Pictures,
     /// The right-click menu that is open, and where in the window.
     context: Option<(Target, Point)>,
+    /// How a File > Save All is going, until every note in it is saved or not.
+    save_all: Option<SaveAll>,
 }
 
 /// What a right-click menu is for.
@@ -188,8 +190,6 @@ impl std::fmt::Display for FolderChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.label)
     }
-    /// How a File > Save All is going, until every note in it is saved or not.
-    save_all: Option<SaveAll>,
 }
 
 /// A File > Save All in progress.
