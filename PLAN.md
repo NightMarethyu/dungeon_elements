@@ -230,6 +230,7 @@ Phase 5. The GM shares parts of the campaign with players without sharing their 
 
 ## Planned features
 
-All the planned features are now placed in the phases above. New ideas go here until they find their phase.
-
+- Focus mode for writers
+  - Full screen app with just what looks like a piece of paper and a background of the user's choosing
+- Timer for specific sprints for writing or for in game timed things like Shadowdark's torch timer
 - More to come as I have more ideas!
