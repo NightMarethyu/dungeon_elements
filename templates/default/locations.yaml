@@ -10,6 +10,7 @@ fields:
   - key: part_of
     label: Part of
     kind: link
+    folder: locations
   - key: tags
     label: Tags
     kind: tags

@@ -48,10 +48,19 @@ The suite will also include drawing tools and generators to allow the Game Maste
 ### Phase 1: inciting incident
 
 - [ ] Display markdown files in a nice way
-- [ ] Allow internal linking of files, make this easy highlight text and select "add link" (right-click context menu or file menu) will check if a file already exists with that name and link it, if a file doesn't exist it will create one. Links formatted in Obsidian compatible [[link text]] format
-- [ ] Ensure name safe links, if filename changes, links are robust enough to stay in place
-  - rename links to protect Obsidian compatibility
-  - Possibly save as part of YAML metadata
+- [x] Allow internal linking of files, make this easy highlight text and select "add link" (right-click context menu or file menu) will check if a file already exists with that name and link it, if a file doesn't exist it will create one. Links formatted in Obsidian compatible [[link text]] format
+  - [x] Typing `[[` in a text editor (or a long text field) closes it with `]]` and suggests notes by name; Tab or a click inserts one. Link fields suggest notes the same way (Enter picks the first)
+  - [x] Edit > Insert Link (Ctrl+K) wraps the selected text in `[[ ]]`
+  - [x] Links are colored in the editor, dimmer when no note has that name yet
+  - [x] Ctrl+click a link (or use the bar under the editor, or a link field's Open button) to open the note. A link to a missing note creates it, in the campaign folder or the folder the link's path names
+  - [x] Obsidian's forms work: `[[Note|shown text]]`, `[[Note#Heading]]`, `![[embeds]]`, `[[folder/Note]]` for notes that share a name. Links are matched without case, and when names clash the same folder wins, like in Obsidian
+  - [x] Link fields link to a folder (Edit > Types, "Links to"; the starter types set it, and a field named like a type, such as Location, finds that type's folder). The folder's notes are suggested first, and a name with no note offers to make it there, as a note of that folder's type
+  - [ ] Right-click menu (iced has no context menus yet)
+- [x] Ensure name safe links, if filename changes, links are robust enough to stay in place
+  - [x] Renaming a note in the app (changing its name and saving) rewrites every link to it across the campaign: in note bodies, front matter fields, and open tabs, unsaved changes included. Shown text and headings are kept
+  - [x] Links to other notes that a rename would make ambiguous are rewritten as paths, so they keep pointing where they did
+  - [x] Drag a note in the file tree onto a folder (or a note in it) to move it there. It takes the folder's type and keeps every field that has something in it; fields the new type doesn't have become the note's own. Links that named its old folder are rewritten
+  - [ ] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke
 - [ ] Syntax-highlighting and live preview
 - [ ] Built-in dice roller, keep everything close without needing to leave the app
 

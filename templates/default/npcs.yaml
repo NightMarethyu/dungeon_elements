@@ -8,6 +8,7 @@ fields:
   - key: location
     label: Location
     kind: link
+    folder: locations
   - key: disposition
     label: Disposition
     kind: choice

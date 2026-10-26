@@ -20,6 +20,8 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 >
 > Folders can define the fields their notes have in a `_type.yaml` (new campaigns come with one in each starter folder). Notes in those folders open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. The **+** next to a folder makes a new note in it, the round **+** under the file tree makes a new folder (optionally with a note type), and the round **+** on a form adds a field to just that note. **Edit > Types** changes the fields of every note in a folder. **View > Show Markdown Source** (Ctrl+E) shows the file itself.
 >
+> Link notes together the Obsidian way: type `[[` and pick a note from the suggestions (Tab inserts the first), or select some text and press **Edit > Insert Link** (Ctrl+K). Links can show other text (`[[Mira|the smuggler]]`) or point to a heading (`[[Mira#Appearance]]`). Ctrl+click a link, or use the bar under the editor, to open the note; a link to a note that doesn't exist yet makes it. Link fields point at a folder, so typing a new place in an NPC's Location offers to make it in your locations folder. Renaming a note (by changing its Name and saving) rewrites every link to it across the campaign, including links in fields and in files you have open. Drag a note onto another folder in the file tree to move it; it takes that folder's type and keeps what you filled in.
+>
 > Campaigns stay plain files, so you can edit them in Obsidian or any text editor. When a campaign opens, Dungeon Elements checks its notes and marks any it can't show as intended with a ⚠ (the ⚠ in the status bar lists what's wrong). When you switch back to the app, open files that changed elsewhere are reloaded, and if you have unsaved changes it asks which version to keep. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
 
 ## Why Dungeon Elements?
@@ -49,7 +51,7 @@ my-campaign/
 └── lore/
 ```
 
-Highlight a name in your notes and choose **Add link** to create an Obsidian-compatible `[[link]]`. If a page with that name exists, it gets linked; if not, a new one is created for you. Over time, your notes grow into a connected wiki of your world.
+Type `[[` and pick a note, or select a name in your notes and press Ctrl+K, to create an Obsidian-compatible `[[link]]`. If a page with that name exists, it gets linked; if not, opening the link creates it for you. Rename a page and every link to it follows. Over time, your notes grow into a connected wiki of your world.
 
 ## Roadmap
 

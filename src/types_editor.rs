@@ -25,12 +25,26 @@ pub enum Message {
     FieldKind(usize, Kind),
     FieldWidth(usize, Width),
     FieldOptions(usize, String),
+    FieldFolder(usize, LinksTo),
     MoveUp(usize),
     MoveDown(usize),
     RemoveField(usize),
     AddField,
     Save,
     Cancel,
+}
+
+/// The folder a link field links to, as picked in the dialog.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinksTo(Option<String>);
+
+impl std::fmt::Display for LinksTo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(folder) => f.write_str(folder),
+            None => f.write_str("Any folder"),
+        }
+    }
 }
 
 pub struct Editor {
@@ -66,8 +80,6 @@ struct Draft {
 }
 
 struct FieldDraft {
-    /// The field as it was read, or a new one.
-    base: Field,
     label: String,
     /// Empty for a key made from the label when saved.
     key: String,
@@ -75,17 +87,19 @@ struct FieldDraft {
     width: Width,
     /// A choice field's options, comma separated.
     options: String,
+    /// A link field's folder.
+    folder: Option<String>,
 }
 
 impl FieldDraft {
     fn from(field: &Field) -> Self {
         FieldDraft {
-            base: field.clone(),
             label: field.label(),
             key: field.key.clone(),
             kind: field.kind,
             width: field.width,
             options: field.options.join(", "),
+            folder: field.folder.clone(),
         }
     }
 
@@ -110,7 +124,7 @@ impl FieldDraft {
                 Vec::new()
             },
             width: self.width,
-            ..self.base.clone()
+            folder: self.folder.clone().filter(|_| self.kind == Kind::Link),
         }
     }
 }
@@ -234,6 +248,11 @@ impl Editor {
             Message::FieldOptions(index, value) => {
                 if let Some(field) = fields.get_mut(index) {
                     field.options = value;
+                }
+            }
+            Message::FieldFolder(index, LinksTo(value)) => {
+                if let Some(field) = fields.get_mut(index) {
+                    field.folder = value;
                 }
             }
             Message::MoveUp(index) => {
@@ -487,6 +506,28 @@ impl Editor {
                         .on_input(move |value| Message::FieldOptions(index, value)),
                 );
             }
+            if field.kind == Kind::Link {
+                let mut choices = vec![LinksTo(None)];
+                choices.extend(self.folders.iter().map(|f| LinksTo(Some(f.name.clone()))));
+                block = block.push(
+                    row![
+                        text("Links to").size(13).color(c.text_muted),
+                        pick_list(choices, Some(LinksTo(field.folder.clone())), move |to| {
+                            Message::FieldFolder(index, to)
+                        })
+                        .text_size(14)
+                        .padding(6)
+                        .width(220)
+                        .style(style::choice(c))
+                        .menu_style(style::choice_menu(c)),
+                        text("Its notes are suggested first, and new notes the field names are made there.")
+                            .size(12)
+                            .color(c.text_muted),
+                    ]
+                    .spacing(8)
+                    .align_y(Center),
+                );
+            }
             block.into()
         });
 
@@ -549,6 +590,7 @@ mod tests {
         editor.update(Message::FieldKind(last, Kind::Number));
         editor.update(Message::MoveUp(last));
         editor.update(Message::FieldOptions(1, "Common, Rare,".into()));
+        editor.update(Message::FieldFolder(2, LinksTo(Some("npcs".into()))));
 
         assert_eq!(editor.save().unwrap(), [root.join("items")]);
 
@@ -560,6 +602,7 @@ mod tests {
         );
         assert_eq!(ty.fields[1].options, ["Common", "Rare"]);
         assert_eq!(ty.fields[4].kind, Kind::Number);
+        assert_eq!(ty.fields[2].folder.as_deref(), Some("npcs"));
 
         fs::remove_dir_all(root).unwrap();
     }
