@@ -68,6 +68,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Links to other notes that a rename would make ambiguous are rewritten as paths, so they keep pointing where they did
   - [x] Drag a note in the file tree onto a folder (or a note in it) to move it there. It takes the folder's type and keeps every field that has something in it; fields the new type doesn't have become the note's own. Links that named its old folder are rewritten
   - [ ] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke
+- [ ] Backlinks, so the notes read like a wiki: the reading view lists the notes that link to this one ("Linked from"), so an NPC shows the quests, locations and journal entries they appear in
 - [ ] Syntax-highlighting and live preview
   - [x] Live preview in the reading view: click a block (paragraph, list, table, heading...) to edit its Markdown in place; it is formatted again when you click elsewhere or press Escape. Fields in the box, and the title, are edited the same way, and clicking under the note adds text
   - [ ] Link suggestions while typing `[[` in a block, and toggling task boxes with a click
@@ -82,14 +83,54 @@ Stretch goal:
 
 ### Phase 2: rising action
 
-- [ ] Add basic SVG editor for maps
-- [ ] Add tools for generators
-  - [ ] name generators
-  - [ ] roll table generators
+The campaign's people and plots. Everything here is notes, types and links, built on Phase 1's wiki, so it needs no new kinds of panes.
+
+- [ ] Content types grow up (see [Content types](#content-types))
+  - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
+  - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
+  - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
+- [ ] Player management
+  - [ ] The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types
+  - [ ] Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)
+- [ ] NPC management
+  - [ ] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
+  - [ ] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
+- [ ] Quest tracker
+  - [ ] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
+  - [ ] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
+- [ ] Generators
+  - [ ] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
+  - [ ] Name generators, built on roll tables, with a few built-in lists to start from
+  - [ ] Story prompts: suggestions for inspiration when building quests and places (drawn from roll tables, never writing the story for the GM)
 
 ### Phase 3: climax
 
-Later additions, after the Phase 2 map work is done.
+Play at the table and solo play. This needs panes the user can arrange, so layouts come first.
+
+- [ ] Layouts (see [Layouts](#layouts))
+  - [ ] Split the main pane to show two notes side by side, and choose where each pane goes (left, right, bottom, or a tab) and its size
+  - [ ] Collapse panes (file tree, extra notes) while keeping them hidden with an arrow allowing them to be pulled back
+  - [ ] Pop panes out into their own windows, and put them back
+  - [ ] Resize any pane (Click and drag pane edges)
+  - [ ] Save arrangements as named layouts ("Prep", "At the table") and switch from the View menu
+- [ ] Journaling tool, built for solo play
+  - [ ] A journal folder whose notes are dated sessions, added to quickly while playing
+  - [ ] The dice roller and roll tables built into the journal: a roll, or an oracle question and its answer, goes straight into the entry
+  - [ ] A side-by-side view of the journal with lore, a roll table, or (once Phase 5 has the reader) the rules
+- [ ] Session notes for GMs use the same journal: what happened at the table, linked to the NPCs, quests and places involved
+
+### Phase 4: falling action
+
+Maps. They come after the notes and panes are settled, so a map can be one more pane and every pin can point at a note.
+
+- [ ] Basic SVG editor for maps, saved as SVG files in the campaign folder
+- [ ] Link maps and the wiki: pins and regions on a map link to notes, and a location note shows the maps it's on
+- [ ] Map generators, starting small and growing: dungeon, building, city, region, then world. A generated map is an ordinary SVG the editor can change
+- [ ] Generator settings can be saved and reused
+
+### Phase 5: resolution
+
+Sharing and reference: everything that leaves the campaign folder or comes in from outside it. It comes last because templates and settings should hold everything the earlier phases add (types, roll tables, dice presets, journals, maps).
 
 - [ ] Campaign templates (see [Campaign templates](#campaign-templates))
   - [ ] New Campaign, and opening an Obsidian vault for the first time, offer a template
@@ -101,8 +142,12 @@ Later additions, after the Phase 2 map work is done.
   - Copies are the plan. A shared setting with live edits is only a maybe, for interconnected campaigns or books, if people ask for it
 - [ ] PDF manual library (see [PDF library](#pdf-library))
   - [ ] Library folders, systems as tags, a library panel; links to PDFs open them in the system's PDF viewer
-  - [ ] Built-in PDF reader beside a note: opens at the right page, with the PDF's table of contents and the user's bookmarks
+  - [ ] Built-in PDF reader beside a note (a pane, using Phase 3's layouts): opens at the right page, with the PDF's table of contents and the user's bookmarks
   - [ ] Search across all manuals, and copy text into a note with a link back to the page
+- [ ] Player handouts (see [Handouts](#handouts))
+  - [ ] Export chosen notes (or parts of them) for players, without GM-only fields and sections, as Markdown that opens in Dungeon Elements or Obsidian
+  - [ ] The same handouts as PDFs to print or send
+  - [ ] Table maps as PDFs: print a map at table scale with a chosen overlay (squares, hexes, or none)
 
 ## Design
 
@@ -118,7 +163,7 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 
 ### Layouts
 
-Customization is a big part of the app, so the window's layout should be the user's to arrange too. Not started; for later in development.
+Phase 3. Customization is a big part of the app, so the window's layout should be the user's to arrange too.
 
 - Panes (the file tree, the editor, the dice roller, and later maps, roll tables and the journal) can pop out into their own windows, and be put back.
 - The user chooses where each pane appears in the main window (left, right, bottom, or as a tab), and resizes it.
@@ -135,15 +180,15 @@ Customization is a big part of the app, so the window's layout should be the use
 - Front matter keys and `##` sections the type doesn't know about become fields of that note only (the main pane's + adds one; each has a Remove button). Values that can't be a field (nested lists or maps) and text before the first section are kept and shown in an "Other" area. Saving never drops data added in Obsidian or another editor.
 - Any field except `name` can be removed from a single note: the note's front matter lists it under `removed_fields`, and the main pane's + offers to bring it back.
 - A folder with no `_type.yaml` is a plain Markdown folder.
-- Later:
+- Phase 2:
   - Subfolders inherit their parent's type, the parent's type can be overridden and modified if they have their own `_type.yaml`.
   - A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note. The Quest type uses it so a step can be another quest, building quest lines (a Big Quest made of smaller quests).
   - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
-  - Campaign templates: see [Campaign templates](#campaign-templates).
+- Phase 5: campaign templates, see [Campaign templates](#campaign-templates).
 
 ### Campaign templates
 
-Phase 3. Templates put the power in the user's hands: the app ships a few, and users build their own for their systems (or for things that aren't TTRPGs at all, like a novel).
+Phase 5. Templates put the power in the user's hands: the app ships a few, and users build their own for their systems (or for things that aren't TTRPGs at all, like a novel).
 
 - A template is a shareable folder or file holding starter folders, their `_type.yaml` content types, note templates, and optionally dice presets and a suggested game system (`system: Shadowdark`). `templates/default/` is the first one.
 - New Campaign offers a template. Opening a folder (such as an Obsidian vault) that Dungeon Elements has never opened offers one too, without changing existing notes.
@@ -153,7 +198,7 @@ Phase 3. Templates put the power in the user's hands: the app ships a few, and u
 
 ### Settings
 
-Phase 3. For writers, and for GMs who run several games in one world: a world built once can be reused without copying notes by hand. A spin-off book or a new campaign with a different cast starts with the setting ready.
+Phase 5. For writers, and for GMs who run several games in one world: a world built once can be reused without copying notes by hand. A spin-off book or a new campaign with a different cast starts with the setting ready.
 
 - A campaign marks which folders are its **setting** (for example lore, locations, factions, history) and which belong to this story only (players, quests, journal, the cast). The setting can also be all of it.
 - **Export setting** saves those folders, their types and their notes as one shareable folder or file, without the story-only parts. Links from setting notes to story-only notes are listed so the user can decide what to do with them.
@@ -162,7 +207,7 @@ Phase 3. For writers, and for GMs who run several games in one world: a world bu
 
 ### PDF library
 
-Phase 3. Easy access to the user's PDF rulebooks and other documents. It is a library and reader, not a PDF manager: the app never changes a PDF (no marking up, editing, or form filling).
+Phase 5. Easy access to the user's PDF rulebooks and other documents. It is a library and reader, not a PDF manager: the app never changes a PDF (no marking up, editing, or form filling).
 
 - **One library for the whole app**, not inside campaigns, because the same rulebooks serve many campaigns. The user adds library folders in Settings and nothing is copied. For each folder they choose how it's organized:
   - "Each subfolder is a game system" (e.g. `Shadowdark/`, `D&D/`, `Cosmere/` become systems)
@@ -173,29 +218,18 @@ Phase 3. Easy access to the user's PDF rulebooks and other documents. It is a li
 - **Links** use Obsidian's form, `[[Player's Handbook.pdf#page=42]]`, matched against the library by name. When two systems have a book with the same name, the campaign's own system wins. Links can use the page number printed in the book or the PDF's own page number.
 - **Showing PDFs**: first in the system's PDF viewer (some viewers can't jump to a page), then in a built-in reader using the `pdfium-render` crate (PDFium has a permissive license that fits MIT; its library ships next to the app on Windows and Linux). MuPDF and Poppler are ruled out because their licenses (AGPL and GPL) don't fit. The pure-Rust `hayro` is worth checking again when this phase starts.
 - **Search** uses the text inside the PDFs, saved in a cache so it's fast. Scanned PDFs without text can't be searched; no OCR planned.
-- Making PDFs (handouts, table maps) is a separate feature that needs a different crate.
+- Making PDFs (handouts, table maps) is a separate feature that needs a different crate; see [Handouts](#handouts).
+
+### Handouts
+
+Phase 5. The GM shares parts of the campaign with players without sharing their own notes. This is a one-way export, not a sync.
+
+- A field or `##` section can be marked GM-only in the type, and a note can be marked as a whole. Handouts leave those out.
+- Markdown handouts are a folder of ordinary notes with working links between the notes included; links to notes left out become plain text, so nothing points at secrets.
+- PDF handouts and table maps need a PDF-writing crate (separate from the reader's `pdfium-render`), chosen when this phase starts. Table maps print the SVG at a chosen scale (such as one inch per square) across as many pages as needed, with the overlay drawn on top.
 
 ## Planned features
 
-- Player management features
-  - save all the player information, notes, character sheets, backstory, etc.
-- NPC management
-- Map generator (world, region, city, building, and dungeon)
-  - save map generators for later in development
-- Quest Tracker
-  - build quests
-  - quests have steps or actions, and a step can be another quest, so a big quest is made of smaller quests (quest lines)
-  - suggest story outlines (don't generate them, but offer suggestions for inspiration and building things out)
-- World and Lore management
-  - This is the wiki-interface of the markdown files
-  - allow for linking between displayed maps and the world wiki
-- PDF manual library and reader (Phase 3, see [PDF library](#pdf-library))
-- PDF generation
-  - player handouts
-  - table maps
-    - GM can choose the overlay (squares, hexes, none)
-- Journaling tool
-  - Built for solo-play
-  - has dice rollers built in to let the player do checks without leaving the screen
-  - side-by-side view with journal and lore or rules or roll table
+All the planned features are now placed in the phases above. New ideas go here until they find their phase.
+
 - More to come as I have more ideas!
