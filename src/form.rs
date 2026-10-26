@@ -391,6 +391,20 @@ impl Form {
         }
     }
 
+    /// Types `text` at the cursor in the long text field last typed in. Returns whether
+    /// there was such a field.
+    pub fn insert_text(&mut self, text: &str) -> bool {
+        match self.focus.map(|index| &mut self.inputs[index]) {
+            Some(Input::Long(content)) => {
+                content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                    std::sync::Arc::new(text.to_string()),
+                )));
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The note's name, from its `name` field, if the type has one and it is filled in.
     pub fn name(&self) -> Option<String> {
         let index = self.fields[..self.own]

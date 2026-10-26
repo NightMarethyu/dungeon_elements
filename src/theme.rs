@@ -39,6 +39,12 @@ pub struct Colors {
     pub danger: Color,
     pub warning: Color,
     pub success: Color,
+    pub code_comment: Color,
+    pub code_string: Color,
+    pub code_number: Color,
+    pub code_keyword: Color,
+    pub code_function: Color,
+    pub code_type: Color,
     pub border_width: f32,
     pub corner_radius: f32,
 }
@@ -66,6 +72,12 @@ impl Colors {
             "danger" => &mut self.danger,
             "warning" => &mut self.warning,
             "success" => &mut self.success,
+            "code_comment" => &mut self.code_comment,
+            "code_string" => &mut self.code_string,
+            "code_number" => &mut self.code_number,
+            "code_keyword" => &mut self.code_keyword,
+            "code_function" => &mut self.code_function,
+            "code_type" => &mut self.code_type,
             _ => return Err(format!("unknown color {role:?}")),
         };
         *slot = value;
@@ -173,6 +185,12 @@ const FALLBACK: Colors = Colors {
     danger: Color::WHITE,
     warning: Color::WHITE,
     success: Color::WHITE,
+    code_comment: Color::WHITE,
+    code_string: Color::WHITE,
+    code_number: Color::WHITE,
+    code_keyword: Color::WHITE,
+    code_function: Color::WHITE,
+    code_type: Color::WHITE,
     border_width: 1.0,
     corner_radius: 0.0,
 };

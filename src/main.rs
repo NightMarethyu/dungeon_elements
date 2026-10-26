@@ -5,6 +5,7 @@
 
 mod campaign;
 mod check;
+mod code;
 mod dice;
 mod form;
 mod icon;
@@ -17,6 +18,7 @@ mod style;
 mod theme;
 mod types;
 mod types_editor;
+mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -151,6 +153,8 @@ struct Workspace {
     dice: dice::Roller,
     /// Whether notes open in the reading view rather than an editor.
     open_in_reading: bool,
+    /// Pictures from the web shown in the reading view, by their URL.
+    web: web::Pictures,
 }
 
 /// A dialog over the workspace.
@@ -281,10 +285,10 @@ impl Tab {
     }
 
     /// The note formatted for the reading view.
-    fn make_preview(&self, root: &Path) -> Preview {
+    fn make_preview(&self, root: &Path, index: &links::Index) -> Preview {
         let text = self.text().unwrap_or_else(|_| self.content.text());
         let ty = self.form.as_ref().map(|form| &form.ty);
-        Preview::new(&text, ty, &self.note_path(), root)
+        Preview::new(&text, ty, &self.note_path(), root, index)
     }
 
     /// The text to save.
@@ -395,6 +399,12 @@ enum Message {
     /// Opens the note a link points to, creating it if there is none.
     FollowLink(String),
     InsertLink,
+    /// Asks for a picture to add to the note.
+    InsertPicture,
+    /// Copies this picture into the campaign and embeds it in the note.
+    AddPicture(Option<PathBuf>),
+    /// A picture from the web finished downloading (or failed to).
+    WebPicture(String, web::Picture),
     ShowAddField,
     AddFieldLabel(String),
     AddFieldKind(types::Kind),
@@ -548,6 +558,9 @@ impl App {
         // Mouse buttons are watched too, for dragging notes in the file tree.
         let focus = iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
+            iced::Event::Window(window::Event::FileDropped(path)) => {
+                Some(Message::AddPicture(Some(path)))
+            }
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
                 Some(Message::MousePressed)
             }
@@ -756,7 +769,7 @@ impl App {
                 }
                 let task = workspace.update(message);
                 workspace.refresh_preview();
-                task
+                Task::batch([task, workspace.fetch_pictures()])
             }
         }
     }
@@ -855,6 +868,8 @@ impl App {
             },
             Menu::Edit => vec![
                 item("Insert Link", when(can_link, Message::InsertLink)).shortcut("Ctrl+K"),
+                item("Insert Picture...", when(can_read, Message::InsertPicture))
+                    .shortcut("Ctrl+Shift+K"),
                 Entry::Separator,
                 item(
                     "Add Field to This Note...",
@@ -939,6 +954,7 @@ impl Workspace {
             drag: None,
             dice: dice::Roller::default(),
             open_in_reading,
+            web: web::Pictures::new(),
         }
     }
 
@@ -1102,10 +1118,11 @@ impl Workspace {
     /// Shows the active tab in the reading view.
     fn read_active_tab(&mut self) {
         let root = self.root.clone();
+        let index = self.index.clone();
         if let Some(tab) = self.active_tab_mut()
             && tab.preview.is_none()
         {
-            tab.preview = Some(tab.make_preview(&root));
+            tab.preview = Some(tab.make_preview(&root, &index));
         }
     }
 
@@ -1114,6 +1131,7 @@ impl Workspace {
     /// index from before can be moved along.
     fn finish_editing(&mut self) -> isize {
         let root = self.root.clone();
+        let index = self.index.clone();
         let Some(tab) = self.active_tab_mut() else {
             return 0;
         };
@@ -1136,7 +1154,7 @@ impl Workspace {
         }
         tab.set_text(&new);
         tab.modified = true;
-        let preview = tab.make_preview(&root);
+        let preview = tab.make_preview(&root, &index);
         let added = preview.block_count() as isize - blocks as isize;
         tab.preview = Some(preview);
         added
@@ -1146,6 +1164,7 @@ impl Workspace {
     /// when it was edited outside the app or a link in it was renamed.
     fn refresh_preview(&mut self) {
         let root = self.root.clone();
+        let index = self.index.clone();
         let Some(tab) = self.active_tab_mut() else {
             return;
         };
@@ -1154,7 +1173,126 @@ impl Workspace {
         };
         let text = tab.text().unwrap_or_else(|_| tab.content.text());
         if preview.source() != text {
-            tab.preview = Some(tab.make_preview(&root));
+            tab.preview = Some(tab.make_preview(&root, &index));
+        }
+    }
+
+    /// Starts downloading the web pictures in the active tab's reading view that haven't
+    /// been yet.
+    fn fetch_pictures(&mut self) -> Task<Message> {
+        let Some(preview) = self.active_tab().and_then(|tab| tab.preview.as_ref()) else {
+            return Task::none();
+        };
+        let urls: Vec<String> = preview
+            .web_pictures()
+            .filter(|url| !self.web.contains_key(*url))
+            .map(str::to_string)
+            .collect();
+
+        Task::batch(urls.into_iter().map(|url| {
+            self.web.insert(url.clone(), web::Picture::Loading);
+            Task::perform(web::fetch(url), |(url, picture)| {
+                Message::WebPicture(url, picture)
+            })
+        }))
+    }
+
+    /// Formats again the notes in the reading view that embed other notes, except the
+    /// tab `saved`, so they show what was just saved.
+    fn refresh_embeds(&mut self, saved: u64) {
+        let root = self.root.clone();
+        let index = self.index.clone();
+        for tab in &mut self.tabs {
+            if tab.id != saved
+                && tab.preview.as_ref().is_some_and(Preview::has_embeds)
+                && tab.edit.is_none()
+            {
+                tab.preview = Some(tab.make_preview(&root, &index));
+            }
+        }
+    }
+
+    /// Adds the picture `file` to the active tab's note: copies it into the campaign's
+    /// `pictures` folder, unless it is in the campaign already, and embeds it where the
+    /// cursor is, or at the end of the note in the reading view.
+    fn add_picture(&mut self, file: &Path) {
+        if !preview::is_picture(file) {
+            self.status = format!(
+                "{} isn't a picture. Pictures can be {}",
+                file.file_name().unwrap_or_default().to_string_lossy(),
+                preview::PICTURES.join(", ")
+            );
+            return;
+        }
+        let Some(tab) = self.active_tab() else {
+            self.status = "Open a note first, then add the picture to it".into();
+            return;
+        };
+        if !tab.is_note() {
+            return;
+        }
+        let note = tab.note_path();
+
+        let picture = match campaign::copy_picture(&self.root, file) {
+            Ok(picture) => picture,
+            Err(error) => {
+                self.status = format!("Could not add the picture: {error}");
+                return;
+            }
+        };
+        let embed = format!(
+            "![[{}]]",
+            preview::picture_link(&picture, &note, &self.root)
+        );
+        let copied = !file.starts_with(&self.root);
+        let name = self.relative(&picture);
+
+        let root = self.root.clone();
+        let index = self.index.clone();
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let paste = |content: &mut text_editor::Content| {
+            content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                std::sync::Arc::new(embed.clone()),
+            )));
+        };
+        let added = if let Some(ReadEdit::Block { content, .. }) = &mut tab.edit {
+            paste(content);
+            true
+        } else {
+            match &tab.edit {
+                Some(_) => false,
+                None if tab.reading() => {
+                    let text = tab.text().unwrap_or_else(|_| tab.content.text());
+                    let text = format!("{}\n\n{embed}\n", text.trim_end());
+                    tab.set_text(&text);
+                    tab.preview = Some(tab.make_preview(&root, &index));
+                    true
+                }
+                None if tab.shows_form() => tab
+                    .form
+                    .as_mut()
+                    .is_some_and(|form| form.insert_text(&embed)),
+                None => {
+                    paste(&mut tab.content);
+                    true
+                }
+            }
+        };
+        if added {
+            tab.modified = true;
+        }
+
+        self.status = match (added, copied) {
+            (true, true) => format!("Added the picture (copied to {name})"),
+            (true, false) => format!("Added the picture {name}"),
+            (false, _) => format!(
+                "Copied the picture to {name}. Click in a text box, then add it again to put it there"
+            ),
+        };
+        if copied {
+            self.rescan();
         }
     }
 
@@ -1830,6 +1968,20 @@ impl Workspace {
                 }
             }
             Message::FollowLink(target) => self.follow_link(&target),
+            Message::InsertPicture => {
+                if !self.active_tab().is_some_and(Tab::is_note) {
+                    return Task::none();
+                }
+                Task::perform(pick_picture(), Message::AddPicture)
+            }
+            Message::AddPicture(Some(file)) => {
+                self.add_picture(&file);
+                Task::none()
+            }
+            Message::WebPicture(url, picture) => {
+                self.web.insert(url, picture);
+                Task::none()
+            }
             Message::InsertLink => {
                 let Some(tab) = self.active_tab_mut() else {
                     return Task::none();
@@ -2136,6 +2288,7 @@ impl Workspace {
                     tab.changed_outside = false;
                 }
                 self.rescan();
+                self.refresh_embeds(id);
                 Task::none()
             }
             Message::Saved(_, Err(error)) => {
@@ -2918,7 +3071,7 @@ impl Workspace {
                 }
                 None => {}
             }
-            return container(preview.view(c, self.index.names(), editing))
+            return container(preview.view(c, self.index.names(), &self.web, editing))
                 .width(Fill)
                 .height(Fill)
                 .style(style::panel(c.background))
@@ -3238,6 +3391,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "w" => Some(Message::CloseActiveTab),
         "e" => Some(Message::ToggleSource),
         "r" => Some(Message::ToggleReading),
+        "k" if modifiers.shift() => Some(Message::InsertPicture),
         "k" => Some(Message::InsertLink),
         _ => None,
     }
@@ -3426,6 +3580,15 @@ async fn pick_folder(title: &'static str) -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title(title)
         .pick_folder()
+        .await
+        .map(|handle| handle.path().to_path_buf())
+}
+
+async fn pick_picture() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Insert picture")
+        .add_filter("Pictures", &preview::PICTURES)
+        .pick_file()
         .await
         .map(|handle| handle.path().to_path_buf())
 }

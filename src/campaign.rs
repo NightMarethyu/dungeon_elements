@@ -78,6 +78,41 @@ pub fn create_folder(root: &Path, name: &str, type_yaml: Option<&str>) -> Result
     Ok(path)
 }
 
+/// The folder in a campaign that pictures added from elsewhere are copied to.
+pub const PICTURES_FOLDER: &str = "pictures";
+
+/// Copies the picture `file` into the campaign `root`'s pictures folder and returns where
+/// it went. A picture already in the campaign stays where it is, and one copied before
+/// isn't copied again. If another picture has the name, the copy gets a number.
+pub fn copy_picture(root: &Path, file: &Path) -> Result<PathBuf, String> {
+    if file.starts_with(root) {
+        return Ok(file.to_path_buf());
+    }
+    let bytes = fs::read(file).map_err(|error| error.to_string())?;
+    let folder = root.join(PICTURES_FOLDER);
+    fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+
+    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+    let extension = file.extension().unwrap_or_default().to_string_lossy();
+    for number in 1.. {
+        let name = match number {
+            1 => format!("{stem}.{extension}"),
+            n => format!("{stem} {n}.{extension}"),
+        };
+        let path = folder.join(name);
+        match fs::read(&path) {
+            Ok(existing) if existing == bytes => return Ok(path),
+            Ok(_) => continue,
+            Err(_) if path.exists() => continue,
+            Err(_) => {
+                fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+                return Ok(path);
+            }
+        }
+    }
+    unreachable!("some number is free")
+}
+
 /// Checks that `name` can be used as a file or folder name on both Windows and Linux.
 pub fn validate_name(name: &str) -> Result<(), String> {
     const RESERVED: &[&str] = &[
@@ -182,6 +217,32 @@ pub fn is_yaml(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copies_pictures_into_the_campaign() {
+        let root = temp_folder("pictures");
+        let outside = temp_folder("pictures_outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let map = outside.join("map.png");
+        fs::write(&map, b"one").unwrap();
+
+        let copy = copy_picture(&root, &map).unwrap();
+        assert_eq!(copy, root.join("pictures/map.png"));
+        // The same picture again isn't copied twice.
+        assert_eq!(copy_picture(&root, &map).unwrap(), copy);
+        // A different one with the same name gets a number.
+        fs::write(&map, b"two").unwrap();
+        assert_eq!(
+            copy_picture(&root, &map).unwrap(),
+            root.join("pictures/map 2.png")
+        );
+        // One in the campaign stays put.
+        assert_eq!(copy_picture(&root, &copy).unwrap(), copy);
+
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
 
     fn temp_folder(name: &str) -> PathBuf {
         let folder =

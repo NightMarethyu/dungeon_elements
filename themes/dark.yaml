@@ -25,5 +25,12 @@ colors:
   danger: "#f48771"
   warning: "#cca700"
   success: "#89d185"
+  # Syntax colors for code blocks in the reading view
+  code_comment: "#6a9955"
+  code_string: "#ce9178"
+  code_number: "#b5cea8"     # numbers and constants like true and null
+  code_keyword: "#569cd6"
+  code_function: "#dcdcaa"
+  code_type: "#4ec9b0"       # types, classes, and HTML tags
 border_width: 1
 corner_radius: 4

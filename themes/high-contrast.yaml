@@ -21,5 +21,11 @@ colors:
   danger: "#b00020"
   warning: "#8a6d00"
   success: "#1b6e1b"
+  code_comment: "#515151"
+  code_string: "#a31515"
+  code_number: "#096d48"
+  code_keyword: "#0f4a85"
+  code_function: "#5e2cbc"
+  code_type: "#185e73"
 border_width: 2
 corner_radius: 10
