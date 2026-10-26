@@ -6,6 +6,7 @@
 mod campaign;
 mod check;
 mod code;
+mod context_menu;
 mod dice;
 mod form;
 mod icon;
@@ -29,7 +30,7 @@ use iced::widget::{
     Svg, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
     scrollable, space, stack, svg, text, text_editor, text_input, tooltip,
 };
-use iced::{Center, Element, Fill, Subscription, Task, window};
+use iced::{Center, Element, Fill, Point, Size, Subscription, Task, window};
 
 use campaign::Entry;
 use check::Problem;
@@ -83,6 +84,8 @@ struct App {
     menu: Option<Menu>,
     /// Whether the "About" dialog is showing.
     about: bool,
+    /// The window's size, for keeping right-click menus inside it.
+    window: Size,
 }
 
 enum Screen {
@@ -155,6 +158,36 @@ struct Workspace {
     open_in_reading: bool,
     /// Pictures from the web shown in the reading view, by their URL.
     web: web::Pictures,
+    /// The right-click menu that is open, and where in the window.
+    context: Option<(Target, Point)>,
+}
+
+/// What a right-click menu is for.
+#[derive(Debug, Clone, PartialEq)]
+enum Target {
+    /// A note, file or folder in the file tree, or the campaign folder for the space
+    /// around the tree.
+    Tree(PathBuf),
+    Tab(u64),
+    /// The text editor that was right-clicked: the note's, a long text field's, or a
+    /// block's in the reading view.
+    Editor,
+    /// The active note's form, outside its long text fields.
+    Form,
+    Reading,
+}
+
+/// A folder to move something into, in the "Move" dialog.
+#[derive(Debug, Clone, PartialEq)]
+struct FolderChoice {
+    path: PathBuf,
+    label: String,
+}
+
+impl std::fmt::Display for FolderChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
     /// How a File > Save All is going, until every note in it is saved or not.
     save_all: Option<SaveAll>,
 }
@@ -179,8 +212,9 @@ enum Dialog {
         kind: types::Kind,
         error: Option<String>,
     },
-    /// Makes a folder at the top of the campaign, optionally with a content type.
+    /// Makes a folder in `parent`, optionally with a content type.
     NewFolder {
+        parent: PathBuf,
         name: String,
         template: Template,
         error: Option<String>,
@@ -189,6 +223,18 @@ enum Dialog {
     Types(types_editor::Editor),
     /// Lists the campaign's files with formatting problems.
     Problems,
+    /// Renames the note or folder at `path`.
+    Rename {
+        path: PathBuf,
+        name: String,
+        error: Option<String>,
+    },
+    /// Moves the note or folder at `path` into another folder.
+    Move {
+        path: PathBuf,
+        folder: Option<FolderChoice>,
+        error: Option<String>,
+    },
 }
 
 /// What the link bar offers while a link is being typed.
@@ -454,6 +500,37 @@ enum Message {
     CloseActiveTab,
     ToggleDice,
     Dice(dice::Message),
+
+    // Right-click menus
+    WindowResized(Size),
+    OpenContextMenu(Target, Point),
+    CloseContextMenu,
+    Cut,
+    Copy,
+    Paste,
+    Pasted(Option<String>),
+    SelectAll,
+    /// Opens a note in the reading view.
+    OpenRead(PathBuf),
+    ShowNewFolderIn(PathBuf),
+    /// Opens Edit > Types at this folder's type.
+    EditType(PathBuf),
+    ShowRename(PathBuf),
+    RenameName(String),
+    Rename,
+    ShowMove(PathBuf),
+    MoveFolder(FolderChoice),
+    Move,
+    Delete(PathBuf),
+    DeleteConfirmed(PathBuf, bool),
+    /// Copies a `[[link]]` to this note.
+    CopyLink(PathBuf),
+    ShowInFileManager(PathBuf),
+    /// Expands the folders down to this file in the file tree.
+    RevealInTree(PathBuf),
+    SaveTab(u64),
+    CloseTabs(Vec<u64>),
+    CloseTabsConfirmed(Vec<u64>, bool),
 }
 
 impl App {
@@ -481,6 +558,7 @@ impl App {
             dice: dice::Icons::new(theme::built_in()[0].colors),
             menu: None,
             about: false,
+            window: window_settings().size,
         };
         let name = app.settings.theme.clone();
         app.use_theme(&name);
@@ -573,6 +651,9 @@ impl App {
         // Mouse buttons are watched too, for dragging notes in the file tree.
         let focus = iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
+            iced::Event::Window(
+                window::Event::Resized(size) | window::Event::Opened { size, .. },
+            ) => Some(Message::WindowResized(size)),
             iced::Event::Window(window::Event::FileDropped(path)) => {
                 Some(Message::AddPicture(Some(path)))
             }
@@ -591,6 +672,9 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::MenuOpened(menu) => {
+                if let Screen::Workspace(workspace) = &mut self.screen {
+                    workspace.context = None;
+                }
                 self.menu = if self.menu == Some(menu) {
                     None
                 } else {
@@ -616,13 +700,24 @@ impl App {
                 | Message::TreeExit(_)
                 | Message::MousePressed
                 | Message::MouseReleased
+                | Message::WindowResized(_)
         );
+        let mut closed = false;
         if !tracking {
-            self.menu = None;
+            closed = self.menu.take().is_some();
+            if let Screen::Workspace(workspace) = &mut self.screen {
+                closed |= workspace.context.take().is_some();
+            }
         }
 
         match message {
-            Message::CloseMenu => return Task::none(),
+            Message::CloseMenu | Message::CloseContextMenu => return Task::none(),
+            Message::WindowResized(size) => {
+                self.window = size;
+                return Task::none();
+            }
+            // Escape closes an open menu, and only that.
+            Message::Escape if closed => return Task::none(),
             Message::Escape => {
                 match &mut self.screen {
                     Screen::Splash { new_campaign, .. } if !self.about => *new_campaign = None,
@@ -789,7 +884,7 @@ impl App {
         }
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view<'a>(&'a self) -> Element<'a, Message> {
         let c = self.colors();
 
         let bar = menu::bar(
@@ -806,35 +901,50 @@ impl App {
         };
 
         let edge = rule::horizontal(c.border_width.max(1.0)).style(style::separator(c));
-        let mut view: Element<'_, Message> = column![bar, edge, body].into();
+        let view = column![bar, edge, body];
 
-        if let Screen::Splash {
-            new_campaign: Some(form),
-            ..
-        } = &self.screen
-        {
-            view = modal(view, new_campaign_dialog(c, form));
-        }
+        let workspace = match &self.screen {
+            Screen::Workspace(workspace) => Some(workspace.as_ref()),
+            Screen::Splash { .. } => None,
+        };
+        let dialog = match &self.screen {
+            Screen::Splash {
+                new_campaign: Some(form),
+                ..
+            } => Some(modal(new_campaign_dialog(c, form))),
+            Screen::Workspace(workspace) => workspace
+                .dialog
+                .as_ref()
+                .map(|dialog| modal(workspace.dialog_view(c, dialog))),
+            Screen::Splash { .. } => None,
+        };
+        let about = self.about.then(|| modal(about_dialog(c, &self.logos.1)));
+        let context = workspace.and_then(|workspace| {
+            let (target, position) = workspace.context.as_ref()?;
+            Some(context_menu::view(
+                c,
+                *position,
+                self.window,
+                workspace.context_entries(target),
+                Message::CloseContextMenu,
+            ))
+        });
+        let dropdown = self
+            .menu
+            .map(|open| menu::dropdown(c, open, self.menu_entries(open), Message::CloseMenu));
 
-        if let Screen::Workspace(workspace) = &self.screen
-            && let Some(dialog) = &workspace.dialog
-        {
-            view = modal(view, workspace.dialog_view(c, dialog));
-        }
-
-        if self.about {
-            view = modal(view, about_dialog(c, &self.logos.1));
-        }
-
-        if let Some(open) = self.menu {
-            view = stack![
-                view,
-                menu::dropdown(c, open, self.menu_entries(open), Message::CloseMenu)
-            ]
-            .into();
-        }
-
-        view
+        // Every layer is always there, empty when closed, so opening one doesn't make
+        // iced build the window again from scratch, which would lose the focus, the
+        // selection and how far things are scrolled.
+        let layer = |layer: Option<Element<'a, Message>>| layer.unwrap_or_else(|| space().into());
+        stack![
+            view,
+            layer(dialog),
+            layer(about),
+            layer(context),
+            layer(dropdown),
+        ]
+        .into()
     }
 
     fn menu_entries(&self, open: Menu) -> Vec<menu::Entry<Message>> {
@@ -973,6 +1083,7 @@ impl Workspace {
             dice: dice::Roller::default(),
             open_in_reading,
             web: web::Pictures::new(),
+            context: None,
             save_all: None,
         }
     }
@@ -1462,7 +1573,7 @@ impl Workspace {
                     display_name(&old, false),
                     display_name(&new, false)
                 );
-                self.relink(&old, &new, &done);
+                self.relink(&[(old, new)], &done);
             }
             return task;
         }
@@ -1646,7 +1757,7 @@ impl Workspace {
         let (title, fields, error, confirm, on_confirm): (_, Element<'a, Message>, _, _, _) =
             match dialog {
                 Dialog::AddField { label: name, kind, error } => (
-                    "Add a field to this note",
+                    "Add a field to this note".to_string(),
                     column![
                         self.removed_fields(c),
                         column![
@@ -1679,11 +1790,16 @@ impl Workspace {
                     Message::AddField,
                 ),
                 Dialog::NewFolder {
+                    parent,
                     name,
                     template,
                     error,
                 } => (
-                    "New folder",
+                    if *parent == self.root {
+                        "New folder".to_string()
+                    } else {
+                        format!("New folder in {}", self.relative(parent))
+                    },
                     column![
                         column![
                             label("Name"),
@@ -1718,6 +1834,58 @@ impl Workspace {
                     "Create",
                     Message::CreateFolder,
                 ),
+                Dialog::Rename { path, name, error } => (
+                    format!("Rename {}", self.shown_name(path)),
+                    column![
+                        label("New name"),
+                        text_input("Name", name)
+                            .id(DIALOG_INPUT)
+                            .on_input(Message::RenameName)
+                            .on_submit(Message::Rename)
+                            .padding(8)
+                            .style(style::input(c)),
+                        text(if path.is_dir() {
+                            "Links to the notes in it are updated to match."
+                        } else {
+                            "Its name field changes too, and links to it are updated to match."
+                        })
+                        .size(12)
+                        .color(c.text_muted),
+                    ]
+                    .spacing(4)
+                    .into(),
+                    error,
+                    "Rename",
+                    Message::Rename,
+                ),
+                Dialog::Move {
+                    path,
+                    folder,
+                    error,
+                } => (
+                    format!("Move {}", self.shown_name(path)),
+                    column![
+                        label("Into the folder"),
+                        pick_list(self.move_targets(path), folder.clone(), Message::MoveFolder)
+                            .placeholder("Choose a folder...")
+                            .padding(8)
+                            .width(Fill)
+                            .style(style::choice(c))
+                            .menu_style(style::choice_menu(c)),
+                        text(if path.is_dir() {
+                            "Everything in it moves too, and links to its notes are updated to match."
+                        } else {
+                            "It takes the new folder's type, keeping every field that has something in it, and links to it are updated to match."
+                        })
+                        .size(12)
+                        .color(c.text_muted),
+                    ]
+                    .spacing(4)
+                    .into(),
+                    error,
+                    "Move",
+                    Message::Move,
+                ),
                 Dialog::Types(_) | Dialog::Problems => {
                     unreachable!("these dialogs have their own view")
                 }
@@ -1747,6 +1915,34 @@ impl Workspace {
             .padding(24)
             .style(style::dialog(c))
             .into()
+    }
+
+    /// A note's name, or a folder's path in the campaign, for dialog titles.
+    fn shown_name(&self, path: &Path) -> String {
+        if path.is_dir() {
+            self.relative(path)
+        } else {
+            display_name(path, false)
+        }
+    }
+
+    /// The folders the note or folder at `path` can move to: every folder but the one it
+    /// is in (and, for a folder, the ones inside it).
+    fn move_targets(&self, path: &Path) -> Vec<FolderChoice> {
+        let mut folders = vec![self.root.clone()];
+        collect_folders(&self.tree, &mut folders);
+        folders
+            .into_iter()
+            .filter(|folder| Some(folder.as_path()) != path.parent() && !folder.starts_with(path))
+            .map(|folder| FolderChoice {
+                label: if folder == self.root {
+                    "The campaign folder".into()
+                } else {
+                    self.relative(&folder)
+                },
+                path: folder,
+            })
+            .collect()
     }
 
     /// Lists the files with problems; clicking one opens it.
@@ -1814,6 +2010,7 @@ impl Workspace {
             message,
             Message::Save
                 | Message::SaveAs
+                | Message::SaveTab(_)
                 | Message::SaveAll
                 | Message::SelectTab(_)
                 | Message::CloseTab(_)
@@ -1913,8 +2110,10 @@ impl Workspace {
                 }
                 self.update(Message::AddField)
             }
-            Message::ShowNewFolder => {
+            Message::ShowNewFolder => self.update(Message::ShowNewFolderIn(self.root.clone())),
+            Message::ShowNewFolderIn(parent) => {
                 self.dialog = Some(Dialog::NewFolder {
+                    parent,
                     name: String::new(),
                     template: Template::plain(),
                     error: None,
@@ -1936,6 +2135,7 @@ impl Workspace {
             }
             Message::CreateFolder => {
                 let Some(Dialog::NewFolder {
+                    parent,
                     name,
                     template,
                     error,
@@ -1944,9 +2144,11 @@ impl Workspace {
                     return Task::none();
                 };
 
-                match campaign::create_folder(&self.root, name, template.yaml.as_deref()) {
+                match campaign::create_folder(parent, name, template.yaml.as_deref()) {
                     Ok(path) => {
+                        let parent = parent.clone();
                         self.status = format!("Created the folder {}", self.relative(&path));
+                        self.expanded.insert(parent);
                         self.dialog = None;
                         self.rescan();
                     }
@@ -1958,13 +2160,15 @@ impl Workspace {
                 self.dialog = None;
                 Task::none()
             }
-            Message::ShowTypes => {
+            Message::ShowTypes => match self.active_tab() {
+                Some(tab) => self.update(Message::EditType(tab.folder.clone())),
+                None => self.update(Message::EditType(self.root.clone())),
+            },
+            Message::EditType(folder) => {
                 let mut folders = Vec::new();
                 collect_folders(&self.tree, &mut folders);
                 let mut editor = types_editor::Editor::new(&self.root, &folders, &self.types);
-                if let Some(tab) = self.active_tab() {
-                    editor.select(&tab.folder);
-                }
+                editor.select(&folder);
                 self.dialog = Some(Dialog::Types(editor));
                 Task::none()
             }
@@ -2050,8 +2254,9 @@ impl Workspace {
             Message::MouseReleased => {
                 if let Some((path, true)) = self.drag.take()
                     && let Some(folder) = self.drop_folder()
+                    && let Err(message) = self.move_note(&path, &folder)
                 {
-                    self.move_note(&path, &folder);
+                    self.status = message;
                 }
                 Task::none()
             }
@@ -2414,8 +2619,442 @@ impl Workspace {
                 self.not_saved(id, format!("Could not save: {error}"));
                 Task::none()
             }
+            Message::OpenContextMenu(target, position) => {
+                self.context = Some((target, position));
+                Task::none()
+            }
+            Message::Copy | Message::Cut => {
+                let cut = matches!(message, Message::Cut);
+                let Some((content, id)) = self.focused_text_mut() else {
+                    return Task::none();
+                };
+                let Some(selected) = content.selection() else {
+                    return Task::none();
+                };
+                if cut {
+                    content.perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+                    if let Some(tab) = self.active_tab_mut() {
+                        tab.modified = true;
+                    }
+                }
+                Task::batch([
+                    iced::clipboard::write(selected),
+                    iced::widget::operation::focus(id),
+                ])
+            }
+            Message::Paste => iced::clipboard::read().map(Message::Pasted),
+            Message::Pasted(Some(pasted)) => {
+                let Some((content, id)) = self.focused_text_mut() else {
+                    return Task::none();
+                };
+                content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                    std::sync::Arc::new(pasted),
+                )));
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.modified = true;
+                }
+                iced::widget::operation::focus(id)
+            }
+            Message::SelectAll => {
+                let Some((content, id)) = self.focused_text_mut() else {
+                    return Task::none();
+                };
+                content.perform(text_editor::Action::SelectAll);
+                iced::widget::operation::focus(id)
+            }
+            Message::OpenRead(path) => {
+                self.open_file(path);
+                if self.active_tab().is_some_and(Tab::is_note) {
+                    self.read_active_tab();
+                }
+                Task::none()
+            }
+            Message::ShowRename(path) => {
+                let name = if path.is_dir() {
+                    path.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    display_name(&path, false)
+                };
+                self.dialog = Some(Dialog::Rename {
+                    path,
+                    name,
+                    error: None,
+                });
+                iced::widget::operation::focus(DIALOG_INPUT)
+            }
+            Message::RenameName(value) => {
+                if let Some(Dialog::Rename { name, error, .. }) = &mut self.dialog {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::Rename => {
+                let Some(Dialog::Rename { path, name, .. }) = &self.dialog else {
+                    return Task::none();
+                };
+                let (path, name) = (path.clone(), name.trim().to_string());
+                let result = if path.is_dir() {
+                    campaign::validate_name(&name).and_then(|()| {
+                        let parent = path.parent().unwrap_or(&self.root).to_path_buf();
+                        self.move_folder(&path, &parent.join(&name))
+                    })
+                } else {
+                    self.rename_note(&path, &name)
+                };
+                self.dialog_result(result);
+                Task::none()
+            }
+            Message::ShowMove(path) => {
+                self.dialog = Some(Dialog::Move {
+                    path,
+                    folder: None,
+                    error: None,
+                });
+                Task::none()
+            }
+            Message::MoveFolder(choice) => {
+                if let Some(Dialog::Move { folder, error, .. }) = &mut self.dialog {
+                    *folder = Some(choice);
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::Move => {
+                let Some(Dialog::Move { path, folder, .. }) = &self.dialog else {
+                    return Task::none();
+                };
+                let (path, folder) = (path.clone(), folder.clone());
+                let result = match folder {
+                    None => Err("Pick the folder to move it to".to_string()),
+                    Some(folder) if path.is_dir() => match path.file_name() {
+                        Some(name) => self.move_folder(&path, &folder.path.join(name)),
+                        None => Ok(()),
+                    },
+                    Some(folder) => self.move_note(&path, &folder.path),
+                };
+                self.dialog_result(result);
+                Task::none()
+            }
+            Message::Delete(path) => {
+                let name = self.shown_name(&path);
+                let unsaved = self.tabs.iter().any(|tab| {
+                    tab.modified
+                        && tab
+                            .path
+                            .as_ref()
+                            .is_some_and(|open| open.starts_with(&path))
+                });
+                let mut question = if path.is_dir() {
+                    let notes = markdown_files(&self.tree)
+                        .iter()
+                        .filter(|note| note.starts_with(&path))
+                        .count();
+                    match notes {
+                        0 => format!("Delete the folder {name}?"),
+                        1 => format!("Delete the folder {name} and the note in it?"),
+                        notes => format!("Delete the folder {name} and the {notes} notes in it?"),
+                    }
+                } else {
+                    format!("Delete {name}?")
+                };
+                question.push_str(&format!(
+                    " It goes to the {TRASH}, so you can get it back from there."
+                ));
+                if unsaved {
+                    question.push_str(" Unsaved changes to it are lost.");
+                }
+                if campaign::is_markdown(&path) || path.is_dir() {
+                    question.push_str(" Links to it will show as missing.");
+                }
+                Task::perform(confirm_delete(question), move |yes| {
+                    Message::DeleteConfirmed(path.clone(), yes)
+                })
+            }
+            Message::DeleteConfirmed(path, true) => {
+                let name = self.relative(&path);
+                match trash::delete(&path) {
+                    Ok(()) => {
+                        let closed: Vec<u64> = self
+                            .tabs
+                            .iter()
+                            .filter(|tab| {
+                                tab.path
+                                    .as_ref()
+                                    .is_some_and(|open| open.starts_with(&path))
+                            })
+                            .map(|tab| tab.id)
+                            .collect();
+                        for id in closed {
+                            self.remove_tab(id);
+                        }
+                        self.expanded.retain(|folder| !folder.starts_with(&path));
+                        self.rescan();
+                        self.status = format!("Moved {name} to the {TRASH}");
+                    }
+                    Err(error) => self.status = format!("Could not delete {name}: {error}"),
+                }
+                Task::none()
+            }
+            Message::CopyLink(path) => {
+                let from = self
+                    .active_tab()
+                    .map(Tab::note_path)
+                    .unwrap_or_else(|| self.root.join("Untitled.md"));
+                let link = self
+                    .index
+                    .link_text(&path, &from, false)
+                    .unwrap_or_else(|| display_name(&path, false));
+                let link = format!("[[{link}]]");
+                self.status = format!("Copied {link}: paste it into a note to link there");
+                iced::clipboard::write(link)
+            }
+            Message::ShowInFileManager(path) => {
+                if let Err(error) = show_in_file_manager(&path) {
+                    self.status = format!("Could not show {}: {error}", self.relative(&path));
+                }
+                Task::none()
+            }
+            Message::RevealInTree(path) => {
+                for folder in path.ancestors().skip(1) {
+                    if folder == self.root || !folder.starts_with(&self.root) {
+                        break;
+                    }
+                    self.expanded.insert(folder.to_path_buf());
+                }
+                Task::none()
+            }
+            Message::SaveTab(id) => self.save(id, false),
+            Message::CloseTabs(ids) => {
+                if self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.modified && ids.contains(&tab.id))
+                {
+                    Task::perform(
+                        confirm_discard(
+                            "Some of these files have unsaved changes. Close them anyway?",
+                        ),
+                        move |yes| Message::CloseTabsConfirmed(ids.clone(), yes),
+                    )
+                } else {
+                    self.update(Message::CloseTabsConfirmed(ids, true))
+                }
+            }
+            Message::CloseTabsConfirmed(ids, true) => {
+                for id in ids {
+                    self.remove_tab(id);
+                }
+                Task::none()
+            }
             // Dialogs the user cancelled, and splash screen messages.
             _ => Task::none(),
+        }
+    }
+
+    /// The items of the right-click menu for `target`.
+    fn context_entries(&self, target: &Target) -> Vec<menu::Entry<Message>> {
+        use menu::{Entry, item};
+
+        let when = |enabled: bool, message: Message| enabled.then_some(message);
+        let active = self.active_tab();
+        // Copying a link and finding the file in the tree, for the note in the active tab.
+        let note_items = |entries: &mut Vec<Entry<Message>>| {
+            let path = active.and_then(|tab| tab.path.clone());
+            entries.extend([
+                Entry::Separator,
+                item(
+                    "Copy Link to This Note",
+                    path.clone()
+                        .filter(|path| campaign::is_markdown(path))
+                        .map(Message::CopyLink),
+                ),
+                item("Show in File Tree", path.map(Message::RevealInTree)),
+            ]);
+        };
+
+        match target {
+            Target::Tree(path) if *path == self.root => vec![
+                item("New Note", Some(Message::NewNoteIn(path.clone()))),
+                item(
+                    "New Folder...",
+                    Some(Message::ShowNewFolderIn(path.clone())),
+                ),
+                Entry::Separator,
+                item("Refresh File Tree", Some(Message::RefreshTree)),
+                item(
+                    SHOW_IN_FILE_MANAGER,
+                    Some(Message::ShowInFileManager(path.clone())),
+                ),
+            ],
+            Target::Tree(path) if path.is_dir() => {
+                let expanded = self.expanded.contains(path);
+                let typed = self.types.contains_key(path);
+                vec![
+                    item("New Note Here", Some(Message::NewNoteIn(path.clone()))),
+                    item(
+                        "New Folder Here...",
+                        Some(Message::ShowNewFolderIn(path.clone())),
+                    ),
+                    Entry::Separator,
+                    item(
+                        if expanded { "Collapse" } else { "Expand" },
+                        Some(Message::ToggleFolder(path.clone())),
+                    ),
+                    item(
+                        if typed {
+                            "Edit Note Fields..."
+                        } else {
+                            "Give Notes Fields..."
+                        },
+                        Some(Message::EditType(path.clone())),
+                    ),
+                    Entry::Separator,
+                    item("Rename...", Some(Message::ShowRename(path.clone()))),
+                    item("Move To...", Some(Message::ShowMove(path.clone()))),
+                    item(
+                        SHOW_IN_FILE_MANAGER,
+                        Some(Message::ShowInFileManager(path.clone())),
+                    ),
+                    Entry::Separator,
+                    item("Delete...", Some(Message::Delete(path.clone()))),
+                ]
+            }
+            Target::Tree(path) => {
+                let note = campaign::is_markdown(path);
+                vec![
+                    item("Open", Some(Message::OpenEntry(path.clone()))),
+                    item(
+                        "Open in Reading View",
+                        when(note, Message::OpenRead(path.clone())),
+                    ),
+                    Entry::Separator,
+                    item("Copy Link", when(note, Message::CopyLink(path.clone()))),
+                    item("Rename...", when(note, Message::ShowRename(path.clone()))),
+                    item("Move To...", when(note, Message::ShowMove(path.clone()))),
+                    item(
+                        SHOW_IN_FILE_MANAGER,
+                        Some(Message::ShowInFileManager(path.clone())),
+                    ),
+                    Entry::Separator,
+                    item("Delete...", Some(Message::Delete(path.clone()))),
+                ]
+            }
+            Target::Tab(id) => {
+                let Some(tab) = self.tabs.iter().find(|tab| tab.id == *id) else {
+                    return Vec::new();
+                };
+                let is_active = self.active == Some(*id);
+                let shortcut = |entry: Entry<Message>, keys| {
+                    if is_active {
+                        entry.shortcut(keys)
+                    } else {
+                        entry
+                    }
+                };
+                let others: Vec<u64> = self
+                    .tabs
+                    .iter()
+                    .map(|tab| tab.id)
+                    .filter(|other| other != id)
+                    .collect();
+                let right: Vec<u64> = self
+                    .tabs
+                    .iter()
+                    .skip_while(|tab| tab.id != *id)
+                    .skip(1)
+                    .map(|tab| tab.id)
+                    .collect();
+                let path = tab.path.clone();
+                let note = path.as_deref().filter(|path| campaign::is_markdown(path));
+
+                vec![
+                    shortcut(item("Save", Some(Message::SaveTab(*id))), "Ctrl+S"),
+                    Entry::Separator,
+                    shortcut(item("Close", Some(Message::CloseTab(*id))), "Ctrl+W"),
+                    item(
+                        "Close Others",
+                        when(!others.is_empty(), Message::CloseTabs(others)),
+                    ),
+                    item(
+                        "Close Tabs to the Right",
+                        when(!right.is_empty(), Message::CloseTabs(right)),
+                    ),
+                    item(
+                        "Close All",
+                        Some(Message::CloseTabs(
+                            self.tabs.iter().map(|tab| tab.id).collect(),
+                        )),
+                    ),
+                    Entry::Separator,
+                    item(
+                        "Copy Link",
+                        note.map(|path| Message::CopyLink(path.to_path_buf())),
+                    ),
+                    item(
+                        "Rename...",
+                        note.map(|path| Message::ShowRename(path.to_path_buf())),
+                    ),
+                    item("Show in File Tree", path.clone().map(Message::RevealInTree)),
+                    item(SHOW_IN_FILE_MANAGER, path.map(Message::ShowInFileManager)),
+                ]
+            }
+            Target::Editor => {
+                let content = self.focused_text();
+                let selected = content.is_some_and(|content| content.selection().is_some());
+                let is_note = active.is_some_and(Tab::is_note);
+                let mut entries = vec![
+                    item("Cut", when(selected, Message::Cut)).shortcut("Ctrl+X"),
+                    item("Copy", when(selected, Message::Copy)).shortcut("Ctrl+C"),
+                    item("Paste", when(content.is_some(), Message::Paste)).shortcut("Ctrl+V"),
+                    item("Select All", when(content.is_some(), Message::SelectAll))
+                        .shortcut("Ctrl+A"),
+                    Entry::Separator,
+                ];
+                // The link that was right-clicked, if any.
+                if is_note && let Some(target) = content.and_then(links::under_cursor) {
+                    let from = active.map(Tab::note_path).unwrap_or_default();
+                    let label = if self.index.resolve(&target, &from).is_some() {
+                        format!("Open {target}")
+                    } else {
+                        format!("Create {target}")
+                    };
+                    entries.push(item(label, Some(Message::FollowLink(target))));
+                }
+                entries.extend([
+                    item(
+                        "Insert Link",
+                        when(is_note && content.is_some(), Message::InsertLink),
+                    )
+                    .shortcut("Ctrl+K"),
+                    item("Insert Picture...", when(is_note, Message::InsertPicture))
+                        .shortcut("Ctrl+Shift+K"),
+                ]);
+                entries
+            }
+            Target::Form => {
+                let mut entries = vec![
+                    item("Add Field to This Note...", Some(Message::ShowAddField)),
+                    Entry::Separator,
+                    item("Show Markdown Source", Some(Message::ToggleSource)).shortcut("Ctrl+E"),
+                    item("Reading View", Some(Message::SetReading(true))).shortcut("Ctrl+R"),
+                ];
+                note_items(&mut entries);
+                entries
+            }
+            Target::Reading => {
+                let mut entries = vec![
+                    item("Edit This Note", Some(Message::SetReading(false))).shortcut("Ctrl+R"),
+                    item("Add Text at the End", Some(Message::AddText)),
+                    item("Insert Picture...", Some(Message::InsertPicture))
+                        .shortcut("Ctrl+Shift+K"),
+                ];
+                note_items(&mut entries);
+                entries
+            }
         }
     }
 
@@ -2528,7 +3167,7 @@ impl Workspace {
             }))
             .into();
 
-        container(column![
+        let sidebar = container(column![
             root_area(header),
             stack![
                 scrollable(column![tree, root_area(space().height(Fill).into())].padding([0, 4]))
@@ -2539,7 +3178,12 @@ impl Workspace {
         ])
         .width(260)
         .height(Fill)
-        .style(style::panel(c.sidebar))
+        .style(style::panel(c.sidebar));
+
+        let root = self.root.clone();
+        context_menu::area(sidebar, move |position| {
+            Message::OpenContextMenu(Target::Tree(root.clone()), position)
+        })
         .into()
     }
 
@@ -2582,6 +3226,9 @@ impl Workspace {
                     active_path == Some(&entry.path),
                 ),
             };
+            // The row a right-click menu is open for shows which one it is.
+            let selected = selected
+                || matches!(&self.context, Some((Target::Tree(path), _)) if *path == entry.path);
 
             // A collapsed folder shows that something inside it has a problem.
             let has_problem = match entry.children {
@@ -2617,11 +3264,15 @@ impl Workspace {
                 None => label.into(),
             };
 
+            let path = entry.path.clone();
             rows.push(
-                mouse_area(row)
-                    .on_enter(Message::TreeEnter(entry.path.clone()))
-                    .on_exit(Message::TreeExit(entry.path.clone()))
-                    .into(),
+                context_menu::area(
+                    mouse_area(row)
+                        .on_enter(Message::TreeEnter(entry.path.clone()))
+                        .on_exit(Message::TreeExit(entry.path.clone())),
+                    move |position| Message::OpenContextMenu(Target::Tree(path.clone()), position),
+                )
+                .into(),
             );
 
             if let Some(children) = &entry.children
@@ -2636,8 +3287,9 @@ impl Workspace {
         let tabs = self.tabs.iter().map(|tab| {
             let active = Some(tab.id) == self.active;
             let close_label = if tab.modified { "●" } else { "×" };
+            let id = tab.id;
 
-            container(
+            let tab = container(
                 row![
                     button(text(tab.name(settings.show_extensions)).size(13))
                         .padding([8, 4])
@@ -2651,7 +3303,11 @@ impl Workspace {
                 .align_y(Center),
             )
             .padding([0, 6])
-            .style(style::tab(c, active))
+            .style(style::tab(c, active));
+
+            context_menu::area(tab, move |position| {
+                Message::OpenContextMenu(Target::Tab(id), position)
+            })
             .into()
         });
 
@@ -2957,26 +3613,25 @@ impl Workspace {
         Task::none()
     }
 
-    /// Rewrites `[[links]]` across the campaign after the note at `old` was renamed to `new`,
-    /// so they still point to it. Open tabs are updated too, unsaved changes and all.
+    /// Rewrites `[[links]]` across the campaign after the notes in `moved` were renamed
+    /// or moved (from the first path to the second), so they still point to them. Open tabs
+    /// are updated too, unsaved changes and all.
     ///
     /// The status bar says `done`, then how many links changed.
-    fn relink(&mut self, old: &Path, new: &Path, done: &str) {
+    fn relink(&mut self, moved: &[(PathBuf, PathBuf)], done: &str) {
         let notes = markdown_files(&self.tree);
         let after = links::Index::new(&self.root, notes.iter().cloned());
         let before = links::Index::new(
             &self.root,
             notes.iter().map(|path| {
-                if path == new {
-                    old.to_path_buf()
-                } else {
-                    path.clone()
-                }
+                moved
+                    .iter()
+                    .find(|(_, new)| new == path)
+                    .map_or_else(|| path.clone(), |(old, _)| old.clone())
             }),
         );
         let rename = links::Rename {
-            old,
-            new,
+            moved,
             before: &before,
             after: &after,
         };
@@ -3072,12 +3727,12 @@ impl Workspace {
     /// Moves the note at `path` into `folder`. It takes the folder's type, keeping every
     /// field that has something in it (fields the new type doesn't have become the note's
     /// own), and links to it are rewritten where they need to be.
-    fn move_note(&mut self, path: &Path, folder: &Path) {
+    fn move_note(&mut self, path: &Path, folder: &Path) -> Result<(), String> {
         let Some(name) = path.file_name() else {
-            return;
+            return Ok(());
         };
         if path.parent() == Some(folder) || !folder.starts_with(&self.root) {
-            return;
+            return Ok(());
         }
         let target = folder.join(name);
         let label = display_name(path, false);
@@ -3093,49 +3748,37 @@ impl Workspace {
             .find(|tab| tab.path.as_deref() == Some(path))
             && tab.modified
         {
-            self.status = format!("Save {label} before moving it");
-            return;
+            return Err(format!("Save {label} before moving it"));
         }
         if target.exists() {
-            self.status =
-                format!("Can't move {label}: {where_to} already has a note with that name");
-            return;
+            return Err(format!(
+                "Can't move {label}: {where_to} already has a note with that name"
+            ));
         }
 
         let ty = match self.types.get(folder) {
             Some(Ok(ty)) => Some(ty.clone()),
             _ => None,
         };
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) => {
-                self.status = format!("Could not read {label}: {error}");
-                return;
-            }
-        };
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("Could not read {label}: {error}"))?;
         let retyped = ty.as_ref().and_then(|ty| retype(&text, ty, &label));
 
-        if let Err(error) = std::fs::rename(path, &target) {
-            self.status = format!("Could not move {label}: {error}");
-            return;
-        }
+        std::fs::rename(path, &target)
+            .map_err(|error| format!("Could not move {label}: {error}"))?;
+        let mut done = String::new();
         if let Some(retyped) = &retyped
             && let Err(error) = std::fs::write(&target, retyped)
         {
-            self.status = format!("Moved {label}, but could not give it its new type: {error}");
+            done = format!("Moved {label}, but could not give it its new type ({error})");
         }
 
         self.expanded.insert(folder.to_path_buf());
         self.rescan();
-        for index in 0..self.tabs.len() {
-            if self.tabs[index].path.as_deref() == Some(path) {
-                self.tabs[index].path = Some(target.clone());
-                self.tabs[index].folder = folder.to_path_buf();
-                let _ = self.reload_tab(index);
-            }
-        }
+        self.retarget_tabs(path, &target);
 
         let done = match (&ty, retyped.is_some()) {
+            _ if !done.is_empty() => done,
             (Some(ty), true) => {
                 let kind = ty.label();
                 let article =
@@ -3148,7 +3791,244 @@ impl Workspace {
             }
             _ => format!("Moved {label} to {where_to}"),
         };
-        self.relink(path, &target, &done);
+        self.relink(&[(path.to_path_buf(), target)], &done);
+        Ok(())
+    }
+
+    /// Renames the note at `path` to `name`, in the same folder. Its name field changes
+    /// too, and links to it are rewritten.
+    fn rename_note(&mut self, path: &Path, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        let name = name
+            .strip_suffix(".md")
+            .or_else(|| name.strip_suffix(".MD"))
+            .unwrap_or(name)
+            .trim();
+        campaign::validate_name(name)?;
+        let label = display_name(path, false);
+        if self
+            .tabs
+            .iter()
+            .any(|tab| tab.modified && tab.path.as_deref() == Some(path))
+        {
+            return Err(format!("Save {label} before renaming it"));
+        }
+
+        let folder = path.parent().unwrap_or(&self.root);
+        let target = folder.join(format!("{name}.md"));
+        if target == path {
+            return Ok(());
+        }
+        // Changing only the case of the name renames the same file on Windows.
+        let same_file =
+            target.to_string_lossy().to_lowercase() == path.to_string_lossy().to_lowercase();
+        if target.exists() && !same_file {
+            return Err(format!("{name}.md already exists in this folder"));
+        }
+
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("Could not read {label}: {error}"))?;
+        let wants_name = matches!(
+            self.form_for(path, &text),
+            Ok(Some(form)) if form.ty.name_field().is_some()
+        );
+        let renamed = with_name(&text, name, wants_name);
+
+        std::fs::rename(path, &target)
+            .map_err(|error| format!("Could not rename {label}: {error}"))?;
+        let mut done = format!("Renamed {label} to {name}");
+        if let Some(renamed) = &renamed
+            && let Err(error) = std::fs::write(&target, renamed)
+        {
+            done =
+                format!("Renamed {label} to {name}, but could not change its name field ({error})");
+        }
+
+        self.rescan();
+        self.retarget_tabs(path, &target);
+        self.relink(&[(path.to_path_buf(), target)], &done);
+        Ok(())
+    }
+
+    /// Moves (or renames) the folder `old` to `new`, with everything in it. Links to its
+    /// notes, and link fields that link to it, are rewritten.
+    fn move_folder(&mut self, old: &Path, new: &Path) -> Result<(), String> {
+        let label = self.relative(old);
+        if new == old {
+            return Ok(());
+        }
+        if new.starts_with(old) {
+            return Err(format!("Can't move {label} into itself"));
+        }
+        if self
+            .tabs
+            .iter()
+            .any(|tab| tab.modified && tab.path.as_ref().is_some_and(|path| path.starts_with(old)))
+        {
+            return Err(format!("Save the notes open from {label} first"));
+        }
+        let same_folder =
+            new.to_string_lossy().to_lowercase() == old.to_string_lossy().to_lowercase();
+        if new.exists() && !same_folder {
+            return Err(format!("{} already exists", self.relative(new)));
+        }
+
+        let moved: Vec<(PathBuf, PathBuf)> = markdown_files(&self.tree)
+            .into_iter()
+            .filter_map(|note| {
+                let inside = note.strip_prefix(old).ok()?.to_path_buf();
+                Some((note, new.join(inside)))
+            })
+            .collect();
+        std::fs::rename(old, new).map_err(|error| format!("Could not move {label}: {error}"))?;
+
+        self.expanded = self
+            .expanded
+            .drain()
+            .map(|folder| match folder.strip_prefix(old) {
+                Ok(inside) => new.join(inside),
+                Err(_) => folder,
+            })
+            .collect();
+        if let Some(parent) = new.parent() {
+            self.expanded.insert(parent.to_path_buf());
+        }
+        self.rescan();
+        let mut done = format!("Moved {label} to {}", self.relative(new));
+        if new.parent() == old.parent() {
+            done = format!("Renamed {label} to {}", self.relative(new));
+        }
+        if let Err(problem) = self.retarget_link_fields(old, new) {
+            done.push_str(&format!(" ({problem})"));
+        }
+        self.retarget_tabs(old, new);
+        self.relink(&moved, &done);
+        Ok(())
+    }
+
+    /// Points link fields that link to folder `old`, or a folder in it, to where it moved.
+    fn retarget_link_fields(&mut self, old: &Path, new: &Path) -> Result<(), String> {
+        let mut changed = Vec::new();
+        for (folder, ty) in &self.types {
+            let Ok(ty) = ty else {
+                continue;
+            };
+            let mut ty = ty.clone();
+            let mut any = false;
+            for field in &mut ty.fields {
+                let Some(linked) = &field.folder else {
+                    continue;
+                };
+                let Ok(inside) = self
+                    .root
+                    .join(linked.trim_matches('/'))
+                    .strip_prefix(old)
+                    .map(Path::to_path_buf)
+                else {
+                    continue;
+                };
+                let moved = new.join(inside);
+                let relative = moved.strip_prefix(&self.root).unwrap_or(&moved);
+                field.folder = Some(relative.to_string_lossy().replace('\\', "/"));
+                any = true;
+            }
+            if any {
+                changed.push((folder.clone(), ty));
+            }
+        }
+        if changed.is_empty() {
+            return Ok(());
+        }
+
+        let mut problems = Vec::new();
+        for (folder, ty) in changed {
+            let written = ty.to_yaml().and_then(|yaml| {
+                std::fs::write(folder.join(types::TYPE_FILE), yaml)
+                    .map_err(|error| error.to_string())
+            });
+            if written.is_err() {
+                problems.push(self.relative(&folder.join(types::TYPE_FILE)));
+            }
+        }
+        self.rescan();
+        self.reload_forms();
+        match problems.is_empty() {
+            true => Ok(()),
+            false => Err(format!(
+                "could not update the link fields in {}",
+                problems.join(", ")
+            )),
+        }
+    }
+
+    /// Points the tabs of files at `old`, or in the folder `old`, to where they are now
+    /// that it moved to `new`, and reads them again.
+    fn retarget_tabs(&mut self, old: &Path, new: &Path) {
+        for index in 0..self.tabs.len() {
+            let Some(inside) = self.tabs[index]
+                .path
+                .as_ref()
+                .and_then(|path| path.strip_prefix(old).ok())
+            else {
+                continue;
+            };
+            let path = if inside.as_os_str().is_empty() {
+                new.to_path_buf()
+            } else {
+                new.join(inside)
+            };
+            self.tabs[index].folder = path.parent().unwrap_or(&self.root).to_path_buf();
+            self.tabs[index].path = Some(path);
+            let _ = self.reload_tab(index);
+        }
+    }
+
+    /// Puts an error from the open dialog's action in the dialog, or closes it.
+    fn dialog_result(&mut self, result: Result<(), String>) {
+        match (result, &mut self.dialog) {
+            (Ok(()), _) => self.dialog = None,
+            (
+                Err(message),
+                Some(
+                    Dialog::Rename { error, .. }
+                    | Dialog::Move { error, .. }
+                    | Dialog::NewFolder { error, .. }
+                    | Dialog::AddField { error, .. },
+                ),
+            ) => *error = Some(message),
+            (Err(message), _) => self.status = message,
+        }
+    }
+
+    /// The text editor that the editing items of a right-click menu work on, and its
+    /// widget id: the block being edited in the reading view, the long text field last
+    /// typed in, or the note's editor.
+    fn focused_text(&self) -> Option<&text_editor::Content> {
+        let tab = self.active_tab()?;
+        match &tab.edit {
+            Some(ReadEdit::Block { content, .. }) => Some(content),
+            Some(ReadEdit::Field(_)) => None,
+            None if tab.reading() => None,
+            None if tab.shows_form() => tab.form.as_ref()?.focused_text(),
+            None => Some(&tab.content),
+        }
+    }
+
+    /// Like [`Self::focused_text`], to change it, with the widget id to focus it again.
+    fn focused_text_mut(&mut self) -> Option<(&mut text_editor::Content, String)> {
+        let tab = self.active_tab_mut()?;
+        let reading = tab.reading();
+        let shows_form = tab.shows_form();
+        match &mut tab.edit {
+            Some(ReadEdit::Block { content, .. }) => Some((content, BLOCK_EDITOR.into())),
+            Some(ReadEdit::Field(_)) => None,
+            None if reading => None,
+            None if shows_form => {
+                let (index, content) = tab.form.as_mut()?.focused_text_mut()?;
+                Some((content, form::field_id(index)))
+            }
+            None => Some((&mut tab.content, EDITOR.into())),
+        }
     }
 
     fn editor_body(&self, c: Colors, suggestions: &[(String, String)]) -> Element<'_, Message> {
@@ -3190,11 +4070,14 @@ impl Workspace {
                 }
                 None => {}
             }
-            return container(preview.view(c, self.index.names(), &self.web, editing))
+            let preview = container(preview.view(c, self.index.names(), &self.web, editing))
                 .width(Fill)
                 .height(Fill)
-                .style(style::panel(c.background))
-                .into();
+                .style(style::panel(c.background));
+            return context_menu::area(preview, |position| {
+                Message::OpenContextMenu(Target::Reading, position)
+            })
+            .into();
         }
 
         let accept = suggestions
@@ -3204,13 +4087,23 @@ impl Workspace {
         if let Some(form) = &tab.form
             && !tab.source
         {
-            let form =
-                container(form.view(c, Message::Form, shortcut, self.link_colors(c), accept))
-                    .width(Fill)
-                    .height(Fill)
-                    .style(style::panel(c.background));
+            let form = container(form.view(
+                c,
+                Message::Form,
+                shortcut,
+                self.link_colors(c),
+                accept,
+                editor_menu,
+            ))
+            .width(Fill)
+            .height(Fill)
+            .style(style::panel(c.background));
 
-            return stack![form, corner_button(c, Message::ShowAddField)].into();
+            return context_menu::area(
+                stack![form, corner_button(c, Message::ShowAddField)],
+                |position| Message::OpenContextMenu(Target::Form, position),
+            )
+            .into();
         }
 
         let editor = text_editor(&tab.content)
@@ -3234,13 +4127,16 @@ impl Workspace {
             .height(Fill)
             .style(style::editor(c));
 
-        if tab.is_note() {
+        let editor: Element<'_, Message> = if tab.is_note() {
             editor
                 .highlight_with::<links::Highlighter>(self.link_colors(c), links::format)
                 .into()
         } else {
             editor.into()
-        }
+        };
+        context_menu::area(editor, editor_menu)
+            .click_first(tab.content.selection().is_none())
+            .into()
     }
 }
 
@@ -3271,7 +4167,33 @@ fn retype(text: &str, ty: &ContentType, name: &str) -> Option<String> {
     }
     retyped.extend(front);
 
-    let yaml = serde_yaml_ng::to_string(&retyped).ok()?;
+    with_front_matter(&retyped, body)
+}
+
+/// The note's `text` with its name field set to `name`, if it has one or `wants_name`
+/// (because its type has one). Returns `None` if there is nothing to change, or the
+/// front matter can't be read.
+fn with_name(text: &str, name: &str, wants_name: bool) -> Option<String> {
+    let (front, body) = note::split_front_matter(text).ok()?;
+    let mut front = match front {
+        Some(yaml) => match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(yaml).ok()? {
+            serde_yaml_ng::Value::Mapping(front) => front,
+            serde_yaml_ng::Value::Null => serde_yaml_ng::Mapping::new(),
+            _ => return None,
+        },
+        None => serde_yaml_ng::Mapping::new(),
+    };
+    if !wants_name && !front.contains_key("name") {
+        return None;
+    }
+    // A name already there keeps its place.
+    front.insert("name".into(), name.into());
+    with_front_matter(&front, body)
+}
+
+/// A note with the front matter `front`, then `body`.
+fn with_front_matter(front: &serde_yaml_ng::Mapping, body: &str) -> Option<String> {
+    let yaml = serde_yaml_ng::to_string(front).ok()?;
     let body = body.trim_start_matches(['\r', '\n']);
     Some(if body.is_empty() {
         format!("---\n{yaml}---\n")
@@ -3681,9 +4603,9 @@ fn corner_button<'a>(c: Colors, on_press: Message) -> Element<'a, Message> {
     .into()
 }
 
-/// Shows `dialog` centered over a dimmed `base`, blocking clicks to `base`.
-fn modal<'a>(base: Element<'a, Message>, dialog: Element<'a, Message>) -> Element<'a, Message> {
-    stack![base, opaque(center(opaque(dialog)).style(style::backdrop))].into()
+/// A layer that shows `dialog` centered over the dimmed window, blocking clicks to it.
+fn modal(dialog: Element<'_, Message>) -> Element<'_, Message> {
+    opaque(center(opaque(dialog)).style(style::backdrop))
 }
 
 /// The folder the "New campaign" dialog suggests: the user's Documents folder, or their home folder.
@@ -3733,6 +4655,65 @@ async fn confirm_discard(description: &'static str) -> bool {
         .show()
         .await
         == rfd::MessageDialogResult::Yes
+}
+
+/// Asks whether to delete something, described by `question`. Returns true for yes.
+async fn confirm_delete(question: String) -> bool {
+    rfd::AsyncMessageDialog::new()
+        .set_title("Delete")
+        .set_description(question)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show()
+        .await
+        == rfd::MessageDialogResult::Yes
+}
+
+/// Where deleted files go, by the name the system gives it.
+#[cfg(target_os = "windows")]
+const TRASH: &str = "Recycle Bin";
+#[cfg(not(target_os = "windows"))]
+const TRASH: &str = "Trash";
+
+/// The menu item that shows a file in the system's file manager.
+#[cfg(target_os = "windows")]
+const SHOW_IN_FILE_MANAGER: &str = "Show in Explorer";
+#[cfg(target_os = "macos")]
+const SHOW_IN_FILE_MANAGER: &str = "Show in Finder";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const SHOW_IN_FILE_MANAGER: &str = "Show in File Manager";
+
+/// Opens the system's file manager at `path`: in the folder, or selecting the file where
+/// the file manager can.
+fn show_in_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer wants the quotes around the path only, not the whole argument.
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", path.display()))
+            .spawn()
+            .map(|_| ())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let folder = if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        };
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map(|_| ())
+    }
 }
 
 /// Writes `text` to `path`, asking the user where to save first (starting in `folder`) if there is no path yet.
@@ -3803,7 +4784,7 @@ fn block_editor(
     content: &text_editor::Content,
     link_colors: links::Colors,
 ) -> Element<'_, Message> {
-    text_editor(content)
+    let editor = text_editor(content)
         .id(BLOCK_EDITOR)
         .on_action(Message::BlockEdit)
         .key_binding(|key_press| {
@@ -3822,8 +4803,16 @@ fn block_editor(
         .size(15)
         .padding(8)
         .style(style::field_editor(c))
-        .highlight_with::<links::Highlighter>(link_colors, links::format)
+        .highlight_with::<links::Highlighter>(link_colors, links::format);
+
+    context_menu::area(editor, editor_menu)
+        .click_first(content.selection().is_none())
         .into()
+}
+
+/// Opens the right-click menu of the text editor right-clicked at `position`.
+fn editor_menu(position: Point) -> Message {
+    Message::OpenContextMenu(Target::Editor, position)
 }
 
 /// The input for the field with front matter `key` in the reading view, if it has one.
@@ -3926,6 +4915,21 @@ mod tests {
         assert_eq!(
             moved,
             "---\ntype: lore\nname: Old Song\n---\n\nJust text.\n"
+        );
+    }
+
+    #[test]
+    fn renamed_notes_get_the_new_name() {
+        let text = "---\ntype: npc\nname: Mira\nrole: Smuggler\n---\n\nTall.\n";
+        assert_eq!(
+            with_name(text, "Mira Vell", false).unwrap(),
+            "---\ntype: npc\nname: Mira Vell\nrole: Smuggler\n---\n\nTall.\n"
+        );
+        // A plain note has no name field to change, unless its type wants one.
+        assert_eq!(with_name("Just text.\n", "Old Song", false), None);
+        assert_eq!(
+            with_name("Just text.\n", "Old Song", true).unwrap(),
+            "---\nname: Old Song\n---\n\nJust text.\n"
         );
     }
 

@@ -302,10 +302,10 @@ impl Names {
     }
 }
 
-/// A note that was renamed: what changed, for rewriting the links to it.
+/// Notes that were renamed or moved, as `(old, new)` paths: what changed, for rewriting
+/// the links to them. Renaming a folder moves every note in it.
 pub struct Rename<'a> {
-    pub old: &'a Path,
-    pub new: &'a Path,
+    pub moved: &'a [(PathBuf, PathBuf)],
     /// The campaign's notes before and after the rename.
     pub before: &'a Index,
     pub after: &'a Index,
@@ -314,11 +314,18 @@ pub struct Rename<'a> {
 impl Rename<'_> {
     /// Where the note now at `path` was before the rename.
     fn was(&self, path: &Path) -> PathBuf {
-        if path == self.new {
-            self.old.to_path_buf()
-        } else {
-            path.to_path_buf()
-        }
+        self.moved
+            .iter()
+            .find(|(_, new)| new == path)
+            .map_or_else(|| path.to_path_buf(), |(old, _)| old.clone())
+    }
+
+    /// Where the note that was at `path` before the rename is now.
+    fn now<'b>(&'b self, path: &'b Path) -> &'b Path {
+        self.moved
+            .iter()
+            .find(|(old, _)| old == path)
+            .map_or(path, |(_, new)| new.as_path())
     }
 }
 
@@ -339,11 +346,7 @@ pub fn relink(text: &str, from: &Path, rename: &Rename) -> (String, usize) {
         let Some(meant) = rename.before.resolve(target, &from_before) else {
             continue;
         };
-        let meant = if meant == rename.old {
-            rename.new
-        } else {
-            meant
-        };
+        let meant = rename.now(meant);
         if rename.after.resolve(target, from) == Some(meant) {
             continue;
         }
@@ -809,9 +812,9 @@ mod tests {
             .map(|note| if *note == old { new } else { note })
             .collect();
         let after = campaign(root, &after_notes);
+        let moved = [(old_path, new_path)];
         let rename = Rename {
-            old: &old_path,
-            new: &new_path,
+            moved: &moved,
             before: &before,
             after: &after,
         };
@@ -852,6 +855,32 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn moving_a_folder_rewrites_links_to_every_note_in_it() {
+        let root = Path::new("/c");
+        let before = campaign(root, &["npcs/Mira", "npcs/Bob", "items/Bob", "Day 1"]);
+        let after = campaign(root, &["people/Mira", "people/Bob", "items/Bob", "Day 1"]);
+        let moved = [
+            (root.join("npcs/Mira.md"), root.join("people/Mira.md")),
+            (root.join("npcs/Bob.md"), root.join("people/Bob.md")),
+        ];
+        let rename = Rename {
+            moved: &moved,
+            before: &before,
+            after: &after,
+        };
+
+        // Names that stay unique are kept; paths that named the folder follow it.
+        let (text, changed) = relink_note(
+            "[[Mira]], [[npcs/Bob]] and [[items/Bob]]\n",
+            &root.join("Day 1.md"),
+            &rename,
+        )
+        .unwrap();
+        assert_eq!(text, "[[Mira]], [[people/Bob]] and [[items/Bob]]\n");
+        assert_eq!(changed, 1);
     }
 
     #[test]

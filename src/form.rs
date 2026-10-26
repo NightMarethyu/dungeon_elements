@@ -9,9 +9,10 @@ use iced::widget::{
     button, checkbox, column, container, pick_list, row, scrollable, space, text, text_editor,
     text_input,
 };
-use iced::{Center, Element, Fill};
+use iced::{Center, Element, Fill, Point};
 use serde_yaml_ng::{Mapping, Value};
 
+use crate::context_menu;
 use crate::links;
 use crate::note::{self, Note, Section};
 use crate::style;
@@ -371,6 +372,23 @@ impl Form {
         }
     }
 
+    /// The long text field last typed in, for cutting, copying and pasting.
+    pub fn focused_text(&self) -> Option<&text_editor::Content> {
+        match &self.inputs[self.focus?] {
+            Input::Long(content) => Some(content),
+            _ => None,
+        }
+    }
+
+    /// Like [`Self::focused_text`], to change it, with the field's index.
+    pub fn focused_text_mut(&mut self) -> Option<(usize, &mut text_editor::Content)> {
+        let index = self.focus?;
+        match &mut self.inputs[index] {
+            Input::Long(content) => Some((index, content)),
+            _ => None,
+        }
+    }
+
     /// The target of the link the cursor is in, in the long text field last typed in.
     pub fn link_under_cursor(&self) -> Option<String> {
         match &self.inputs[self.focus?] {
@@ -553,6 +571,7 @@ impl Form {
         shortcut: fn(&Key, Modifiers) -> Option<M>,
         link_colors: links::Colors,
         accept: Option<M>,
+        on_menu: fn(Point) -> M,
     ) -> Element<'a, M> {
         // Every editor sees every key press, so only the focused one handles shortcuts.
         let accept_tab = accept.clone();
@@ -657,18 +676,22 @@ impl Form {
                         }
                         Input::Long(content) => column![
                             label(index, field.label()),
-                            text_editor(content)
-                                .id(field_id(index))
-                                .on_action(move |action| map(Message::Long(index, action)))
-                                .key_binding(key_binding.clone())
-                                .highlight_with::<links::Highlighter>(
-                                    link_colors.clone(),
-                                    links::format,
-                                )
-                                .min_height(140)
-                                .size(14)
-                                .padding(8)
-                                .style(style::field_editor(c)),
+                            context_menu::area(
+                                text_editor(content)
+                                    .id(field_id(index))
+                                    .on_action(move |action| map(Message::Long(index, action)))
+                                    .key_binding(key_binding.clone())
+                                    .highlight_with::<links::Highlighter>(
+                                        link_colors.clone(),
+                                        links::format,
+                                    )
+                                    .min_height(140)
+                                    .size(14)
+                                    .padding(8)
+                                    .style(style::field_editor(c)),
+                                on_menu,
+                            )
+                            .click_first(content.selection().is_none()),
                         ]
                         .spacing(6)
                         .into(),

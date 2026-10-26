@@ -128,6 +128,29 @@ pub fn dropdown<'a, Message: Clone + 'a>(
     entries: Vec<Entry<Message>>,
     on_close: Message,
 ) -> Element<'a, Message> {
+    let dropdown = panel(c, entries, DROPDOWN_WIDTH);
+
+    // Below the menu bar, a transparent layer catches clicks outside the dropdown.
+    let catcher = column![
+        space().height(BAR_HEIGHT),
+        mouse_area(space().width(Fill).height(Fill)).on_press(on_close),
+    ];
+
+    let placed = column![
+        space().height(BAR_HEIGHT),
+        row![space().width(menu.offset()), opaque(dropdown)],
+    ]
+    .width(Length::Shrink);
+
+    stack![catcher, placed].into()
+}
+
+/// The box of a dropdown or right-click menu, `width` wide, with a line per entry.
+pub fn panel<'a, Message: Clone + 'a>(
+    c: Colors,
+    entries: Vec<Entry<Message>>,
+    width: f32,
+) -> Element<'a, Message> {
     let lines = entries.into_iter().map(|entry| -> Element<'a, Message> {
         match entry {
             Entry::Item {
@@ -159,22 +182,22 @@ pub fn dropdown<'a, Message: Clone + 'a>(
         }
     });
 
-    let dropdown = container(column(lines))
-        .width(DROPDOWN_WIDTH)
+    container(column(lines))
+        .width(width)
         .padding(4)
-        .style(style::dropdown(c));
+        .style(style::dropdown(c))
+        .into()
+}
 
-    // Below the menu bar, a transparent layer catches clicks outside the dropdown.
-    let catcher = column![
-        space().height(BAR_HEIGHT),
-        mouse_area(space().width(Fill).height(Fill)).on_press(on_close),
-    ];
-
-    let placed = column![
-        space().height(BAR_HEIGHT),
-        row![space().width(menu.offset()), opaque(dropdown)],
-    ]
-    .width(Length::Shrink);
-
-    stack![catcher, placed].into()
+/// About how tall [`panel`] is with `entries`, for keeping a menu inside the window.
+pub fn panel_height<Message>(entries: &[Entry<Message>]) -> f32 {
+    let lines: f32 = entries
+        .iter()
+        .map(|entry| match entry {
+            Entry::Item { .. } => 25.0,
+            Entry::Heading(_) => 23.0,
+            Entry::Separator => 9.0,
+        })
+        .sum();
+    lines + 10.0
 }
