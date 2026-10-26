@@ -17,7 +17,8 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
 - Everything stays local, the user owns what they create and it all stays on their drive.
 - No VTT, this is for building and keeping track of campaigns, not for hosting them
 - No multiplayer sync, this is a tool for GMs and solo play, not for everyone to have everything together
-- Windows and Linux, maybe MacOS but I don't have a system to build on
+  - There should be an export for GMs to give "handouts" to their players that work within this system as well
+- Windows and Linux, GitHub actions builds the MacOS version
 - System agnostic, not tied to D&D, Shadowdark, etc. Any System, any playstyle
 
 ## Phases
@@ -38,8 +39,8 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Folder content types defined in `_type.yaml` (see [Content types](#content-types))
   - [x] Notes in a typed folder open as a form; raw Markdown is one toggle away (View > Show Markdown Source, Ctrl+E)
   - [x] New campaigns get a `_type.yaml` in each starter folder (from `templates/default/`)
-  - [x] + on a folder makes a new note of its type
-  - [x] + in the main pane adds a field to that note only (stored as an extra front matter key or `##` section; extra keys and sections added in Obsidian show as fields too)
+  - [x] - on a folder makes a new note of its type
+  - [x] - in the main pane adds a field to that note only (stored as an extra front matter key or `##` section; extra keys and sections added in Obsidian show as fields too)
   - [x] Any field except the name can be removed from a single note (listed in the note's `removed_fields`); the main pane's + brings it back
   - [x] Big + in the sidebar makes a new folder, offering a default type template
   - [x] Edit > Types dialog: folders on the left, their type's fields on the right; add, remove and reorder fields, set their name, key, kind, width and options, and give an untyped folder a type (saving rewrites `_type.yaml` without its comments)
@@ -135,7 +136,7 @@ Customization is a big part of the app, so the window's layout should be the use
 - Any field except `name` can be removed from a single note: the note's front matter lists it under `removed_fields`, and the main pane's + offers to bring it back.
 - A folder with no `_type.yaml` is a plain Markdown folder.
 - Later:
-  - Subfolders inherit their parent's type unless they have their own `_type.yaml`.
+  - Subfolders inherit their parent's type, the parent's type can be overridden and modified if they have their own `_type.yaml`.
   - A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note. The Quest type uses it so a step can be another quest, building quest lines (a Big Quest made of smaller quests).
   - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
   - Campaign templates: see [Campaign templates](#campaign-templates).
@@ -165,8 +166,8 @@ Phase 3. Easy access to the user's PDF rulebooks and other documents. It is a li
 
 - **One library for the whole app**, not inside campaigns, because the same rulebooks serve many campaigns. The user adds library folders in Settings and nothing is copied. For each folder they choose how it's organized:
   - "Each subfolder is a game system" (e.g. `Shadowdark/`, `D&D/`, `Cosmere/` become systems)
-  - "Just a pile of PDFs": manuals start in an *Unsorted* group and can be given a system from a dropdown; sorting is optional
-- **Systems are tags**, starting from the subfolder name and editable. A manual can have several, or *Any system* (oracles, random tables, GM advice). Manuals are recognized by their contents, not their path, so moving or renaming a PDF keeps its tags and bookmarks.
+  - "Just a pile of PDFs": manuals start in an _Unsorted_ group and can be given a system from a dropdown; sorting is optional
+- **Systems are tags**, starting from the subfolder name and editable. A manual can have several, or _Any system_ (oracles, random tables, GM advice). Manuals are recognized by their contents, not their path, so moving or renaming a PDF keeps its tags and bookmarks.
 - **Campaigns list the systems they use** (saved in the campaign folder, so it travels with the notes). Their manual panel shows those books first, with a "show all" switch.
 - The library (folder paths, tags, bookmarks) is saved in the app's config folder, like themes, because paths belong to one computer.
 - **Links** use Obsidian's form, `[[Player's Handbook.pdf#page=42]]`, matched against the library by name. When two systems have a book with the same name, the campaign's own system wins. Links can use the page number printed in the book or the PDF's own page number.
