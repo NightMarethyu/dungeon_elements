@@ -10,8 +10,8 @@ use std::fmt;
 
 use iced::font::{self, Font};
 use iced::widget::{
-    Svg, button, column, container, rich_text, row, rule, scrollable, space, span, svg, text,
-    text_input, tooltip,
+    Svg, button, checkbox, column, container, rich_text, row, rule, scrollable, space, span, svg,
+    text, text_input, tooltip,
 };
 use iced::{Center, Element, Fill, padding};
 
@@ -212,13 +212,15 @@ impl Expression {
             .sum()
     }
 
-    /// The expression with each single d20 rolled twice, keeping the higher (advantage)
-    /// or lower (disadvantage), or `None` when it has no single d20 for `mode` to change.
-    fn with_mode(&self, mode: Mode) -> Option<Self> {
-        let keep = match mode {
+    /// The expression with advantage or disadvantage, or `None` when `mode` changes none
+    /// of its dice. Each single d20 is rolled twice, keeping the higher (advantage) or the
+    /// lower (disadvantage). With `any_die`, every die can have it: `NdX` rolls one more
+    /// die and keeps the best (or worst) `N`, so `1d6` becomes `2d6kh1` and `3d6` `4d6kh3`.
+    fn with_mode(&self, mode: Mode, any_die: bool) -> Option<Self> {
+        let highest = match mode {
             Mode::Normal => return None,
-            Mode::Advantage => Keep::Highest(1),
-            Mode::Disadvantage => Keep::Lowest(1),
+            Mode::Advantage => true,
+            Mode::Disadvantage => false,
         };
         let mut changed = false;
         let terms = self
@@ -227,16 +229,20 @@ impl Expression {
             .map(|&term| match term {
                 Term::Dice {
                     negative,
-                    count: 1,
-                    sides: 20,
+                    count,
+                    sides,
                     keep: None,
-                } => {
+                } if (count == 1 && sides == 20) || any_die => {
                     changed = true;
                     Term::Dice {
                         negative,
-                        count: 2,
-                        sides: 20,
-                        keep: Some(keep),
+                        count: count + 1,
+                        sides,
+                        keep: Some(if highest {
+                            Keep::Highest(count)
+                        } else {
+                            Keep::Lowest(count)
+                        }),
                     }
                 }
                 term => term,
@@ -481,11 +487,13 @@ impl Mode {
         }
     }
 
-    fn tip(self) -> &'static str {
-        match self {
-            Mode::Advantage => "Roll each d20 twice and keep the higher",
-            Mode::Normal => "Roll each d20 once",
-            Mode::Disadvantage => "Roll each d20 twice and keep the lower",
+    fn tip(self, any_die: bool) -> &'static str {
+        match (self, any_die) {
+            (Mode::Advantage, false) => "Roll each d20 twice and keep the higher",
+            (Mode::Disadvantage, false) => "Roll each d20 twice and keep the lower",
+            (Mode::Advantage, true) => "Roll one more of each die and keep the highest",
+            (Mode::Disadvantage, true) => "Roll one more of each die and keep the lowest",
+            (Mode::Normal, _) => "Roll the dice as they are",
         }
     }
 }
@@ -592,6 +600,8 @@ pub struct Roller {
     /// Why the expression box's roll didn't happen.
     error: Option<String>,
     mode: Mode,
+    /// Whether advantage and disadvantage change every die, not only a single d20.
+    any_die: bool,
     /// The latest roll first.
     rolls: Vec<Roll>,
     rng: fastrand::Rng,
@@ -605,6 +615,7 @@ impl Default for Roller {
             expression: String::new(),
             error: None,
             mode: Mode::Normal,
+            any_die: false,
             rolls: Vec::new(),
             rng: fastrand::Rng::new(),
         }
@@ -618,6 +629,7 @@ pub enum Message {
     Expression(String),
     RollExpression,
     Mode(Mode),
+    AnyDie(bool),
 }
 
 impl Roller {
@@ -643,6 +655,7 @@ impl Roller {
                 Err(error) => self.error = Some(error),
             },
             Message::Mode(mode) => self.mode = mode,
+            Message::AnyDie(any_die) => self.any_die = any_die,
         }
     }
 
@@ -661,10 +674,10 @@ impl Roller {
         }
     }
 
-    /// Rolls `expression`, with advantage or disadvantage if it has a single d20, and
+    /// Rolls `expression`, with advantage or disadvantage if it has dice they change, and
     /// shows it as the latest roll.
     fn roll(&mut self, label: Option<String>, expression: &Expression) -> &Roll {
-        let (rolled, mode) = match expression.with_mode(self.mode) {
+        let (rolled, mode) = match expression.with_mode(self.mode, self.any_die) {
             Some(changed) => (changed, self.mode),
             None => (expression.clone(), Mode::Normal),
         };
@@ -763,9 +776,20 @@ impl Roller {
                     .padding([4, 10])
                     .style(style::flat(c, self.mode == mode))
                     .on_press(Message::Mode(mode)),
-                mode.tip().to_string(),
+                mode.tip(self.any_die).to_string(),
             )
         });
+        // Some systems give advantage on any die, not only the d20.
+        let any_die = tip(
+            c,
+            checkbox(self.any_die)
+                .label("Any die")
+                .on_toggle(Message::AnyDie)
+                .size(14)
+                .text_size(13)
+                .style(style::check(c)),
+            "Advantage and disadvantage change every die, not only a d20".to_string(),
+        );
         let bar = row![
             text_input("2d6+3", &self.expression)
                 .on_input(Message::Expression)
@@ -780,6 +804,8 @@ impl Roller {
                 .on_press(Message::RollExpression),
             space().width(12),
             row(modes).spacing(2),
+            space().width(6),
+            any_die,
         ]
         .spacing(6)
         .align_y(Center);
@@ -1068,6 +1094,38 @@ mod tests {
         assert_eq!((roll.dice().count(), roll.mode), (2, Mode::Normal));
         let roll = roller.roll(None, &Expression::dice(2, 20)).clone();
         assert_eq!((roll.dice().count(), roll.mode), (2, Mode::Normal));
+    }
+
+    #[test]
+    fn advantage_on_any_die_rolls_one_more() {
+        let mut roller = Roller::default();
+        roller.update(Message::Mode(Mode::Advantage));
+        roller.update(Message::AnyDie(true));
+        for _ in 0..50 {
+            let roll = roller
+                .roll(None, &Expression::parse("1d6").unwrap())
+                .clone();
+            let values: Vec<u32> = roll.dice().map(|die| die.value).collect();
+            assert_eq!(values.len(), 2);
+            assert_eq!(roll.total(), i64::from(*values.iter().max().unwrap()));
+            assert_eq!(roll.mode, Mode::Advantage);
+        }
+
+        roller.update(Message::Mode(Mode::Disadvantage));
+        let roll = roller
+            .roll(None, &Expression::parse("3d6+1").unwrap())
+            .clone();
+        let mut values: Vec<u32> = roll.dice().map(|die| die.value).collect();
+        assert_eq!(values.len(), 4);
+        values.sort();
+        let lowest: i64 = values[..3].iter().map(|&n| i64::from(n)).sum();
+        assert_eq!(roll.total(), lowest + 1);
+
+        // Dice that already keep some are left as they are.
+        let roll = roller
+            .roll(None, &Expression::parse("4d6kh3").unwrap())
+            .clone();
+        assert_eq!((roll.dice().count(), roll.mode), (4, Mode::Normal));
     }
 
     #[test]

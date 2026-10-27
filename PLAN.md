@@ -93,6 +93,7 @@ The campaign's people and plots. Everything here is notes, types and links, buil
 - [ ] Content types grow up (see [Content types](#content-types))
   - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
   - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
+  - [ ] A `dice` field kind: pick the die, how many, and modifiers (`+2`, advantage, disadvantage) instead of typing an expression, and roll it from the note (builds on Phase 1's dice expressions)
   - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
   - [ ] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
 - [ ] Player management
