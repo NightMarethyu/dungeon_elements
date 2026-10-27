@@ -84,7 +84,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
 
 Stretch goal:
 
-- [ ] Add editor features to make Markdown more intuitive (WYSIWYG). Being done the lighter way above: a formatting toolbar instead of a full WYSIWYG editor
+- [ ] ~~Add editor features to make Markdown more intuitive (WYSIWYG).~~ Being done the lighter way above: a formatting toolbar instead of a full WYSIWYG editor
 
 ### Phase 2: rising action
 
