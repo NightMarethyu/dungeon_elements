@@ -73,7 +73,10 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Live preview in the reading view: click a block (paragraph, list, table, heading...) to edit its Markdown in place; it is formatted again when you click elsewhere or press Escape. Fields in the box, and the title, are edited the same way, and clicking under the note adds text
   - [x] Link suggestions while typing `[[` in a block (Tab or a click inserts one), and in a field in the box (Enter picks the first). Names, aliases and file names are ranked together, so whatever starts with what was typed comes first
   - [x] Toggling task boxes with a click: clicking a box in the reading view ticks or unticks it in the note (`- [ ]` to `- [x]`), in numbered lists too (`1. [ ]`)
-- [ ] Markdown typing helpers, a lighter take on syntax highlighting: Enter continues a list or task list (`- `, `1. `, `- [ ] `) and ends it on an empty item, Ctrl+B / Ctrl+I make the selection bold or italic, and the Markdown marks (`#`, `**`, `[ ]`) are dimmed in the editors so the words stand out
+- [ ] Formatting without knowing Markdown, a lighter take on syntax highlighting and WYSIWYG: those who know Markdown type it, and those who don't use buttons that write it for them
+  - [x] A formatting toolbar over the note while it's edited (in the Markdown source, the form, or a block of the reading view; View > Formatting Toolbar hides it): a dropdown for what the line is (Paragraph, Heading 1–4, Quote), Bold, Italic, Strikethrough, bulleted, numbered and task lists, Link and Picture. Each tooltip shows the Markdown it writes, and pressing a button again takes the format away
+  - [x] Enter continues a list, task list or quote (`- `, `1. ` numbered on, `- [ ] `) and ends it on an empty item; Ctrl+B / Ctrl+I make the selection (or the word at the cursor) bold or italic
+  - [ ] Dim the Markdown marks (`#`, `**`, `[ ]`) in the editors so the words stand out
 - [x] Built-in dice roller, keep everything close without needing to leave the app
   - [x] The d20 button at the right of the tab bar opens a pane along the bottom of the main pane (`reference/dungeon_elements_layout_plan_with_roll_results.png`): the result on the left, and a button for each die (d20, d12, d10, d100, d8, d6, d4) on the right
   - [x] Each die has a Count box; clicking the die (or pressing Enter in its box) rolls that many and shows each result, their total, and the few rolls before
@@ -81,7 +84,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
 
 Stretch goal:
 
-- [ ] Add editor features to make Markdown more intuitive (WYSIWYG)
+- [ ] Add editor features to make Markdown more intuitive (WYSIWYG). Being done the lighter way above: a formatting toolbar instead of a full WYSIWYG editor
 
 ### Phase 2: rising action
 
