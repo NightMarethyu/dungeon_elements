@@ -8,6 +8,7 @@ mod check;
 mod code;
 mod context_menu;
 mod dice;
+mod fix;
 mod form;
 mod icon;
 mod links;
@@ -19,6 +20,7 @@ mod style;
 mod theme;
 mod types;
 mod types_editor;
+mod watch;
 mod web;
 
 use std::collections::{HashMap, HashSet};
@@ -132,8 +134,18 @@ struct Workspace {
     tree: Vec<Entry>,
     /// The content type of each folder that has a `_type.yaml`, or what is wrong with it.
     types: HashMap<PathBuf, Result<ContentType, String>>,
-    /// What is wrong with the campaign's files, checked when it opens and is refreshed.
+    /// What is wrong with the campaign's files, checked when it opens and whenever its
+    /// files change. Notes with unsaved changes are checked as they are in their tab.
     problems: Vec<Problem>,
+    /// Notes renamed or deleted outside the app since the campaign opened, so links to
+    /// them show up as broken.
+    gone: check::Gone,
+    /// Broken links the user chose to leave as they are: the note and the link's target,
+    /// [`links::normalize`]d. Kept until the campaign is closed.
+    ignored: HashSet<(PathBuf, String)>,
+    /// A hash of each note's text as of the last scan, to tell a note renamed outside
+    /// the app from one deleted while another was made.
+    fingerprints: HashMap<PathBuf, u64>,
     /// The folders in the tree that are expanded.
     expanded: HashSet<PathBuf>,
     tabs: Vec<Tab>,
@@ -162,6 +174,27 @@ struct Workspace {
     context: Option<(Target, Point)>,
     /// How a File > Save All is going, until every note in it is saved or not.
     save_all: Option<SaveAll>,
+}
+
+/// A fix for one of the active note's problems, from the dialog [`Message::FixProblems`] opens.
+#[derive(Debug, Clone)]
+enum Fix {
+    /// Points the links to `target` at the note `to` (a link text) instead.
+    Relink { target: String, to: String },
+    /// Makes the note `target` names.
+    MakeNote(String),
+    /// Turns the links to `target` into plain text.
+    Unlink(String),
+    /// Leaves the links to `target` as they are and stops warning about them.
+    Ignore(String),
+    /// Moves long text field `key` from the front matter to its `## ` section.
+    MoveToSection(String),
+    /// Sets the note's `type:` to its folder's type, or removes it (`None`).
+    SetType(Option<String>),
+    /// Sets choice field `key` to `value`.
+    SetOption { key: String, value: String },
+    /// Shows the note's Markdown source, to fix it by hand.
+    ShowSource,
 }
 
 /// What a right-click menu is for.
@@ -223,6 +256,8 @@ enum Dialog {
     Types(types_editor::Editor),
     /// Lists the campaign's files with formatting problems.
     Problems,
+    /// Offers fixes for the problems of the note at this path, which is the active tab.
+    Fix(PathBuf),
     /// Renames the note or folder at `path`.
     Rename {
         path: PathBuf,
@@ -479,7 +514,12 @@ enum Message {
     Types(types_editor::Message),
     ShowProblems,
     OpenProblem(PathBuf),
+    /// Opens the note and a dialog offering fixes for its problems.
+    FixProblems(PathBuf),
+    Fix(Fix),
     WindowFocused,
+    /// Files in the campaign folder changed, here or in another app.
+    FilesChanged,
     ReloadFromDisk,
     KeepMine,
     OpenEntry(PathBuf),
@@ -666,7 +706,20 @@ impl App {
             _ => None,
         });
 
-        Subscription::batch([keys, focus, window::close_requests().map(|_| Message::Exit)])
+        let files = match &self.screen {
+            Screen::Workspace(workspace) => {
+                Subscription::run_with(workspace.root.clone(), watch::changes)
+                    .map(|()| Message::FilesChanged)
+            }
+            Screen::Splash { .. } => Subscription::none(),
+        };
+
+        Subscription::batch([
+            keys,
+            focus,
+            files,
+            window::close_requests().map(|_| Message::Exit),
+        ])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -877,7 +930,11 @@ impl App {
                     self.screen = Screen::default();
                     return Task::none();
                 }
+                let edit = !tracking;
                 let task = workspace.update(message);
+                if edit {
+                    workspace.recheck_active();
+                }
                 workspace.refresh_preview();
                 Task::batch([task, workspace.fetch_pictures()])
             }
@@ -1059,8 +1116,9 @@ impl Workspace {
     fn open(root: PathBuf, open_in_reading: bool) -> Self {
         let tree = campaign::scan(&root);
         let types = load_types(&root, &tree);
-        let problems = check::campaign(&root, &tree, &types);
         let index = links::Index::new(&root, markdown_files(&tree));
+        let problems = check::campaign(&root, &tree, &types, &index, &check::Gone::new());
+        let fingerprints = fingerprints(&tree);
         let status = match problems_summary(&problems) {
             Some(summary) => format!("Opened {}. {summary}", root.display()),
             None => format!("Opened {}", root.display()),
@@ -1068,6 +1126,9 @@ impl Workspace {
         Workspace {
             types,
             problems,
+            gone: check::Gone::new(),
+            ignored: HashSet::new(),
+            fingerprints,
             tree,
             status,
             root,
@@ -1115,8 +1176,196 @@ impl Workspace {
     fn rescan(&mut self) {
         self.tree = campaign::scan(&self.root);
         self.types = load_types(&self.root, &self.tree);
-        self.problems = check::campaign(&self.root, &self.tree, &self.types);
         self.index = links::Index::new(&self.root, markdown_files(&self.tree));
+        self.fingerprints = fingerprints(&self.tree);
+        self.problems =
+            check::campaign(&self.root, &self.tree, &self.types, &self.index, &self.gone);
+        let ignored = &self.ignored;
+        self.problems
+            .retain(|problem| !is_ignored(ignored, problem));
+        for index in 0..self.tabs.len() {
+            if self.tabs[index].modified {
+                self.recheck_tab(index);
+            }
+        }
+    }
+
+    /// Checks the note in the tab at `index` as the tab has it, unsaved changes and all,
+    /// so its problems go away as soon as they are fixed.
+    fn recheck_tab(&mut self, index: usize) {
+        let tab = &self.tabs[index];
+        let (Some(path), true) = (tab.path.clone(), tab.is_note()) else {
+            return;
+        };
+        let Ok(text) = tab.text() else {
+            return;
+        };
+        let mut found = check::file(
+            &path,
+            &text,
+            &self.root,
+            &self.types,
+            &self.index,
+            &self.gone,
+        );
+        found.retain(|problem| !self.is_ignored(problem));
+
+        self.problems.retain(|problem| problem.path != path);
+        // Keep the list in the campaign's order, so the note doesn't jump to the end.
+        let at = self
+            .problems
+            .iter()
+            .position(|problem| problem.path > path)
+            .unwrap_or(self.problems.len());
+        self.problems.splice(at..at, found);
+    }
+
+    /// Checks the active tab again, after it may have been edited.
+    fn recheck_active(&mut self) {
+        if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id) == self.active)
+            && self.tabs[index].modified
+        {
+            self.recheck_tab(index);
+        }
+    }
+
+    /// Checks the note at `path` again as it is on disk, after its tab was closed unsaved.
+    fn recheck_file(&mut self, path: &Path) {
+        self.problems.retain(|problem| problem.path != path);
+        if let Ok(text) = std::fs::read_to_string(path) {
+            let mut found = check::file(
+                path,
+                &text,
+                &self.root,
+                &self.types,
+                &self.index,
+                &self.gone,
+            );
+            found.retain(|problem| !self.is_ignored(problem));
+            let at = self
+                .problems
+                .iter()
+                .position(|problem| problem.path.as_path() > path)
+                .unwrap_or(self.problems.len());
+            self.problems.splice(at..at, found);
+        }
+    }
+
+    /// Whether `problem` is a broken link the user chose to leave as it is.
+    fn is_ignored(&self, problem: &Problem) -> bool {
+        is_ignored(&self.ignored, problem)
+    }
+
+    /// Reads the campaign again after its files changed, maybe in another app: notes
+    /// renamed there keep their tabs and the links to them, and open notes changed there
+    /// are reloaded.
+    fn pick_up_outside_changes(&mut self) {
+        let status = std::mem::take(&mut self.status);
+        let before = std::mem::take(&mut self.fingerprints);
+        let old_notes: HashSet<PathBuf> = before.keys().cloned().collect();
+        self.rescan();
+
+        let removed: Vec<PathBuf> = old_notes
+            .iter()
+            .filter(|path| !self.fingerprints.contains_key(*path))
+            .cloned()
+            .collect();
+        let added: Vec<PathBuf> = self
+            .fingerprints
+            .keys()
+            .filter(|path| !old_notes.contains(*path))
+            .cloned()
+            .collect();
+        let moved = renamed_notes(&removed, &added, &before, &self.fingerprints);
+
+        // Links to notes that are simply gone now show as broken, rather than as notes
+        // still to be written.
+        let mut new_gone = false;
+        for path in &removed {
+            if moved.iter().any(|(old, _)| old == path) {
+                continue;
+            }
+            if let Ok(relative) = path.strip_prefix(&self.root) {
+                let relative = relative.with_extension("");
+                let key = links::normalize(&relative.to_string_lossy());
+                let mut name = key.as_str();
+                loop {
+                    new_gone |= self.gone.insert(name.to_string());
+                    match name.split_once('/') {
+                        Some((_, rest)) => name = rest,
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        let mut messages = Vec::new();
+        if !moved.is_empty() {
+            // A note's name field follows its new filename, or saving it from the form
+            // would rename it back.
+            for (old, new) in &moved {
+                let (Some(old_name), Some(new_name)) = (old.file_stem(), new.file_stem()) else {
+                    continue;
+                };
+                let Ok(text) = std::fs::read_to_string(new) else {
+                    continue;
+                };
+                let named_old = note::parse(&text).is_ok_and(|note| {
+                    note.front
+                        .get("name")
+                        .is_some_and(|name| note::value_to_text(name) == old_name.to_string_lossy())
+                });
+                if named_old
+                    && let Ok(text) =
+                        fix::set_value(&text, "name", Some(&new_name.to_string_lossy()))
+                {
+                    let _ = std::fs::write(new, text);
+                }
+            }
+
+            for index in 0..self.tabs.len() {
+                let tab = &mut self.tabs[index];
+                if let Some(path) = &tab.path
+                    && let Some((_, new)) = moved.iter().find(|(old, _)| old == path)
+                {
+                    tab.folder = new.parent().unwrap_or(&self.root).to_path_buf();
+                    tab.path = Some(new.clone());
+                    if tab.modified {
+                        tab.disk = check::modified_time(new);
+                    } else {
+                        let _ = self.reload_tab(index);
+                    }
+                }
+            }
+
+            let done = match moved.as_slice() {
+                [(old, new)] => format!(
+                    "{} was renamed to {} outside Dungeon Elements",
+                    self.relative(old),
+                    self.relative(new)
+                ),
+                _ => format!(
+                    "{} notes were renamed outside Dungeon Elements",
+                    moved.len()
+                ),
+            };
+            self.relink(&moved, &done);
+            messages.push(std::mem::take(&mut self.status));
+            self.rescan();
+        } else if new_gone {
+            self.rescan();
+        }
+
+        self.status.clear();
+        self.check_disk();
+        if !self.status.is_empty() {
+            messages.push(std::mem::take(&mut self.status));
+        }
+        self.status = if messages.is_empty() {
+            status
+        } else {
+            messages.join(". ")
+        };
     }
 
     /// The problems found in the file at `path`.
@@ -1139,6 +1388,14 @@ impl Workspace {
             };
             let now = check::modified_time(&path);
             if now == tab.disk || tab.changed_outside {
+                continue;
+            }
+            // Only the time changed (or the app's own save got here first): nothing to do.
+            if now.is_some()
+                && let (Ok(disk), Ok(text)) = (std::fs::read_to_string(&path), tab.text())
+                && disk == text
+            {
+                self.tabs[index].disk = now;
                 continue;
             }
             let name = self.relative(&path);
@@ -1510,7 +1767,13 @@ impl Workspace {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
             return;
         };
-        self.tabs.remove(index);
+        let tab = self.tabs.remove(index);
+        // Its unsaved changes are gone, so what counts is what is on disk again.
+        if tab.modified
+            && let Some(path) = &tab.path
+        {
+            self.recheck_file(path);
+        }
 
         if self.active == Some(id) {
             // Show the tab that slid into this position, or the one before it.
@@ -1751,6 +2014,9 @@ impl Workspace {
         if let Dialog::Problems = dialog {
             return self.problems_dialog(c);
         }
+        if let Dialog::Fix(path) = dialog {
+            return self.fix_dialog(c, path);
+        }
 
         let label = |label| text(label).size(13).color(c.text_muted);
 
@@ -1886,7 +2152,7 @@ impl Workspace {
                     "Move",
                     Message::Move,
                 ),
-                Dialog::Types(_) | Dialog::Problems => {
+                Dialog::Types(_) | Dialog::Problems | Dialog::Fix(_) => {
                     unreachable!("these dialogs have their own view")
                 }
             };
@@ -1945,14 +2211,375 @@ impl Workspace {
             .collect()
     }
 
+    /// Offers fixes for each problem of the note at `path`, the active tab.
+    fn fix_dialog<'a>(&'a self, c: Colors, path: &'a Path) -> Element<'a, Message> {
+        let tab = self
+            .tabs
+            .iter()
+            .find(|tab| tab.path.as_deref() == Some(path));
+        let ty = tab.and_then(|tab| tab.form.as_ref()).map(|form| &form.ty);
+        let fix_button = |label: String, fix: Fix, primary: bool| {
+            button(text(label).size(13))
+                .padding([3, 10])
+                .style(move |theme, status| {
+                    if primary {
+                        style::primary(c)(theme, status)
+                    } else {
+                        style::secondary(c)(theme, status)
+                    }
+                })
+                .on_press(Message::Fix(fix))
+        };
+
+        let rows = self.problems_in(path).map(|problem| {
+            let mut buttons: Vec<Element<'a, Message>> = Vec::new();
+            match &problem.issue {
+                check::Issue::Link { target, .. } => {
+                    for (link, label) in self.link_fixes(target, path) {
+                        buttons.push(
+                            fix_button(
+                                format!("Link to {label}"),
+                                Fix::Relink {
+                                    target: target.clone(),
+                                    to: link,
+                                },
+                                buttons.is_empty(),
+                            )
+                            .into(),
+                        );
+                    }
+                    buttons.push(
+                        fix_button(
+                            format!("Make a note called {target}"),
+                            Fix::MakeNote(target.clone()),
+                            false,
+                        )
+                        .into(),
+                    );
+                    buttons.push(
+                        fix_button("Remove the link".into(), Fix::Unlink(target.clone()), false)
+                            .into(),
+                    );
+                    buttons.push(
+                        fix_button("Ignore".into(), Fix::Ignore(target.clone()), false).into(),
+                    );
+                }
+                check::Issue::InFrontMatter { key } => {
+                    let label = ty
+                        .and_then(|ty| ty.fields.iter().find(|field| field.key == *key))
+                        .map_or_else(|| key.clone(), types::Field::label);
+                    buttons.push(
+                        fix_button(
+                            format!("Move it to a ## {label} section"),
+                            Fix::MoveToSection(key.clone()),
+                            true,
+                        )
+                        .into(),
+                    );
+                }
+                check::Issue::UnknownType => {
+                    let folder_type = path
+                        .parent()
+                        .and_then(|folder| self.types.get(folder)?.as_ref().ok());
+                    if let Some(folder_type) = folder_type {
+                        buttons.push(
+                            fix_button(
+                                format!("Use this folder's type ({})", folder_type.label()),
+                                Fix::SetType(Some(folder_type.id.clone())),
+                                true,
+                            )
+                            .into(),
+                        );
+                    }
+                    buttons.push(
+                        fix_button("Remove its type line".into(), Fix::SetType(None), false).into(),
+                    );
+                }
+                check::Issue::NotAnOption { key, value } => {
+                    let options = ty
+                        .and_then(|ty| ty.fields.iter().find(|field| field.key == *key))
+                        .map(|field| field.options.as_slice())
+                        .unwrap_or_default();
+                    if let Some(option) = options
+                        .iter()
+                        .find(|option| option.trim().eq_ignore_ascii_case(value.trim()))
+                    {
+                        buttons.push(
+                            fix_button(
+                                format!("Change it to {option}"),
+                                Fix::SetOption {
+                                    key: key.clone(),
+                                    value: option.clone(),
+                                },
+                                true,
+                            )
+                            .into(),
+                        );
+                    }
+                    buttons.push(
+                        button(text("Pick one in the form").size(13))
+                            .padding([3, 10])
+                            .style(style::secondary(c))
+                            .on_press(Message::CloseDialog)
+                            .into(),
+                    );
+                }
+                check::Issue::Other => {}
+            }
+
+            column![
+                text(&problem.message).size(13).color(c.text),
+                row(buttons).spacing(6).wrap(),
+            ]
+            .spacing(6)
+            .into()
+        });
+
+        let content = column![
+            text(format!("Fix {}", display_name(path, false)))
+                .size(22)
+                .color(c.text),
+            text(
+                "A fix changes the note right away. If it had no unsaved changes, it is saved too."
+            )
+            .size(12)
+            .color(c.text_muted),
+            scrollable(column(rows).spacing(16)).height(iced::Shrink),
+            row![
+                button("Show Markdown Source")
+                    .style(style::secondary(c))
+                    .on_press(Message::Fix(Fix::ShowSource)),
+                space::horizontal(),
+                button("Close")
+                    .style(style::secondary(c))
+                    .on_press(Message::CloseDialog),
+            ],
+        ]
+        .spacing(16);
+
+        container(content)
+            .width(600)
+            .max_height(600)
+            .padding(24)
+            .style(style::dialog(c))
+            .into()
+    }
+
+    /// The notes a broken link to `target` in the note at `path` may have meant, as
+    /// `(link text, label)`: notes spelled almost the same, then notes whose name has it in.
+    fn link_fixes(&self, target: &str, path: &Path) -> Vec<(String, String)> {
+        let mut fixes = self.index.similar(target, path, 3);
+        let name = target.rsplit('/').next().unwrap_or(target);
+        for suggestion in self.index.suggest(name, path, None, 3) {
+            if fixes.len() < 3 && !fixes.iter().any(|(link, _)| *link == suggestion.0) {
+                fixes.push(suggestion);
+            }
+        }
+        fixes
+    }
+
+    /// Makes `fix` to the note in the open fix dialog.
+    fn fix(&mut self, fix: Fix) -> Task<Message> {
+        let Some(Dialog::Fix(path)) = &self.dialog else {
+            return Task::none();
+        };
+        let path = path.clone();
+        let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.path.as_ref() == Some(&path))
+        else {
+            self.dialog = None;
+            return Task::none();
+        };
+        let name = display_name(&path, false);
+
+        let text = match &fix {
+            Fix::MakeNote(target) => {
+                self.dialog = None;
+                let folder = self.link_field_folder(index, target);
+                return self.follow_link_into(target, folder);
+            }
+            Fix::Ignore(target) => {
+                self.ignored
+                    .insert((path.clone(), links::normalize(target)));
+                self.problems.retain(|problem| {
+                    !(problem.path == path
+                        && matches!(&problem.issue, check::Issue::Link { target: t, .. }
+                            if links::normalize(t) == links::normalize(target)))
+                });
+                self.status = format!(
+                    "Leaving the links to [[{target}]] in {name} as they are until the campaign is closed"
+                );
+                self.close_fix_dialog_if_done(&path);
+                return Task::none();
+            }
+            Fix::ShowSource => {
+                self.dialog = None;
+                let tab = &mut self.tabs[index];
+                tab.preview = None;
+                if let Some(form) = &tab.form
+                    && !tab.source
+                    && let Ok(text) = form.to_markdown()
+                {
+                    tab.content = text_editor::Content::with_text(&text);
+                    tab.source = true;
+                }
+                return Task::none();
+            }
+            _ => match self.tabs[index].text() {
+                Ok(text) => text,
+                Err(error) => {
+                    self.status = format!("Could not fix {name}: {error}");
+                    return Task::none();
+                }
+            },
+        };
+
+        let fixed = match &fix {
+            Fix::Relink { target, to } => links::retarget_note(&text, target, to)
+                .map(|(text, _)| text)
+                .ok_or_else(|| format!("no link to [[{target}]] was found")),
+            Fix::Unlink(target) => links::unlink_all(&text, target)
+                .ok_or_else(|| format!("no link to [[{target}]] was found")),
+            Fix::MoveToSection(key) => {
+                let label = self.tabs[index]
+                    .form
+                    .as_ref()
+                    .and_then(|form| form.ty.fields.iter().find(|field| field.key == *key))
+                    .map_or_else(|| key.clone(), types::Field::label);
+                fix::move_to_section(&text, key, &label)
+            }
+            Fix::SetType(id) => fix::set_value(&text, "type", id.as_deref()),
+            Fix::SetOption { key, value } => fix::set_value(&text, key, Some(value)),
+            Fix::MakeNote(_) | Fix::Ignore(_) | Fix::ShowSource => unreachable!(),
+        };
+        let fixed = match fixed {
+            Ok(fixed) => fixed,
+            Err(error) => {
+                self.status = format!("Could not fix {name}: {error}");
+                return Task::none();
+            }
+        };
+
+        let was_modified = self.tabs[index].modified;
+        let form = self.form_for(&path, &fixed);
+        let tab = &mut self.tabs[index];
+        tab.content = text_editor::Content::with_text(&fixed);
+        tab.edit = None;
+        // A note whose front matter can't be read any more shows its source.
+        tab.form = form.ok().flatten();
+        if tab.form.is_none() {
+            tab.source = false;
+        }
+        tab.modified = true;
+        self.recheck_tab(index);
+        self.status = format!("Fixed {name}");
+        self.close_fix_dialog_if_done(&path);
+
+        if was_modified {
+            self.status.push_str(" (not saved yet)");
+            Task::none()
+        } else {
+            let id = self.tabs[index].id;
+            let task = self.save(id, false);
+            if self.status.starts_with("Saved") {
+                self.status = format!("Fixed {name} and saved it");
+            }
+            task
+        }
+    }
+
+    /// Closes the fix dialog once the note at `path` has no problems left.
+    fn close_fix_dialog_if_done(&mut self, path: &Path) {
+        if self.problems_in(path).next().is_none() {
+            self.dialog = None;
+        }
+    }
+
+    /// The folder a note made for a broken link to `target` goes in: the one its link
+    /// field links to, if `target` is in a link field of the note in tab `index`.
+    fn link_field_folder(&self, index: usize, target: &str) -> Option<PathBuf> {
+        let tab = &self.tabs[index];
+        let ty = &tab.form.as_ref()?.ty;
+        let note = note::parse(&tab.text().ok()?).ok()?;
+        let field = ty.fields.iter().find(|field| {
+            field.kind == types::Kind::Link
+                && note.front.get(field.key.as_str()).is_some_and(|value| {
+                    links::normalize(note::unlink(&note::value_to_text(value)))
+                        == links::normalize(target)
+                })
+        })?;
+        self.link_folder(field)
+    }
+
+    /// The ⚠ after a file tree row whose file has problems (or, for a collapsed folder,
+    /// something inside it). Hovering shows what is wrong; clicking offers fixes.
+    fn warning_button<'a>(&'a self, c: Colors, entry: &'a Entry) -> Element<'a, Message> {
+        let (tip, message) = match entry.children {
+            None => {
+                let mut lines: Vec<String> = self
+                    .problems_in(&entry.path)
+                    .map(|problem| format!("• {}", problem.message))
+                    .collect();
+                let fixable = campaign::is_markdown(&entry.path);
+                lines.push(if fixable {
+                    "Click the ⚠ to fix it".into()
+                } else {
+                    "Click the ⚠ to see the problems".into()
+                });
+                let message = if fixable {
+                    Message::FixProblems(entry.path.clone())
+                } else {
+                    Message::ShowProblems
+                };
+                (lines.join("\n"), message)
+            }
+            Some(_) => {
+                let files = problem_files_in(&self.problems, &entry.path);
+                (
+                    format!(
+                        "{files} {} in this folder {} problems. Click the ⚠ to see them",
+                        if files == 1 { "file" } else { "files" },
+                        if files == 1 { "has" } else { "have" }
+                    ),
+                    Message::ShowProblems,
+                )
+            }
+        };
+
+        tooltip(
+            button(text("⚠").size(12).color(c.warning))
+                .padding([0, 4])
+                .style(style::flat(c, false))
+                .on_press(message),
+            container(text(tip).size(12).color(c.text))
+                .padding([4, 8])
+                .max_width(420)
+                .style(style::dropdown(c)),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    }
+
     /// Lists the files with problems; clicking one opens it.
     fn problems_dialog(&self, c: Colors) -> Element<'_, Message> {
         let rows = self.problems.iter().map(|problem| {
+            let fixable = campaign::is_markdown(&problem.path);
             column![
-                button(text(self.relative(&problem.path)).size(13).color(c.accent))
-                    .padding(0)
-                    .style(style::flat(c, false))
-                    .on_press(Message::OpenProblem(problem.path.clone())),
+                row![
+                    button(text(self.relative(&problem.path)).size(13).color(c.accent))
+                        .padding(0)
+                        .style(style::flat(c, false))
+                        .on_press(Message::OpenProblem(problem.path.clone())),
+                    space::horizontal(),
+                ]
+                .push(fixable.then(|| {
+                    button(text("Fix...").size(12))
+                        .padding([1, 8])
+                        .style(style::secondary(c))
+                        .on_press(Message::FixProblems(problem.path.clone()))
+                })),
                 text(&problem.message).size(13).color(c.text),
             ]
             .spacing(2)
@@ -1961,7 +2588,7 @@ impl Workspace {
 
         let content = column![
             text("Problems").size(22).color(c.text),
-            text("These files were probably edited outside Dungeon Elements, and parts of them can't be shown as intended. Nothing has been changed. Open a file to fix it, or use View > Show Markdown Source.")
+            text("These files were probably edited outside Dungeon Elements, and parts of them can't be shown as intended, or their links point nowhere. Nothing has been changed. Choose Fix... to see ways to fix a note.")
                 .size(12)
                 .color(c.text_muted),
             scrollable(column(rows).spacing(12)).height(iced::Shrink),
@@ -2049,10 +2676,12 @@ impl Workspace {
                 Task::none()
             }
             Message::RefreshTree => {
-                self.rescan();
-                self.status = problems_summary(&self.problems)
-                    .unwrap_or_else(|| "Refreshed; no problems found".into());
-                self.check_disk();
+                self.status.clear();
+                self.pick_up_outside_changes();
+                if self.status.is_empty() {
+                    self.status = problems_summary(&self.problems)
+                        .unwrap_or_else(|| "Refreshed; no problems found".into());
+                }
                 Task::none()
             }
             Message::NewNoteIn(folder) => {
@@ -2498,10 +3127,21 @@ impl Workspace {
             Message::WindowFocused => {
                 // Ctrl may have been let go in another window.
                 self.ctrl = false;
-                self.rescan();
-                self.check_disk();
+                self.pick_up_outside_changes();
                 Task::none()
             }
+            Message::FilesChanged => {
+                self.pick_up_outside_changes();
+                Task::none()
+            }
+            Message::FixProblems(path) => {
+                self.open_file(path.clone());
+                if self.active_tab().and_then(|tab| tab.path.as_ref()) == Some(&path) {
+                    self.dialog = Some(Dialog::Fix(path));
+                }
+                Task::none()
+            }
+            Message::Fix(fix) => self.fix(fix),
             Message::ReloadFromDisk => {
                 if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id) == self.active) {
                     let name = self.tabs[index]
@@ -3107,7 +3747,8 @@ impl Workspace {
                         }
                     ))
                     .size(12)
-                    .color(c.status_text),
+                    .color(c.status_text)
+                    .wrapping(text::Wrapping::None),
                 )
                 .padding([0, 6])
                 .style(style::flat(c, false))
@@ -3241,10 +3882,12 @@ impl Workspace {
                             .any(|problem| problem.path.starts_with(&entry.path))
                 }
             };
-            let warning = has_problem.then(|| text(" ⚠").size(12).color(c.warning));
+            let warning = has_problem.then(|| self.warning_button(c, entry));
 
             let label = button(
-                row![indent, text(arrow).size(13).width(14), text(name).size(13)].push(warning),
+                row![indent, text(arrow).size(13).width(14), text(name).size(13)]
+                    .push(warning)
+                    .align_y(Center),
             )
             .width(Fill)
             .padding([2, 0])
@@ -3367,6 +4010,15 @@ impl Workspace {
             view = view.push(changed_outside_banner(c));
         }
         view = view.push(editor);
+        // Below the note, so the text doesn't jump while a problem comes and goes as it is typed.
+        if let Some(path) = self.active_tab().and_then(|tab| tab.path.as_ref())
+            && self.dialog.is_none()
+        {
+            let problems: Vec<&Problem> = self.problems_in(path).collect();
+            if !problems.is_empty() {
+                view = view.push(problems_banner(c, path, &problems));
+            }
+        }
         if !self.active_tab().is_some_and(Tab::reading) {
             view = view.push(self.link_bar(c, suggestions));
         }
@@ -4219,6 +4871,58 @@ fn markdown_files(entries: &[Entry]) -> Vec<PathBuf> {
     files
 }
 
+/// A hash of the text of each note in the file tree.
+fn fingerprints(tree: &[Entry]) -> HashMap<PathBuf, u64> {
+    use std::hash::{Hash, Hasher};
+
+    markdown_files(tree)
+        .into_iter()
+        .filter_map(|path| {
+            let bytes = std::fs::read(&path).ok()?;
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            Some((path, hasher.finish()))
+        })
+        .collect()
+}
+
+/// Which of the notes `removed` since the last scan were renamed or moved to which of
+/// the notes `added`, as `(old, new)` paths, going by the notes' text hashes before and after.
+///
+/// A note counts as renamed if one of the new notes has exactly its text. If just one
+/// note went and one came, in the same folder or with the same name, it counts as
+/// renamed too, even if its text was also edited.
+fn renamed_notes(
+    removed: &[PathBuf],
+    added: &[PathBuf],
+    before: &HashMap<PathBuf, u64>,
+    after: &HashMap<PathBuf, u64>,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut removed: Vec<&PathBuf> = removed.iter().collect();
+    let mut added: Vec<&PathBuf> = added.iter().collect();
+    removed.sort();
+    added.sort();
+
+    let mut moved = Vec::new();
+    removed.retain(|old| {
+        let hash = before.get(*old);
+        match added.iter().position(|new| after.get(*new) == hash) {
+            Some(index) => {
+                moved.push(((*old).clone(), added.remove(index).clone()));
+                false
+            }
+            None => true,
+        }
+    });
+
+    if let ([old], [new]) = (removed.as_slice(), added.as_slice())
+        && (old.parent() == new.parent() || old.file_name() == new.file_name())
+    {
+        moved.push(((*old).clone(), (*new).clone()));
+    }
+    moved
+}
+
 /// Makes an empty note for a link to `target`, which names no note yet: `<target>.md`
 /// in `folder` (or else the campaign folder `root`), or in the folder the target's path
 /// names. With a type `ty`, the note gets its `type:` and its name filled in.
@@ -4350,6 +5054,26 @@ fn save_named(tab: &Tab, text: &str, label: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Whether `problem` is a broken link the user chose to leave as it is, in `ignored`.
+fn is_ignored(ignored: &HashSet<(PathBuf, String)>, problem: &Problem) -> bool {
+    match &problem.issue {
+        check::Issue::Link { target, .. } => {
+            ignored.contains(&(problem.path.clone(), links::normalize(target)))
+        }
+        _ => false,
+    }
+}
+
+/// The number of files inside `folder` that have problems.
+fn problem_files_in(problems: &[Problem], folder: &Path) -> usize {
+    let files: HashSet<&Path> = problems
+        .iter()
+        .filter(|problem| problem.path.starts_with(folder))
+        .map(|problem| problem.path.as_path())
+        .collect();
+    files.len()
+}
+
 /// The number of files in `problems`.
 fn problem_files(problems: &[Problem]) -> usize {
     let files: HashSet<&Path> = problems
@@ -4390,6 +5114,38 @@ fn changed_outside_banner<'a>(c: Colors) -> Element<'a, Message> {
     )
     .padding([8, 16])
     .width(Fill)
+    .style(style::banner(c))
+    .into()
+}
+
+/// Shown above a note with problems: the first one, and a button to fix them.
+fn problems_banner<'a>(c: Colors, path: &Path, problems: &[&Problem]) -> Element<'a, Message> {
+    let summary = match problems {
+        [problem] => problem.message.clone(),
+        [problem, rest @ ..] => format!("{} (and {} more)", problem.message, rest.len()),
+        [] => String::new(),
+    };
+    let fixable = campaign::is_markdown(path);
+    container(
+        row![
+            text("⚠").size(14).color(c.warning),
+            text(summary)
+                .size(13)
+                .color(c.text)
+                .wrapping(text::Wrapping::None),
+            space::horizontal(),
+        ]
+        .push(fixable.then(|| {
+            button(text("Fix...").size(13))
+                .style(style::secondary(c))
+                .on_press(Message::FixProblems(path.to_path_buf()))
+        }))
+        .spacing(8)
+        .align_y(Center),
+    )
+    .padding([6, 16])
+    .width(Fill)
+    .clip(true)
     .style(style::banner(c))
     .into()
 }

@@ -13,6 +13,15 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Link fields link to a folder: a Location field suggests locations first, and typing a place that doesn't exist yet offers **+ New Location**, which makes it in the locations folder with its name filled in. Set a field's folder in **Edit > Types** (Links to).
 - Drag a note in the file tree onto another folder to move it. It becomes that folder's type and keeps the fields you filled in, and links to it are updated.
 - Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
+- Notes renamed or moved outside the app (in Explorer, a file manager, or Obsidian with link updating off) are noticed: their tabs follow them, their name field takes the new name, and every link to them is updated.
+- Links that look broken are listed as problems: ones to a note that was renamed or deleted outside the app, or to a missing note when one is spelled almost the same (`[[Bobby]]` when there's a Bob). Links to notes you haven't written yet are fine and aren't flagged.
+
+### Fixing problems
+
+- Hover the ⚠ next to a note in the file tree to see what's wrong with it, and click it for a dialog of fixes: link to the note it probably meant, make the missing note (in the link field's folder), remove the link, or ignore it; move a long text field from the front matter into its `## ` section; use the folder's type when `type:` names none; or change a choice like `rare` to `Rare`. **Problems** in the status bar has a **Fix...** button for each note too.
+- A note with problems shows the first one under the editor, with **Fix...**.
+- Problems are checked again as you type, in the form or the Markdown source, so fixing one makes its ⚠ go away right away, before saving.
+- The campaign folder is watched, so notes edited, renamed, or deleted in another app are picked up right away, without switching back to the window first. Hidden folders like `.obsidian` are left out.
 
 ### Right-click menus
 

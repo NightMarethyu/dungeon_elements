@@ -266,21 +266,77 @@ impl Index {
             .take(limit)
             .filter_map(|entry| {
                 let link = self.link_text(&entry.path, from, false)?;
-                let shared = self
-                    .notes
-                    .iter()
-                    .filter(|other| other.name().eq_ignore_ascii_case(entry.name()))
-                    .count()
-                    > 1;
-                let label = if shared {
-                    entry.relative.clone()
-                } else {
-                    entry.name().to_string()
-                };
-                Some((link, label))
+                Some((link, self.label(entry)))
             })
             .collect()
     }
+
+    /// How to show `entry` in a list of notes: its name, or its path when two notes share
+    /// the name.
+    fn label(&self, entry: &Entry) -> String {
+        let shared = self
+            .notes
+            .iter()
+            .filter(|other| other.name().eq_ignore_ascii_case(entry.name()))
+            .count()
+            > 1;
+        if shared {
+            entry.relative.clone()
+        } else {
+            entry.name().to_string()
+        }
+    }
+
+    /// Notes whose name is spelled almost like `target`, a link that points nowhere, for
+    /// offering what it may have meant: `(link text, label)` pairs, closest first.
+    pub fn similar(&self, target: &str, from: &Path, limit: usize) -> Vec<(String, String)> {
+        let target = normalize(target);
+        let wanted = target.rsplit('/').next().unwrap_or(&target);
+        let wanted: Vec<char> = wanted.chars().collect();
+        // Short names need a closer match, or every three-letter name would look alike.
+        let most = match wanted.len() {
+            0..=4 => 1,
+            5..=11 => 2,
+            _ => 3,
+        };
+
+        let mut matches: Vec<(usize, &Entry)> = self
+            .notes
+            .iter()
+            .filter(|entry| entry.path != from)
+            .filter_map(|entry| {
+                let name: Vec<char> = entry.name().to_lowercase().chars().collect();
+                let distance = edit_distance(&wanted, &name);
+                (distance <= most).then_some((distance, entry))
+            })
+            .collect();
+        matches.sort_by_key(|(distance, entry)| (*distance, entry.key.clone()));
+
+        matches
+            .into_iter()
+            .take(limit)
+            .filter_map(|(_, entry)| {
+                Some((self.link_text(&entry.path, from, false)?, self.label(entry)))
+            })
+            .collect()
+    }
+}
+
+/// How many letters must be added, removed or changed to turn `a` into `b`.
+fn edit_distance(a: &[char], b: &[char]) -> usize {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, &x) in a.iter().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, &y) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (diagonal + usize::from(x != y))
+                .min(above + 1)
+                .min(row[j] + 1);
+            diagonal = above;
+        }
+    }
+    row[b.len()]
 }
 
 /// The names notes can be linked by, for coloring links that point nowhere.
@@ -329,59 +385,103 @@ impl Rename<'_> {
     }
 }
 
-/// Rewrites the links in `text`, the note at `from`, so they point where they did before
-/// `rename`. Returns the new text and how many links changed.
+/// What a link to `target` in the note at `from` should say after `rename`, so it points
+/// where it did before, if that changes.
 ///
 /// Links to the renamed note get its new name. A link to another note is rewritten as a
 /// path only if the rename would otherwise make it point to the renamed note instead.
-/// Headings, shown text and `!` embeds are kept.
-pub fn relink(text: &str, from: &Path, rename: &Rename) -> (String, usize) {
-    let from_before = rename.was(from);
+fn relinked(target: &str, from: &Path, rename: &Rename) -> Option<String> {
+    let meant = rename.before.resolve(target, &rename.was(from))?;
+    let meant = rename.now(meant);
+    if rename.after.resolve(target, from) == Some(meant) {
+        return None;
+    }
+
+    let as_path = target.contains('/') || target.contains('\\');
+    let mut replacement = rename.after.link_text(meant, from, as_path)?;
+    if target.to_lowercase().ends_with(".md") {
+        replacement.push_str(".md");
+    }
+    Some(replacement)
+}
+
+/// Rewrites the links in a whole note, the note at `from`, front matter included, so they
+/// point where they did before `rename`. Headings, shown text and `!` embeds are kept.
+/// Returns the new text and how many links changed, or `None` if none did.
+pub fn relink_note(text: &str, from: &Path, rename: &Rename) -> Option<(String, usize)> {
+    rewrite_note(text, &mut |target| relinked(target, from, rename))
+}
+
+/// Points the links to `old` in a whole note to `new` instead, keeping headings, shown text
+/// and embeds. Returns `None` if no link named `old`.
+pub fn retarget_note(text: &str, old: &str, new: &str) -> Option<(String, usize)> {
+    let old = normalize(old);
+    rewrite_note(text, &mut |target| {
+        (normalize(target) == old).then(|| new.to_string())
+    })
+}
+
+/// Turns the links to `target` in `text` back into plain text: their shown text, or the
+/// name they link to. Returns `None` if no link named `target`.
+pub fn unlink_all(text: &str, target: &str) -> Option<String> {
+    let target = normalize(target);
+    let mut result = text.to_string();
+    let mut changed = false;
+
+    for link in find(text).into_iter().rev() {
+        if normalize(&text[link.target.clone()]) != target {
+            continue;
+        }
+        let inner = text[link.range.clone()]
+            .trim_start_matches('!')
+            .trim_start_matches("[[")
+            .trim_end_matches("]]");
+        let shown = match inner.split_once('|') {
+            Some((_, shown)) => shown,
+            None => &text[link.target.clone()],
+        };
+        result.replace_range(link.range.clone(), shown.trim());
+        changed = true;
+    }
+
+    changed.then_some(result)
+}
+
+/// Rewrites the target of each link in `text` that `new_target` gives a new one for.
+/// Returns the new text and how many links changed.
+fn rewrite(text: &str, new_target: &mut dyn FnMut(&str) -> Option<String>) -> (String, usize) {
     let mut result = text.to_string();
     let mut changed = 0;
 
     // From the end, so earlier ranges stay valid.
     for link in find(text).into_iter().rev() {
-        let target = &text[link.target.clone()];
-        let Some(meant) = rename.before.resolve(target, &from_before) else {
-            continue;
-        };
-        let meant = rename.now(meant);
-        if rename.after.resolve(target, from) == Some(meant) {
-            continue;
+        if let Some(replacement) = new_target(&text[link.target.clone()]) {
+            result.replace_range(link.target.clone(), &replacement);
+            changed += 1;
         }
-
-        let as_path = target.contains('/') || target.contains('\\');
-        let Some(mut replacement) = rename.after.link_text(meant, from, as_path) else {
-            continue;
-        };
-        if target.to_lowercase().ends_with(".md") {
-            replacement.push_str(".md");
-        }
-
-        result.replace_range(link.target.clone(), &replacement);
-        changed += 1;
     }
 
     (result, changed)
 }
 
-/// Rewrites the links in a whole note after `rename`, front matter included, the way
-/// [`relink`] does. Returns `None` if no link changed.
+/// Like [`rewrite`], for a whole note, front matter included. Returns `None` if no link changed.
 ///
 /// Links in the front matter are YAML strings like `owner: '[[Mira]]'`. If a new name
 /// can't be put in place as it is (say, `Mira's Cat` in single quotes), the front matter
 /// is written out again so it still holds the right values.
-pub fn relink_note(text: &str, from: &Path, rename: &Rename) -> Option<(String, usize)> {
+fn rewrite_note(
+    text: &str,
+    new_target: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<(String, usize)> {
     let (front, body) = note::split_front_matter(text).ok()?;
     let head = &text[..text.len() - body.len()];
 
-    let (new_body, body_changes) = relink(body, from, rename);
+    let (new_body, body_changes) = rewrite(body, new_target);
     let Some(yaml) = front else {
         return (body_changes > 0).then(|| (format!("{head}{new_body}"), body_changes));
     };
 
-    let (new_yaml, front_changes) = relink(yaml, from, rename);
+    let (new_yaml, front_changes) = rewrite(yaml, new_target);
     if front_changes + body_changes == 0 {
         return None;
     }
@@ -392,7 +492,7 @@ pub fn relink_note(text: &str, from: &Path, rename: &Rename) -> Option<(String, 
     // Check that the front matter still reads back as the values it should have.
     let expected = serde_yaml_ng::from_str::<Value>(yaml)
         .ok()
-        .map(|value| relink_value(value, from, rename));
+        .map(|value| rewrite_value(value, new_target));
     let actual = serde_yaml_ng::from_str::<Value>(&new_yaml).ok();
 
     let new_head = match expected {
@@ -410,19 +510,19 @@ pub fn relink_note(text: &str, from: &Path, rename: &Rename) -> Option<(String, 
 }
 
 /// Rewrites the links in the strings of a YAML value.
-fn relink_value(value: Value, from: &Path, rename: &Rename) -> Value {
+fn rewrite_value(value: Value, new_target: &mut dyn FnMut(&str) -> Option<String>) -> Value {
     match value {
-        Value::String(text) => Value::String(relink(&text, from, rename).0),
+        Value::String(text) => Value::String(rewrite(&text, new_target).0),
         Value::Sequence(items) => Value::Sequence(
             items
                 .into_iter()
-                .map(|item| relink_value(item, from, rename))
+                .map(|item| rewrite_value(item, new_target))
                 .collect(),
         ),
         Value::Mapping(mapping) => Value::Mapping(
             mapping
                 .into_iter()
-                .map(|(key, value)| (key, relink_value(value, from, rename)))
+                .map(|(key, value)| (key, rewrite_value(value, new_target)))
                 .collect(),
         ),
         other => other,
@@ -951,6 +1051,52 @@ mod tests {
         )
         .unwrap();
         assert_eq!(text, "[[Mirabel.md]]");
+    }
+
+    #[test]
+    fn finds_notes_spelled_almost_like_a_link() {
+        let root = Path::new("/c");
+        let index = campaign(root, &["npcs/Bob", "npcs/Bobbin", "Old Mill", "Ox"]);
+        let from = root.join("items/Ring.md");
+
+        let names = |target| -> Vec<String> {
+            index
+                .similar(target, &from, 3)
+                .into_iter()
+                .map(|(link, _)| link)
+                .collect()
+        };
+        assert_eq!(names("Bobby"), ["Bob", "Bobbin"]);
+        assert_eq!(names("old mil"), ["Old Mill"]);
+        assert_eq!(names("npcs/Bobb"), ["Bob"]);
+        // Short names must be close.
+        assert!(names("Oxen").is_empty());
+        assert!(names("Castle").is_empty());
+    }
+
+    #[test]
+    fn unlinking_keeps_the_shown_text() {
+        let text =
+            "owner: '[[Old Mill]]'\nSee [[old mill#Wheel|the wheel]], ![[Old Mill]] and [[Mira]].";
+        assert_eq!(
+            unlink_all(text, "Old Mill").unwrap(),
+            "owner: 'Old Mill'\nSee the wheel, Old Mill and [[Mira]]."
+        );
+        assert!(unlink_all(text, "Nobody").is_none());
+    }
+
+    #[test]
+    fn retargeting_points_links_at_another_note() {
+        let text = "---\nowner: '[[Bobby]]'\n---\n\nSee [[bobby#Shop|his shop]] and [[Mira]].\n";
+        let (new, count) = retarget_note(text, "Bobby", "Bob's Cat").unwrap();
+        assert_eq!(count, 2);
+        assert!(
+            new.contains("[[Bob's Cat#Shop|his shop]] and [[Mira]]"),
+            "{new}"
+        );
+        let front: Value = serde_yaml_ng::from_str(new.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(front["owner"], Value::String("[[Bob's Cat]]".into()));
+        assert!(retarget_note(text, "Nobody", "Bob").is_none());
     }
 
     #[test]
