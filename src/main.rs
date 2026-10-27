@@ -555,6 +555,8 @@ enum Message {
     CloseActiveTab,
     ToggleDice,
     Dice(dice::Message),
+    /// Rolls dice from a note's field: the field's label, and the dice.
+    RollField(String, String),
 
     // Right-click menus
     WindowResized(Size),
@@ -2791,6 +2793,11 @@ impl Workspace {
                 self.dice.update(message);
                 Task::none()
             }
+            Message::RollField(label, expression) => {
+                self.dice.open = true;
+                self.dice.roll_field(&label, &expression);
+                Task::none()
+            }
             Message::RefreshTree => {
                 self.status.clear();
                 self.pick_up_outside_changes();
@@ -2946,6 +2953,16 @@ impl Workspace {
                 Task::none()
             }
             Message::Form(form::Message::FollowLink(index)) => self.follow_link_field(index),
+            Message::Form(form::Message::Roll(index, expression)) => {
+                let label = self
+                    .active_tab()
+                    .and_then(|tab| tab.form.as_ref())
+                    .and_then(|form| form.label(index))
+                    .unwrap_or_default();
+                self.dice.open = true;
+                self.dice.roll_field(&label, &expression);
+                Task::none()
+            }
             Message::Form(message) => {
                 // Picking a choice in the reading view finishes editing that field.
                 let picked = matches!(message, form::Message::Choice(..));
@@ -3847,11 +3864,11 @@ impl Workspace {
         &'a self,
         c: Colors,
         settings: &Settings,
-        dice: &dice::Icons,
+        dice: &'a dice::Icons,
     ) -> Element<'a, Message> {
         let mut main = column![
             self.tab_bar(c, settings, dice),
-            self.editor(c, settings.show_toolbar)
+            self.editor(c, settings.show_toolbar, dice)
         ];
         if self.dice.open {
             main = main
@@ -4178,9 +4195,14 @@ impl Workspace {
             .into()
     }
 
-    fn editor(&self, c: Colors, show_toolbar: bool) -> Element<'_, Message> {
+    fn editor<'a>(
+        &'a self,
+        c: Colors,
+        show_toolbar: bool,
+        dice: &'a dice::Icons,
+    ) -> Element<'a, Message> {
         let suggestions = self.link_suggestions();
-        let editor = self.editor_body(c, &suggestions);
+        let editor = self.editor_body(c, &suggestions, dice);
         // Like the banner, its place is kept when it is hidden.
         let toolbar = show_toolbar
             .then(|| self.format_bar(c))
@@ -4901,7 +4923,12 @@ impl Workspace {
         ))
     }
 
-    fn editor_body(&self, c: Colors, suggestions: &Suggestions) -> Element<'_, Message> {
+    fn editor_body<'a>(
+        &'a self,
+        c: Colors,
+        suggestions: &Suggestions,
+        dice: &'a dice::Icons,
+    ) -> Element<'a, Message> {
         let Some(tab) = self.active_tab() else {
             return center(
                 column![
@@ -4941,6 +4968,8 @@ impl Workspace {
                 on_block: Message::EditBlock,
                 on_task: Message::ToggleTask,
                 on_field: Message::EditField,
+                on_roll: Message::RollField,
+                roll_icon: dice.field.clone(),
                 on_add: Message::AddText,
                 on_page: Message::FinishEditing,
                 block: None,
@@ -4982,6 +5011,7 @@ impl Workspace {
                 self.link_colors(c),
                 accept,
                 editor_menu,
+                &dice.field,
             ))
             .width(Fill)
             .height(Fill)

@@ -63,6 +63,9 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 - The d20 button at the right of the tab bar opens a dice roller along the bottom of the window. Click a die (d20, d12, d10, d100, d8, d6, or d4) to roll it; the result shows on the left.
 - Type a number in a die's **Count** box to roll several at once. Each result shows, with their total, and the last few rolls are listed under it.
+- Type dice to roll in the box above the dice and press Enter (or **Roll**): `2d6+3`, `d20-1`, `1d8+2d6+4`, `d%`, or `4d6kh3` to keep the highest three (`kl` keeps the lowest). A modifier on its own, like `+5`, rolls a d20 with it. If it can't be read, the pane says so.
+- **Advantage** and **Disadvantage** roll each single d20 twice and keep the higher or the lower; the other die is shown crossed out. They stay on until **Normal** is picked, and leave damage dice and rolls of several d20s alone.
+- Roll from a note's fields: a field with dice in it, like Damage `1d8 + 3 slashing` or Attack `+5 to hit`, gets a button for each roll, in the form and in the reading view's box of fields. A choice of dice, like a Hit die of `d10`, can be rolled too. The roll is named after the field ("Damage: 1d8+3") and opens the dice roller if it is closed.
 
 ## [0.1.0] - 2026-10-25
 

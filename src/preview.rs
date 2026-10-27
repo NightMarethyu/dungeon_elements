@@ -26,6 +26,7 @@ use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::code;
+use crate::dice::{self, Expression};
 use crate::links::{self, Index, Names};
 use crate::note;
 use crate::style;
@@ -83,6 +84,8 @@ struct Property {
     label: String,
     /// `None` for a field of the note's type that is empty.
     value: Option<markdown::Content>,
+    /// The dice in its value, like `1d8+3` or `+5`, each with a button to roll it.
+    rolls: Vec<Expression>,
 }
 
 /// A paragraph, heading, list, table, or other top-level piece of the note's body.
@@ -130,6 +133,10 @@ pub struct Editing<'a, M> {
     pub on_task: fn(usize) -> M,
     /// The field with this front matter key was clicked (the title is `name`).
     pub on_field: fn(String) -> M,
+    /// The roll button of a field was clicked: the field's label, and the dice to roll.
+    pub on_roll: fn(String, String) -> M,
+    /// The icon on the roll buttons.
+    pub roll_icon: svg::Handle,
     /// The space for adding text at the end was clicked.
     pub on_add: M,
     /// Somewhere else on the page was clicked.
@@ -174,6 +181,7 @@ impl Preview {
         let properties = properties(&front, ty)
             .into_iter()
             .map(|(key, label, value)| Property {
+                rolls: rolls(&front, &key, ty),
                 key,
                 label,
                 value: value.map(|value| markdown::Content::parse(&value)),
@@ -486,6 +494,21 @@ impl Preview {
                     .color(c.text_muted)
                     .into(),
             };
+            // The roll buttons go under the value; clicking one rolls instead of editing.
+            let value: Element<'a, M> = if property.rolls.is_empty() {
+                value
+            } else {
+                let on_roll = edit.on_roll;
+                let buttons = property.rolls.iter().map(|expression| {
+                    let label = property.label.clone();
+                    dice::field_button(c, &edit.roll_icon, expression, move |expression| {
+                        on_roll(label.clone(), expression)
+                    })
+                });
+                column![value, row(buttons).spacing(6).wrap()]
+                    .spacing(6)
+                    .into()
+            };
             mouse_area(row![label, container(value).width(Length::FillPortion(3))].spacing(12))
                 .on_press((edit.on_field)(property.key.clone()))
                 .interaction(Interaction::Pointer)
@@ -740,6 +763,28 @@ fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String,
     }
 
     shown
+}
+
+/// The dice expressions in the field `key`, to roll from the box of fields. A link's
+/// target is a note's name, never a roll.
+fn rolls(front: &Mapping, key: &str, ty: Option<&ContentType>) -> Vec<Expression> {
+    let link_field = ty
+        .and_then(|ty| ty.fields.iter().find(|field| field.key == key))
+        .is_some_and(|field| field.kind == Kind::Link);
+    match front.get(key) {
+        Some(value) if !link_field && crate::form::kind_of(value) != Some(Kind::Link) => {
+            // Not the names in `[[links]]` in it, either.
+            let mut text = note::value_to_text(value);
+            while let Some(start) = text.find("[[") {
+                let end = text[start..]
+                    .find("]]")
+                    .map_or(text.len(), |end| start + end + 2);
+                text.replace_range(start..end, " ");
+            }
+            Expression::find(&text)
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// A front matter value as one line of Markdown, or `None` if it is empty.
