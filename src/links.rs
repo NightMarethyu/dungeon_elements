@@ -995,19 +995,21 @@ pub fn insert(content: &mut Content) {
 
 // Coloring links in a text editor.
 
-/// How [`Highlighter`] colors links.
+/// How [`Highlighter`] colors links and Markdown marks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Colors {
     /// Links to notes that exist.
     pub link: Color,
     /// Links to notes that don't exist yet.
     pub missing: Color,
+    /// Markdown marks like `#` and `**`, and the brackets of links, dimmer than the words.
+    pub mark: Color,
     /// Whether links are bold too, for themes where their color is the text's.
     pub bold: bool,
     pub names: Names,
 }
 
-/// Colors the `[[links]]` in a text editor.
+/// Colors the `[[links]]` in a text editor, and dims the Markdown marks around the words.
 pub struct Highlighter {
     colors: Colors,
     /// Where each line, up to the next one to color, starts.
@@ -1066,24 +1068,59 @@ impl text::Highlighter for Highlighter {
         };
         self.starts.push(next);
 
-        let mut links = Vec::new();
-        if matches!(here, Place::Text | Place::FrontMatter) {
-            find_in_line(line, 0, &mut links);
+        let mark = (self.colors.mark, false);
+        let line_end = line.trim_end_matches(['\n', '\r']).len();
+        // Fences around front matter and code are marks from end to end.
+        if here == Place::Top || (here == Place::Code && is_fence(line)) {
+            return vec![(0..line_end, mark)].into_iter();
+        }
+        if here == Place::Code {
+            return Vec::new().into_iter();
         }
 
-        links
-            .into_iter()
-            .map(|link| {
-                let target = read_target(line, &link, here == Place::FrontMatter);
-                let color = if self.colors.names.contains(&target) {
-                    self.colors.link
-                } else {
-                    self.colors.missing
-                };
-                (link.range, (color, self.colors.bold))
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
+        let mut links = Vec::new();
+        find_in_line(line, 0, &mut links);
+
+        let mut spans = Vec::new();
+        for link in &links {
+            let target = read_target(line, link, here == Place::FrontMatter);
+            let color = if self.colors.names.contains(&target) {
+                self.colors.link
+            } else {
+                self.colors.missing
+            };
+            let range = link.range.clone();
+            let open = if line[range.clone()].starts_with('!') {
+                3
+            } else {
+                2
+            };
+            spans.push((range.start..range.start + open, mark));
+            spans.push((range.start + open..range.end - 2, (color, self.colors.bold)));
+            spans.push((range.end - 2..range.end, mark));
+        }
+
+        if here == Place::Text {
+            // Marks inside a link (pulldown-cmark doesn't know them) are left to it.
+            for range in crate::marks::find(line) {
+                let mut start = range.start;
+                for link in &links {
+                    if link.range.end <= start || link.range.start >= range.end {
+                        continue;
+                    }
+                    if link.range.start > start {
+                        spans.push((start..link.range.start, mark));
+                    }
+                    start = start.max(link.range.end);
+                }
+                if start < range.end {
+                    spans.push((start..range.end, mark));
+                }
+            }
+            spans.sort_by_key(|(range, _)| range.start);
+        }
+
+        spans.into_iter()
     }
 
     fn current_line(&self) -> usize {
@@ -1684,5 +1721,50 @@ mod tests {
         insert(&mut content);
         assert_eq!(content.text(), "Met [[Mira]] [[Bob]][[]]");
         assert_eq!(query(&content).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn highlighter_dims_marks_and_colors_links() {
+        use text::Highlighter as _;
+
+        let link = Color::from_rgb(0.0, 0.0, 1.0);
+        let mark = Color::from_rgb(0.5, 0.5, 0.5);
+        let colors = Colors {
+            link,
+            missing: Color::from_rgb(1.0, 0.0, 0.0),
+            mark,
+            bold: false,
+            names: Names(Arc::new(HashSet::from([normalize("Bree")]))),
+        };
+        let mut highlighter = Highlighter::new(&colors);
+        let mut spans = |line: &'static str| {
+            highlighter
+                .highlight_line(line)
+                .map(|(range, (color, _))| (&line[range], color == mark))
+                .collect::<Vec<_>>()
+        };
+
+        // Front matter: only its fences are marks, and its links are colored.
+        assert_eq!(spans("---"), [("---", true)]);
+        assert_eq!(
+            spans("home: \"[[Bree]]\""),
+            [("[[", true), ("Bree", false), ("]]", true)]
+        );
+        assert_eq!(spans("---"), [("---", true)]);
+        assert_eq!(
+            spans("- **Met** [[Bree]]"),
+            [
+                ("-", true),
+                ("**", true),
+                ("**", true),
+                ("[[", true),
+                ("Bree", false),
+                ("]]", true)
+            ]
+        );
+        // Code is left alone, but for its fences.
+        assert_eq!(spans("```rust"), [("```rust", true)]);
+        assert!(spans("let **x** = [[Bree]];").is_empty());
+        assert_eq!(spans("```"), [("```", true)]);
     }
 }

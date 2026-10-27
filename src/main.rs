@@ -14,6 +14,7 @@ mod form;
 mod format;
 mod icon;
 mod links;
+mod marks;
 mod menu;
 mod note;
 mod preview;
@@ -4308,6 +4309,7 @@ impl Workspace {
         links::Colors {
             link: c.accent,
             missing: c.text_muted,
+            mark: c.text_muted,
             bold: c.accent == c.text,
             names: self.index.names(),
         }
