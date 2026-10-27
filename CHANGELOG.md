@@ -4,6 +4,10 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
+Phase 1, _Inciting Incident_, of the [plan](PLAN.md): notes link together like a wiki, read like one, and can be written without knowing Markdown, with a dice roller close at hand. Campaigns from v0.1.0 open as they are. Dungeon Elements is still in early development, so keep backups of campaigns you care about.
+
 ### Links
 
 - Link notes the Obsidian way with `[[Note]]`. Typing `[[` closes it with `]]` and suggests notes by name under the editor; press Tab (or click one) to insert it. Link fields in forms suggest notes the same way.
@@ -15,15 +19,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Renaming a note by changing its name and saving updates every link to it across the campaign, including links in front matter fields and in open files with unsaved changes. Shown text (`[[Mira|the smuggler]]`), headings (`[[Mira#Appearance]]`), and embeds are kept.
 - Notes renamed or moved outside the app (in Explorer, a file manager, or Obsidian with link updating off) are noticed: their tabs follow them, their name field takes the new name, and every link to them is updated.
 - Links that look broken are listed as problems: ones to a note that was renamed or deleted outside the app, or to a missing note when one is spelled almost the same (`[[Bobby]]` when there's a Bob). Links to notes you haven't written yet are fine and aren't flagged.
-
 - Links work with any name: apostrophes and quotes (`John's Long Johns`), accents, other alphabets and emoji. In the front matter a link is read as the YAML string it's in, so `owner: '[[John''s Long Johns]]'` links to John's Long Johns, and renaming or relinking writes names with the escaping YAML needs. Typing a link in the front matter in the Markdown source escapes it too.
 - A note's name can hold characters a file name can't (`Chapter 1: The Inn`, `What?`, `The "Lucky" Inn`). The name field keeps the name as typed, and the file gets a name that works in Windows, macOS, Linux, and in links (`Chapter 1 - The Inn.md`, `What.md`, `The 'Lucky' Inn.md`). Links written with the full name still find the note. The file tree, tabs and dialogs show the name as typed (View > File Extensions shows the real file names).
 - Aliases, the Obsidian way: list other names for a note under **Aliases** (add a field called Aliases, or `aliases:` in the front matter). The BBEG can go by Jerry: `[[Jerry]]` finds the note, and typing `[[Jer` suggests "Jerry (BBEG)", which links as `[[BBEG|Jerry]]` so it works in Obsidian too.
 - A note whose name has characters its file name can't gets that name as an alias, so Obsidian finds it by its real name, and links to it show the real name: `[[Chapter 1 - The Inn|Chapter 1: The Inn]]`. Renaming it updates the alias and the name those links show (links showing words of their own keep them).
 - Backlinks: the reading view ends with **Linked from**, the notes that link to the one you're reading, grouped by kind (Quest, Location, Journal Entry...). Each shows the line the link is on, or the field it's in (Quest giver: BBEG); click a name to open it. Links count however they name the note: by name, path, alias (`[[Jerry]]`), with shown text (`[[BBEG|Jerry]]`), to a heading, or as an embed. Unsaved changes and edits made in other apps count right away.
 - Suggestions rank names, aliases and file names together: whatever starts with what you typed comes first, then names with a word starting with it ("inn" finds Old Inn before Spinning), so an alias like Jerry is never crowded out by other notes.
-- Fixed a crash when a line with an accented letter or other non-English character held a `[[link]]`.
-- Fixed the text box losing the focus while typing: in a link field as soon as the first letter was typed (when the Open button showed up), and in the Markdown source when the note changed in another app and the "changed outside" banner showed up.
 
 ### Fixing problems
 
@@ -54,11 +55,16 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Edit right in the reading view: click a paragraph, list, table, or heading to edit its Markdown in place, and it's formatted again when you click elsewhere or press Escape. Click a field in the box to change it (a choice shows its options, and a checkbox flips), click the title to rename the note, and click under the note to add more.
 - Typing `[[` in a block you're editing in the reading view suggests notes right under it, by name, alias or file name; press Tab (or click one) to insert it. A link field in the box suggests notes the same way (Enter picks the first), with its folder's notes first and **+ New Location** (or whatever the folder holds) for a place that doesn't exist yet.
 - Click a task box (`- [ ] Find the cave`) in the reading view to tick or untick it; the note changes as if you typed the `x`. Task boxes show in numbered lists (`1. [ ] Sneak in`) too.
+
+### Editing
+
 - A formatting toolbar shows over the note while you edit it, so you don't need to know Markdown: pick what a line is (Paragraph, Heading 1–4, Quote), make text bold, italic or crossed out, make bulleted, numbered or task lists, or add a link or picture. It writes the Markdown for you, and each button's tooltip shows what it writes. Press a button again to take the format away. In the reading view it shows while you edit a block; **View > Formatting Toolbar** hides it.
 - Ctrl+B and Ctrl+I make the selected text (or the word at the cursor) bold or italic.
 - Pressing Enter in a list starts the next item (numbered one more, or with an empty task box), and pressing it on an empty item ends the list. Quotes carry on the same way.
 - The Markdown marks are dimmer than the words while you edit, so the words stand out: `#` before a heading, `**` and `*` around bold and italic text, `- [ ]` before a task, the brackets of links and the `(address)` after a link or picture, a table's `|`s, and the fences around code and front matter. This works in the Markdown text, in a form's long text fields, and in a block you're editing in the reading view.
 - A note with a type has **Form**, **Markdown** and **Read** buttons at the right of the tab bar, so it's clear how to switch between its form, its Markdown text and the reading view (other notes have **Edit** and **Read**). **View > Edit as Form** and **View > Edit as Markdown** (Ctrl+E switches) do the same, and right-clicking the Markdown text offers **Edit as Form**.
+- **File > Save All** (Ctrl+Alt+S) saves every open note with unsaved changes. New notes without a file yet ask where to go, one at a time, and the status bar says how many were saved and why any weren't.
+- Typing in the Markdown source no longer loses the focus when the note changes in another app and the "changed outside" banner shows up.
 
 ### Dice roller
 
@@ -67,6 +73,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Type dice to roll in the box above the dice and press Enter (or **Roll**): `2d6+3`, `d20-1`, `1d8+2d6+4`, `d%`, or `4d6kh3` to keep the highest three (`kl` keeps the lowest). A modifier on its own, like `+5`, rolls a d20 with it. If it can't be read, the pane says so.
 - **Advantage** and **Disadvantage** roll each single d20 twice and keep the higher or the lower; the other die is shown crossed out. They stay on until **Normal** is picked, and leave damage dice and rolls of several d20s alone. For systems that give advantage on any die, tick **Any die**: each set of dice then rolls one more and keeps the best (`1d6` rolls 2 and keeps 1, `3d6` rolls 4 and keeps 3), or the worst with disadvantage.
 - Roll from a note's fields: a field with dice in it, like Damage `1d8 + 3 slashing` or Attack `+5 to hit`, gets a button for each roll, in the form and in the reading view's box of fields. A choice of dice, like a Hit die of `d10`, can be rolled too. The roll is named after the field ("Damage: 1d8+3") and opens the dice roller if it is closed.
+
+### Known limitations
+
+- A Number field drops a leading `+` when the note is saved (`+5` becomes `5`), so roll buttons won't see it as a modifier. Use a text field for bonuses like an attack's to-hit for now.
+- `![[Note]]` embeds go one level deep: notes embedded inside an embedded note show as links.
+- **Open Campaign...** on Linux uses the desktop's file chooser portal (or `zenity`); if neither is installed, open a campaign from the command line instead.
+- Builds are not code-signed, so Windows SmartScreen may warn the first time you run the app ("More info" > "Run anyway"). The macOS app isn't signed with an Apple Developer ID: the first time, open **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** (on macOS 14 and older, Control-click the app and choose **Open**).
 
 ## [0.1.0] - 2026-10-25
 
@@ -82,7 +95,6 @@ The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon El
 ### Notes
 
 - Write notes in a text editor and save them as Markdown (`.md`) files, with **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), and **Close Tab** (Ctrl+W). Closing a tab or the window with unsaved changes asks first.
-- **File > Save All** (Ctrl+Alt+S) saves every open note with unsaved changes. New notes without a file yet ask where to go, one at a time, and the status bar says how many were saved and why any weren't.
 - Give a folder a content type in its `_type.yaml`, and its notes open as a form (like Name, Value, Rarity, History, and Stats for an item). Fields can be text, numbers, choices, tags, `[[links]]`, checkboxes, or long text. Notes are saved as Markdown with YAML front matter that Obsidian can read.
 - The **+** next to a folder makes a new note of its type, saved as `<name>.md`.
 - Add a field to a single note with the round **+** on its form, and remove any field except the name from a single note.
@@ -108,5 +120,6 @@ The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon El
 - Builds are not code-signed, so Windows SmartScreen may warn the first time you run the app ("More info" > "Run anyway").
 - macOS: the app is built on GitHub's Macs but hasn't been tested on one by hand yet. It isn't signed with an Apple Developer ID, so the first time, macOS says it can't check the app: open **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** (on macOS 14 and older, Control-click the app and choose **Open**). Settings and themes live in `~/.config/dungeon_elements`.
 
-[Unreleased]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NightMarethyu/dungeon_elements/releases/tag/v0.1.0
