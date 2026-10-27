@@ -80,7 +80,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
 - [x] Built-in dice roller, keep everything close without needing to leave the app
   - [x] The d20 button at the right of the tab bar opens a pane along the bottom of the main pane (`reference/dungeon_elements_layout_plan_with_roll_results.png`): the result on the left, and a button for each die (d20, d12, d10, d100, d8, d6, d4) on the right
   - [x] Each die has a Count box; clicking the die (or pressing Enter in its box) rolls that many and shows each result, their total, and the few rolls before
-  - [ ] Dice expressions like `2d6+3`, advantage and disadvantage, and rolling from a note's fields
+  - [x] Dice expressions like `2d6+3`, advantage and disadvantage, and rolling from a note's fields
 
 Stretch goal:
 
@@ -93,6 +93,7 @@ The campaign's people and plots. Everything here is notes, types and links, buil
 - [ ] Content types grow up (see [Content types](#content-types))
   - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
   - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
+  - [ ] A `dice` field kind: pick the die, how many, and modifiers (`+2`, advantage, disadvantage) instead of typing an expression, and roll it from the note (builds on Phase 1's dice expressions)
   - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
   - [ ] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
 - [ ] Player management

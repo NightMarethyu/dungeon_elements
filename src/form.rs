@@ -6,13 +6,14 @@
 
 use iced::keyboard::{Key, Modifiers};
 use iced::widget::{
-    button, checkbox, column, container, pick_list, row, scrollable, space, text, text_editor,
+    button, checkbox, column, container, pick_list, row, scrollable, space, svg, text, text_editor,
     text_input,
 };
 use iced::{Center, Element, Fill, Point};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::context_menu;
+use crate::dice::{self, Expression};
 use crate::links;
 use crate::note::{self, Note, Section};
 use crate::style;
@@ -46,6 +47,8 @@ pub enum Message {
     Remove(usize),
     /// Opens the note link field `index` points to, making it if there is none.
     FollowLink(usize),
+    /// Rolls the dice in field `index`, like `1d8+3`.
+    Roll(usize, String),
 }
 
 /// What a short field holds, from [`Form::short_field`].
@@ -214,7 +217,7 @@ impl Form {
                 }
                 return edited;
             }
-            Message::FollowLink(_) => return false,
+            Message::FollowLink(_) | Message::Roll(..) => return false,
             Message::Check(index, value) => {
                 if let Some(Input::Check(checked)) = self.inputs.get_mut(index) {
                     *checked = value;
@@ -330,6 +333,11 @@ impl Form {
         self.fields.push(Field::for_note(label, kind));
         self.inputs.push(Input::empty(kind));
         Ok(())
+    }
+
+    /// The label of field `index`, to name what was rolled from it.
+    pub fn label(&self, index: usize) -> Option<String> {
+        self.fields.get(index).map(Field::label)
     }
 
     /// The field last typed or clicked in.
@@ -568,6 +576,7 @@ impl Form {
 
     /// Shows the form. Long text fields color `[[links]]` with `link_colors`, and Tab
     /// (or Enter in a link field) sends `accept` to finish the link being typed.
+    #[allow(clippy::too_many_arguments)]
     pub fn view<'a, M: Clone + 'a>(
         &'a self,
         c: Colors,
@@ -576,6 +585,7 @@ impl Form {
         link_colors: links::Colors,
         accept: Option<M>,
         on_menu: fn(Point) -> M,
+        roll_icon: &'a svg::Handle,
     ) -> Element<'a, M> {
         // Every editor sees every key press, so only the focused one handles shortcuts.
         let accept_tab = accept.clone();
@@ -647,26 +657,53 @@ impl Form {
                                         .style(style::secondary(c))
                                         .on_press(map(Message::FollowLink(index)))
                                 });
-                            let input = row![input].push(open).spacing(6);
+                            // A button for each roll in the field, like `1d8+3` or `+5`.
+                            let rolls = (field.kind != Kind::Link).then(|| {
+                                row(Expression::find(value).iter().map(|expression| {
+                                    dice::field_button(c, roll_icon, expression, move |dice| {
+                                        map(Message::Roll(index, dice))
+                                    })
+                                }))
+                                .spacing(6)
+                            });
+                            let input = row![input]
+                                .push(open)
+                                .push(rolls)
+                                .spacing(6)
+                                .align_y(Center);
 
                             column![label(index, field.label()), input]
                                 .spacing(6)
                                 .into()
                         }
-                        Input::Choice(choice) => column![
-                            label(index, field.label()),
-                            pick_list(field.options.as_slice(), choice.as_ref(), move |value| {
-                                map(Message::Choice(index, value))
-                            })
+                        Input::Choice(choice) => {
+                            let pick = pick_list(
+                                field.options.as_slice(),
+                                choice.as_ref(),
+                                move |value| map(Message::Choice(index, value)),
+                            )
                             .placeholder("Choose...")
                             .text_size(14)
                             .padding(8)
                             .style(style::choice(c))
                             .menu_style(style::choice_menu(c))
-                            .width(Fill),
-                        ]
-                        .spacing(6)
-                        .into(),
+                            .width(Fill);
+                            // A choice of dice, like a hit die, can be rolled too.
+                            let rolls = choice.as_deref().map(Expression::find).map(|found| {
+                                row(found.iter().map(|expression| {
+                                    dice::field_button(c, roll_icon, expression, move |dice| {
+                                        map(Message::Roll(index, dice))
+                                    })
+                                }))
+                                .spacing(6)
+                            });
+                            column![
+                                label(index, field.label()),
+                                row![pick].push(rolls).spacing(6).align_y(Center),
+                            ]
+                            .spacing(6)
+                            .into()
+                        }
                         Input::Check(checked) => {
                             let check = checkbox(*checked)
                                 .label(field.label())
