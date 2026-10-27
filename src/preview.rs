@@ -1089,7 +1089,7 @@ fn decode(url: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn markdown_style(c: Colors) -> markdown::Style {
+pub fn markdown_style(c: Colors) -> markdown::Style {
     markdown::Style {
         font: Font::DEFAULT,
         inline_code_highlight: Highlight {

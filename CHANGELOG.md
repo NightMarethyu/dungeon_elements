@@ -4,6 +4,14 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Help
+
+- **Help > How-To Guides** (F1) opens a Help window with short guides: getting started, notes and fields, links, reading and formatting, dice, and your files. The start screen links to it too.
+- **Help > Keyboard Shortcuts** (Ctrl+/) lists every shortcut, grouped by what it's for.
+- **Help > What's New** shows what changed in this version.
+- The Help window has a search box that narrows the guides and shortcuts to what you typed.
+- **Help > Report a Problem...** opens a new GitHub issue in your browser, and **Dungeon Elements on GitHub** opens the project's page.
+
 ## [0.2.0] - 2026-10-27
 
 Phase 1, _Inciting Incident_, of the [plan](PLAN.md): notes link together like a wiki, read like one, and can be written without knowing Markdown, with a dice roller close at hand. Campaigns from v0.1.0 open as they are. Dungeon Elements is still in early development, so keep backups of campaigns you care about.

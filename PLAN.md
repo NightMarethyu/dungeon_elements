@@ -90,9 +90,11 @@ Stretch goal:
 
 The campaign's people and plots. Everything here is notes, types and links, built on Phase 1's wiki, so it needs no new kinds of panes.
 
-- [ ] Help menu improvements
-  - [ ] Show all the keyboard shortcuts dialog box
-  - [ ] Basic How-Tos dialog
+- [x] Help menu improvements: a Help window (F1) with a search box, opened from the Help menu and the start screen
+  - [x] Show all the keyboard shortcuts (Help > Keyboard Shortcuts, Ctrl+/). The list is in `src/help.rs`, and a test fails if a menu shows a shortcut that isn't in it
+  - [x] Basic how-tos (Help > How-To Guides, F1): getting started, notes and fields, links, reading and formatting, dice, and your files. Each guide is a Markdown file in `help/en/` built into the app, so a new guide only takes a new file (see `help/README.md`); guides link to each other with `[text](guide:id)`
+  - [x] What's New (this version's part of the changelog), Report a Problem (opens a GitHub issue), and a link to the project on GitHub
+  - Grows with the app: each new feature adds its shortcuts to the list and a guide (or a section of one) when it needs explaining
 - [ ] Content types grow up (see [Content types](#content-types))
   - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
   - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
@@ -158,6 +160,14 @@ Sharing and reference: everything that leaves the campaign folder or comes in fr
   - [ ] Export chosen notes (or parts of them) for players, without GM-only fields and sections, as Markdown that opens in Dungeon Elements or Obsidian
   - [ ] The same handouts as PDFs to print or send
   - [ ] Table maps as PDFs: print a map at table scale with a chosen overlay (squares, hexes, or none)
+
+### After 1.0: stretch goals
+
+- [ ] Many languages (i18n), see [Languages](#languages)
+  - [ ] Every word the app shows (menus, buttons, dialogs, messages) comes from translation files instead of the code, starting with English
+  - [ ] Pick the language in the View menu (or a settings dialog), following the system's language at first
+  - [ ] The how-to guides translated, one folder per language in `help/` (falling back to English for guides not translated yet)
+  - [ ] Right-to-left languages (Arabic, Hebrew) and scripts that need other fonts (Chinese, Japanese, Korean)
 
 ## Design
 
@@ -237,6 +247,18 @@ Phase 5. The GM shares parts of the campaign with players without sharing their 
 - A field or `##` section can be marked GM-only in the type, and a note can be marked as a whole. Handouts leave those out.
 - Markdown handouts are a folder of ordinary notes with working links between the notes included; links to notes left out become plain text, so nothing points at secrets.
 - PDF handouts and table maps need a PDF-writing crate (separate from the reader's `pdfium-render`), chosen when this phase starts. Table maps print the SVG at a chosen scale (such as one inch per square) across as many pages as needed, with the overlay drawn on top.
+
+### Languages
+
+After 1.0 (a stretch goal once Phase 5 is done). Ammon has international ties, and the app should work for GMs in many languages, not only English.
+
+- Everything the app shows comes from a translation file per language, so translators edit text files, not Rust. [Fluent](https://projectfluent.org/) (the `fluent` crates, also used by Firefox) handles plurals and grammar that differ between languages, and is the first choice to look at. Plain YAML files, like themes, would be simpler but can't do plurals well.
+- Users can add or fix a translation by dropping a file in the app's config folder, like a theme, so a language doesn't have to wait for a release.
+- The help guides are already one folder per language (`help/en/`), so translated guides go in `help/de/`, `help/es/` and so on; a guide not translated yet shows in English.
+- Notes are the user's own words, so nothing in a campaign is translated. Field names in the starter types and campaign templates could ship translated, so a new campaign in Spanish starts with Spanish folders and fields.
+- iced needs fonts with the right characters (CJK fonts are large, so maybe downloaded or picked from the system) and right-to-left layout, which should be checked when this starts.
+- Dates, numbers and dice (`2d6` is `2W6` in German) may need local forms; dice expressions should accept both.
+- Until then, new code keeps what it shows in plain strings in one place where it can (like `help::SHORTCUTS`), which makes moving them to translation files easier later.
 
 ## Planned features
 
