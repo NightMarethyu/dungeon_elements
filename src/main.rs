@@ -1311,9 +1311,10 @@ impl Workspace {
                     continue;
                 };
                 let named_old = note::parse(&text).is_ok_and(|note| {
-                    note.front
-                        .get("name")
-                        .is_some_and(|name| note::value_to_text(name) == old_name.to_string_lossy())
+                    note.front.get("name").is_some_and(|name| {
+                        campaign::note_file_name(&note::value_to_text(name))
+                            == old_name.to_string_lossy()
+                    })
                 });
                 if named_old
                     && let Ok(text) =
@@ -4456,7 +4457,11 @@ impl Workspace {
             .or_else(|| name.strip_suffix(".MD"))
             .unwrap_or(name)
             .trim();
-        campaign::validate_name(name)?;
+        if name.is_empty() {
+            return Err("The name can't be empty".into());
+        }
+        // The name field gets the name as typed, and the file a name any system can hold.
+        let file_name = campaign::note_file_name(name);
         let label = display_name(path, false);
         if self
             .tabs
@@ -4467,15 +4472,15 @@ impl Workspace {
         }
 
         let folder = path.parent().unwrap_or(&self.root);
-        let target = folder.join(format!("{name}.md"));
-        if target == path {
+        let target = folder.join(format!("{file_name}.md"));
+        if target == path && path.file_stem().is_some_and(|stem| stem == name) {
             return Ok(());
         }
         // Changing only the case of the name renames the same file on Windows.
         let same_file =
             target.to_string_lossy().to_lowercase() == path.to_string_lossy().to_lowercase();
-        if target.exists() && !same_file {
-            return Err(format!("{name}.md already exists in this folder"));
+        if target.exists() && !same_file && target != path {
+            return Err(format!("{file_name}.md already exists in this folder"));
         }
 
         let text = std::fs::read_to_string(path)
@@ -4486,8 +4491,10 @@ impl Workspace {
         );
         let renamed = with_name(&text, name, wants_name);
 
-        std::fs::rename(path, &target)
-            .map_err(|error| format!("Could not rename {label}: {error}"))?;
+        if target != path {
+            std::fs::rename(path, &target)
+                .map_err(|error| format!("Could not rename {label}: {error}"))?;
+        }
         let mut done = format!("Renamed {label} to {name}");
         if let Some(renamed) = &renamed
             && let Err(error) = std::fs::write(&target, renamed)
@@ -4951,11 +4958,15 @@ fn create_linked_note(
         Some(folder) if !target.contains('/') => folder.to_path_buf(),
         _ => root.to_path_buf(),
     };
-    for part in target.split('/') {
-        campaign::validate_name(part.trim())
+    let parts: Vec<&str> = target.split('/').map(str::trim).collect();
+    let (name, folders) = parts.split_last().unwrap_or((&"", &[]));
+    for part in folders {
+        campaign::validate_name(part)
             .map_err(|error| format!("Can't make a note for [[{target}]]: {error}"))?;
-        path.push(part.trim());
+        path.push(part);
     }
+    // The file gets a name any system can hold; the name field keeps the link's name.
+    path.push(campaign::note_file_name(name));
     let folder = path.parent().unwrap_or(root);
     if !folder.is_dir() {
         return Err(format!(
@@ -4969,8 +4980,7 @@ fn create_linked_note(
             let mut front = serde_yaml_ng::Mapping::new();
             front.insert("type".into(), ty.id.clone().into());
             if ty.name_field().is_some() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                front.insert("name".into(), name.into_owned().into());
+                front.insert("name".into(), (*name).into());
             }
             note::to_markdown(&front, &[], "")?
         }
@@ -5024,7 +5034,8 @@ fn save_named(tab: &Tab, text: &str, label: &str) -> Result<PathBuf, String> {
     let name = tab
         .note_name()
         .ok_or_else(|| format!("Give the {label} a name before saving"))?;
-    campaign::validate_name(&name)?;
+    // The name field keeps the name as typed; the file gets a name any system can hold.
+    let name = campaign::note_file_name(&name);
 
     let folder = tab
         .path

@@ -116,8 +116,8 @@ pub fn broken_links(text: &str, path: &Path, index: &Index, gone: &Gone) -> Vec<
     let mut seen = HashSet::new();
     let mut problems = Vec::new();
 
-    for link in links::find(text) {
-        let target = text[link.target].trim();
+    for target in links::targets(text) {
+        let target = target.trim();
         if !is_note_link(target) || index.resolve(target, path).is_some() {
             continue;
         }

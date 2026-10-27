@@ -16,6 +16,10 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Notes renamed or moved outside the app (in Explorer, a file manager, or Obsidian with link updating off) are noticed: their tabs follow them, their name field takes the new name, and every link to them is updated.
 - Links that look broken are listed as problems: ones to a note that was renamed or deleted outside the app, or to a missing note when one is spelled almost the same (`[[Bobby]]` when there's a Bob). Links to notes you haven't written yet are fine and aren't flagged.
 
+- Links work with any name: apostrophes and quotes (`John's Long Johns`), accents, other alphabets and emoji. In the front matter a link is read as the YAML string it's in, so `owner: '[[John''s Long Johns]]'` links to John's Long Johns, and renaming or relinking writes names with the escaping YAML needs. Typing a link in the front matter in the Markdown source escapes it too.
+- A note's name can hold characters a file name can't (`Chapter 1: The Inn`, `What?`, `The "Lucky" Inn`). The name field keeps the name as typed, and the file gets a name that works in Windows, macOS, Linux, and in links (`Chapter 1 - The Inn.md`, `What.md`, `The 'Lucky' Inn.md`). Links written with the full name still find the note.
+- Fixed a crash when a line with an accented letter or other non-English character held a `[[link]]`.
+
 ### Fixing problems
 
 - Hover the ⚠ next to a note in the file tree to see what's wrong with it, and click it for a dialog of fixes: link to the note it probably meant, make the missing note (in the link field's folder), remove the link, or ignore it; move a long text field from the front matter into its `## ` section; use the folder's type when `type:` names none; or change a choice like `rare` to `Rare`. **Problems** in the status bar has a **Fix...** button for each note too.

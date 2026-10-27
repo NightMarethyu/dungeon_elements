@@ -15,6 +15,7 @@ use iced::advanced::text;
 use iced::widget::text_editor::{self, Action, Content, Cursor, Edit, Motion, Position};
 use serde_yaml_ng::Value;
 
+use crate::campaign;
 use crate::note;
 
 /// A `[[link]]` found in some text.
@@ -67,7 +68,8 @@ fn find_in_line(line: &str, offset: usize, links: &mut Vec<Link>) {
             continue;
         }
 
-        if !line[i..].starts_with("[[") {
+        // Bytes, as `i` can be inside a letter like ö.
+        if !bytes[i..].starts_with(b"[[") {
             i += 1;
             continue;
         }
@@ -108,6 +110,9 @@ fn find_in_line(line: &str, offset: usize, links: &mut Vec<Link>) {
 }
 
 /// A link target as [`Index`] compares it: lowercase, `/`-separated, without `.md`.
+///
+/// Each part is read as the file name a note with that name gets
+/// ([`campaign::safe_name`]), so `[[Chapter 1: The Inn]]` finds `Chapter 1 - The Inn.md`.
 pub fn normalize(target: &str) -> String {
     let target = target.trim().replace('\\', "/");
     let target = target.trim_start_matches('/');
@@ -117,7 +122,19 @@ pub fn normalize(target: &str) -> String {
         }
         _ => target,
     };
-    target.to_lowercase()
+    target
+        .split('/')
+        .map(|part| {
+            let safe = campaign::safe_name(part);
+            if safe.is_empty() {
+                part.trim().to_string()
+            } else {
+                safe
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+        .to_lowercase()
 }
 
 /// The campaign's notes, for finding the note a link points to.
@@ -428,8 +445,9 @@ pub fn unlink_all(text: &str, target: &str) -> Option<String> {
     let mut result = text.to_string();
     let mut changed = false;
 
+    let yaml = front_matter_len(text);
     for link in find(text).into_iter().rev() {
-        if normalize(&text[link.target.clone()]) != target {
+        if normalize(&read_target(text, &link, link.range.start < yaml)) != target {
             continue;
         }
         let inner = text[link.range.clone()]
@@ -481,7 +499,7 @@ fn rewrite_note(
         return (body_changes > 0).then(|| (format!("{head}{new_body}"), body_changes));
     };
 
-    let (new_yaml, front_changes) = rewrite(yaml, new_target);
+    let (new_yaml, front_changes) = rewrite_yaml(yaml, new_target);
     if front_changes + body_changes == 0 {
         return None;
     }
@@ -509,10 +527,158 @@ fn rewrite_note(
     ))
 }
 
+/// Like [`rewrite`], for front matter YAML: each target is read as the YAML string it is
+/// part of (`'[[John''s Shop]]'` links to John's Shop), and a new one is written so it
+/// stays valid there (John's Shop becomes `John''s Shop` in single quotes).
+fn rewrite_yaml(yaml: &str, new_target: &mut dyn FnMut(&str) -> Option<String>) -> (String, usize) {
+    let mut result = yaml.to_string();
+    let mut changed = 0;
+
+    for link in find(yaml).into_iter().rev() {
+        let quote = quote_at(yaml, link.target.start);
+        if let Some(replacement) = new_target(&unquote(&yaml[link.target.clone()], quote)) {
+            result.replace_range(link.target.clone(), &requote(&replacement, quote));
+            changed += 1;
+        }
+    }
+
+    (result, changed)
+}
+
+/// The note `link` (found in `text`) points to, read as YAML if it is in the front matter.
+fn read_target(text: &str, link: &Link, in_yaml: bool) -> String {
+    let raw = &text[link.target.clone()];
+    if in_yaml {
+        unquote(raw, quote_at(text, link.target.start))
+    } else {
+        raw.to_string()
+    }
+}
+
+/// The length of the front matter at the start of `text`, closing `---` included, or 0.
+fn front_matter_len(text: &str) -> usize {
+    match note::split_front_matter(text) {
+        Ok((Some(_), body)) => text.len() - body.len(),
+        _ => 0,
+    }
+}
+
+/// The notes the `[[links]]` in a whole note point to, in order. Links in the front
+/// matter are read as the YAML strings they are part of.
+pub fn targets(text: &str) -> Vec<String> {
+    let yaml = front_matter_len(text);
+    find(text)
+        .iter()
+        .map(|link| read_target(text, link, link.range.start < yaml))
+        .collect()
+}
+
+/// How the YAML at a spot in a line is quoted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Quote {
+    Plain,
+    Single,
+    Double,
+}
+
+/// How byte `at` of `yaml` is quoted, going by its line up to there.
+fn quote_at(yaml: &str, at: usize) -> Quote {
+    let line_start = yaml[..at].rfind('\n').map_or(0, |i| i + 1);
+    let line = &yaml.as_bytes()[line_start..at];
+    let mut quote = Quote::Plain;
+    let mut i = 0;
+
+    while i < line.len() {
+        let b = line[i];
+        match quote {
+            Quote::Plain => {
+                // A quote only starts a string where a value starts, not in `John's`.
+                let starts_value = line[..i]
+                    .iter()
+                    .rev()
+                    .find(|b| !b.is_ascii_whitespace())
+                    .is_none_or(|b| b":-[{,?".contains(b));
+                if starts_value && b == b'\'' {
+                    quote = Quote::Single;
+                } else if starts_value && b == b'"' {
+                    quote = Quote::Double;
+                }
+            }
+            Quote::Single if b == b'\'' => {
+                if line.get(i + 1) == Some(&b'\'') {
+                    i += 1;
+                } else {
+                    quote = Quote::Plain;
+                }
+            }
+            Quote::Double if b == b'\\' => i += 1,
+            Quote::Double if b == b'"' => quote = Quote::Plain,
+            _ => {}
+        }
+        i += 1;
+    }
+    quote
+}
+
+/// The text a piece of YAML quoted with `quote` stands for.
+fn unquote(raw: &str, quote: Quote) -> String {
+    match quote {
+        Quote::Plain => raw.to_string(),
+        Quote::Single => raw.replace("''", "'"),
+        Quote::Double => {
+            let mut out = String::with_capacity(raw.len());
+            let mut chars = raw.chars();
+            while let Some(c) = chars.next() {
+                match (c, chars.clone().next()) {
+                    ('\\', Some(next @ ('"' | '\\' | '/'))) => {
+                        out.push(next);
+                        chars.next();
+                    }
+                    _ => out.push(c),
+                }
+            }
+            out
+        }
+    }
+}
+
+/// `text` written so it reads back as itself inside YAML quoted with `quote`.
+fn requote(text: &str, quote: Quote) -> String {
+    match quote {
+        Quote::Plain => text.to_string(),
+        Quote::Single => text.replace('\'', "''"),
+        Quote::Double => text.replace('\\', "\\\\").replace('"', "\\\""),
+    }
+}
+
+/// Whether line `line` of `content` is inside the front matter at the top of the note.
+fn in_front_matter(content: &Content, line: usize) -> bool {
+    let is_fence = |index: usize| {
+        content
+            .line(index)
+            .is_some_and(|line| matches!(line.text.trim_end(), "---" | "..."))
+    };
+    line > 0 && is_fence(0) && !(1..=line).any(is_fence)
+}
+
 /// Rewrites the links in the strings of a YAML value.
 fn rewrite_value(value: Value, new_target: &mut dyn FnMut(&str) -> Option<String>) -> Value {
     match value {
         Value::String(text) => Value::String(rewrite(&text, new_target).0),
+        // `owner: [[Mira]]` without quotes reads as a list in a list.
+        Value::Sequence(outer)
+            if matches!(outer.as_slice(), [Value::Sequence(inner)]
+                if matches!(inner.as_slice(), [Value::String(_)])) =>
+        {
+            let [Value::Sequence(inner)] = outer.as_slice() else {
+                unreachable!()
+            };
+            let [Value::String(target)] = inner.as_slice() else {
+                unreachable!()
+            };
+            let target = new_target(target.trim()).unwrap_or_else(|| target.clone());
+            Value::Sequence(vec![Value::Sequence(vec![Value::String(target)])])
+        }
         Value::Sequence(items) => Value::Sequence(
             items
                 .into_iter()
@@ -584,6 +750,15 @@ pub fn complete(content: &mut Content, link: &str) {
         .and_then(|line| line.get(end.column..))
         .unwrap_or("");
 
+    // In the front matter, the name goes inside a YAML string, and must be escaped to fit.
+    let link = match &line {
+        Some(line) if in_front_matter(content, end.line) => {
+            requote(link, quote_at(line, start.column.min(line.len())))
+        }
+        _ => link.to_string(),
+    };
+    let link = link.as_str();
+
     content.move_to(Cursor {
         position: end,
         selection: Some(start),
@@ -607,10 +782,14 @@ pub fn under_cursor(content: &Content) -> Option<String> {
 
     let mut links = Vec::new();
     find_in_line(&line, 0, &mut links);
-    links
+    let link = links
         .into_iter()
-        .find(|link| link.range.start <= position.column && position.column <= link.range.end)
-        .map(|link| line[link.target].to_string())
+        .find(|link| link.range.start <= position.column && position.column <= link.range.end)?;
+    Some(read_target(
+        &line,
+        &link,
+        in_front_matter(content, position.line),
+    ))
 }
 
 /// Applies `action` to `content`, closing a typed `[[` with `]]` the way Obsidian does
@@ -680,8 +859,18 @@ pub struct Colors {
 /// Colors the `[[links]]` in a text editor.
 pub struct Highlighter {
     colors: Colors,
-    /// Whether each line, up to the next one to color, starts inside a code block.
-    in_code: Vec<bool>,
+    /// Where each line, up to the next one to color, starts.
+    starts: Vec<Place>,
+}
+
+/// Where a line of a note is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Place {
+    /// The first line, which may open the front matter.
+    Top,
+    FrontMatter,
+    Text,
+    Code,
 }
 
 impl text::Highlighter for Highlighter {
@@ -693,33 +882,49 @@ impl text::Highlighter for Highlighter {
     fn new(colors: &Colors) -> Self {
         Highlighter {
             colors: colors.clone(),
-            in_code: vec![false],
+            starts: vec![Place::Top],
         }
     }
 
     fn update(&mut self, colors: &Colors) {
         self.colors = colors.clone();
-        self.in_code.truncate(1);
+        self.starts.truncate(1);
     }
 
     fn change_line(&mut self, line: usize) {
-        self.in_code.truncate(line + 1);
+        self.starts.truncate(line + 1);
     }
 
     fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
-        let in_code = *self.in_code.last().unwrap_or(&false);
-        let fence = is_fence(line);
-        self.in_code.push(in_code != fence);
+        let place = *self.starts.last().unwrap_or(&Place::Text);
+        let yaml_fence = matches!(line.trim_end(), "---" | "...");
+        let (here, next) = match place {
+            Place::Top if line.trim_end() == "---" => (Place::Top, Place::FrontMatter),
+            Place::FrontMatter if yaml_fence => (Place::Top, Place::Text),
+            Place::FrontMatter => (Place::FrontMatter, Place::FrontMatter),
+            Place::Code => (
+                Place::Code,
+                if is_fence(line) {
+                    Place::Text
+                } else {
+                    Place::Code
+                },
+            ),
+            Place::Top | Place::Text if is_fence(line) => (Place::Code, Place::Code),
+            Place::Top | Place::Text => (Place::Text, Place::Text),
+        };
+        self.starts.push(next);
 
         let mut links = Vec::new();
-        if !in_code && !fence {
+        if matches!(here, Place::Text | Place::FrontMatter) {
             find_in_line(line, 0, &mut links);
         }
 
         links
             .into_iter()
             .map(|link| {
-                let color = if self.colors.names.contains(&line[link.target]) {
+                let target = read_target(line, &link, here == Place::FrontMatter);
+                let color = if self.colors.names.contains(&target) {
                     self.colors.link
                 } else {
                     self.colors.missing
@@ -731,7 +936,7 @@ impl text::Highlighter for Highlighter {
     }
 
     fn current_line(&self) -> usize {
-        self.in_code.len() - 1
+        self.starts.len() - 1
     }
 }
 
@@ -790,6 +995,12 @@ mod tests {
         let links = find(text);
         assert_eq!(&text[links[2].range.clone()], "![[map]]");
         assert_eq!(&text[links[1].range.clone()], "[[npcs/Bob|the baker]]");
+    }
+
+    #[test]
+    fn finds_links_among_any_letters() {
+        let text = "Café Ælf [[Jön's Lóng 🧦]] — Дракон [[Дракон|змей]] `ö [[no]]` 日本 [[東京]]";
+        assert_eq!(targets(text), ["Jön's Lóng 🧦", "Дракон", "東京"]);
     }
 
     #[test]
@@ -1005,6 +1216,84 @@ mod tests {
             Some(&Value::from("[[Mira's Cat]]"))
         );
         assert_eq!(note.preamble, "Body");
+    }
+
+    #[test]
+    fn links_in_front_matter_are_read_as_yaml() {
+        let text = "---\nowner: '[[John''s Long Johns]]'\nfriend: \"[[The \\\"Lucky\\\" Inn]]\"\nplain: [[Ælf's Hall]]\nlist:\n  - 'Saw [[Mira''s Cat]]'\n---\n\nBody [[John's Long Johns]] and [[It''s]].\n";
+        assert_eq!(
+            super::targets(text),
+            [
+                "John's Long Johns",
+                "The \"Lucky\" Inn",
+                "Ælf's Hall",
+                "Mira's Cat",
+                "John's Long Johns",
+                // Outside the front matter, '' is just two quotes.
+                "It''s",
+            ]
+        );
+    }
+
+    #[test]
+    fn renaming_notes_with_quotes_in_their_names() {
+        let root = Path::new("/c");
+        let notes = ["npcs/John's Long Johns", "items/Ring"];
+        let text = "---\nowner: '[[John''s Long Johns]]'\nalso: \"[[John's Long Johns]]\"\nbare: [[John's Long Johns]]\n---\n\nSee [[John's Long Johns|him]].\n";
+
+        let (new, count) = rename_in(
+            root,
+            &notes,
+            "npcs/John's Long Johns",
+            "npcs/Jo's \"Big\" Shop",
+            text,
+            "items/Ring",
+        )
+        .unwrap();
+        assert_eq!(count, 4, "{new}");
+        let note = note::parse(&new).unwrap();
+        for key in ["owner", "also"] {
+            assert_eq!(
+                note.front.get(key),
+                Some(&Value::from("[[Jo's \"Big\" Shop]]")),
+                "{new}"
+            );
+        }
+        // Still in place, quoted the way it was.
+        assert!(new.contains("owner: '[[Jo''s \"Big\" Shop]]'"), "{new}");
+        assert!(new.contains("See [[Jo's \"Big\" Shop|him]]."), "{new}");
+        assert_eq!(
+            note.front.get("bare"),
+            Some(&Value::Sequence(vec![Value::Sequence(vec![Value::from(
+                "Jo's \"Big\" Shop"
+            )])]))
+        );
+    }
+
+    #[test]
+    fn links_find_notes_whose_names_were_made_safe() {
+        let root = Path::new("/c");
+        let index = campaign(root, &["Chapter 1 - The Inn", "The 'Lucky' Inn", "Дракон"]);
+        let from = root.join("Day.md");
+        assert!(index.resolve("Chapter 1: The Inn", &from).is_some());
+        assert!(index.resolve("The \"Lucky\" Inn", &from).is_some());
+        assert!(index.resolve("дракон", &from).is_some());
+        assert!(index.names().contains("CHAPTER 1: the inn"));
+    }
+
+    #[test]
+    fn completing_a_link_in_front_matter_escapes_it() {
+        let mut content = Content::with_text("---\nowner: '[[Jo\n---\n");
+        content.move_to(Cursor {
+            position: Position {
+                line: 1,
+                column: 12,
+            },
+            selection: None,
+        });
+        complete(&mut content, "John's Long Johns");
+        assert_eq!(content.text(), "---\nowner: '[[John''s Long Johns]]\n---\n");
+        assert_eq!(under_cursor(&content).as_deref(), Some("John's Long Johns"));
     }
 
     #[test]
