@@ -1,6 +1,6 @@
 # Releasing Dungeon Elements
 
-How to build the release files and publish a version on GitHub. The examples use v0.1.0; change the version number for later releases.
+How to build the release files and publish a version on GitHub. The examples use v0.2.0; change the version number for later releases.
 
 ## 1. Get the code ready
 
@@ -11,7 +11,7 @@ How to build the release files and publish a version on GitHub. The examples use
    git pull
    ```
 
-2. Check that `version` in `Cargo.toml` is the version you are releasing (`0.1.0`), and that `CHANGELOG.md` has a section for it with today's date. For the next release, move the `[Unreleased]` notes into a new version section and bump `version` (then run `cargo build` once so `Cargo.lock` picks it up, and commit both).
+2. Check that `version` in `Cargo.toml` is the version you are releasing (`0.2.0`), and that `CHANGELOG.md` has a section for it with today's date. When releasing, move the `[Unreleased]` notes into a new version section and bump `version` (then run `cargo build` once so `Cargo.lock` picks it up, and commit both).
 
 3. Run the tests:
 
@@ -36,7 +36,7 @@ You already have the Rust MSVC toolchain and the Visual Studio **Desktop develop
 3. Zip it with the README, changelog, and license:
 
    ```powershell
-   $v = "0.1.0"
+   $v = "0.2.0"
    New-Item -ItemType Directory -Force dist | Out-Null
    Compress-Archive -Force -DestinationPath "dist\dungeon_elements-v$v-windows-x86_64.zip" `
      -Path target\release\dungeon_elements.exe, README.md, CHANGELOG.md, LICENSE
@@ -87,7 +87,7 @@ The Linux build has to be made on Linux. On Windows the easiest way is WSL with 
 5. Package it with the icon and a desktop entry, and copy the archive to your Windows `dist` folder:
 
    ```sh
-   v=0.1.0
+   v=0.2.0
    name=dungeon_elements-v$v-linux-x86_64
    rm -rf "dist/$name" && mkdir -p "dist/$name"
    cp target/release/dungeon_elements README.md CHANGELOG.md LICENSE \
@@ -103,8 +103,8 @@ The Linux build has to be made on Linux. On Windows the easiest way is WSL with 
 A Mac app can only be built on a Mac, so GitHub builds it for you on one of its macOS machines with the workflow in `.github/workflows/macos.yml`. It makes `Dungeon Elements.app` as a single "universal" app that runs on both Apple silicon and Intel Macs.
 
 1. The workflow runs on its own when you push a version tag (step 5 below). To build it without a tag, open the repository's **Actions** tab, pick **macOS build** on the left, click **Run workflow**, choose `main`, and click the green **Run workflow** button.
-2. Wait for the run to finish (about 10 to 15 minutes) and open it. Under **Artifacts** at the bottom, download `dungeon_elements-v0.1.0-macos-universal`.
-3. GitHub wraps every artifact in its own zip, so unzip the download once. Inside is `dungeon_elements-v0.1.0-macos-universal.zip`: that inner zip is the file to attach to the release (move it to your `dist` folder).
+2. Wait for the run to finish (about 10 to 15 minutes) and open it. Under **Artifacts** at the bottom, download `dungeon_elements-v0.2.0-macos-universal`.
+3. GitHub wraps every artifact in its own zip, so unzip the download once. Inside is `dungeon_elements-v0.2.0-macos-universal.zip`: that inner zip is the file to attach to the release (move it to your `dist` folder).
 
 The app has an ad-hoc signature, not an Apple Developer ID (that needs a paid Apple Developer account), so macOS warns the first time it opens. The workaround goes in the release notes (see the changelog's known limitations). If a run fails, the log on its page says why; the build hasn't been tested on a real Mac yet, so please mention any trouble a Mac user reports.
 
@@ -113,19 +113,19 @@ The app has an ad-hoc signature, not an Apple Developer ID (that needs a paid Ap
 1. Tag the release commit and push the tag (from Windows or WSL, on an up-to-date `main`):
 
    ```sh
-   git tag -a v0.1.0 -m "Dungeon Elements v0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.2.0 -m "Dungeon Elements v0.2.0"
+   git push origin v0.2.0
    ```
 
    Pushing the tag also starts the macOS build (step 4).
 
 2. On GitHub, open **Releases** > **Draft a new release**.
-3. Pick the tag `v0.1.0` and title it **Dungeon Elements v0.1.0**.
-4. Paste the `0.1.0` section of `CHANGELOG.md` as the description.
+3. Pick the tag `v0.2.0` and title it **Dungeon Elements v0.2.0**.
+4. Paste the `0.2.0` section of `CHANGELOG.md` as the description.
 5. Attach the three files from `dist` (once the tag's macOS run from step 4 has finished):
-   - `dungeon_elements-v0.1.0-windows-x86_64.zip`
-   - `dungeon_elements-v0.1.0-linux-x86_64.tar.gz`
-   - `dungeon_elements-v0.1.0-macos-universal.zip`
+   - `dungeon_elements-v0.2.0-windows-x86_64.zip`
+   - `dungeon_elements-v0.2.0-linux-x86_64.tar.gz`
+   - `dungeon_elements-v0.2.0-macos-universal.zip`
 6. Tick **Set as a pre-release** if you want to signal that it's early (0.x), then **Publish release**.
 
 ## Notes

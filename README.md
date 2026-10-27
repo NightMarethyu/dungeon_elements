@@ -6,7 +6,7 @@
 
 Write your world in plain Markdown, link it together like a wiki, and keep every file on your own drive.
 
-![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-blue)
+![Version: 0.2.0](https://img.shields.io/badge/version-0.2.0-blue)
 ![Status: early development](https://img.shields.io/badge/status-early%20development-orange)
 ![Language: Rust](https://img.shields.io/badge/language-Rust-b7410e?logo=rust)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
@@ -16,15 +16,41 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 ---
 
 > [!NOTE]
-> Dungeon Elements is in **early development**. When it starts, you can open a campaign folder or create a new one (optionally with a starter set of folders). Inside a campaign, a collapsible file tree on the left lists your folders and Markdown (`.md`) files, and each file you open gets its own tab. Everything is in the **File**, **Edit**, **View**, and **Help** menus, with shortcuts for **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), **Save All** (Ctrl+Alt+S), and **Close Tab** (Ctrl+W). **View** picks a color theme (Dark or High Contrast, or your own; see [Themes](#themes)) and can show file extensions and folders' `.yaml` type files.
->
-> Folders can define the fields their notes have in a `_type.yaml` (new campaigns come with one in each starter folder). Notes in those folders open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. The **+** next to a folder makes a new note in it, the round **+** under the file tree makes a new folder (optionally with a note type), and the round **+** on a form adds a field to just that note. **Edit > Types** changes the fields of every note in a folder. **View > Show Markdown Source** (Ctrl+E) shows the file itself.
->
-> Link notes together the Obsidian way: type `[[` and pick a note from the suggestions (Tab inserts the first), or select some text and press **Edit > Insert Link** (Ctrl+K). Links can show other text (`[[Mira|the smuggler]]`) or point to a heading (`[[Mira#Appearance]]`). Ctrl+click a link, or use the bar under the editor, to open the note; a link to a note that doesn't exist yet makes it. Link fields point at a folder, so typing a new place in an NPC's Location offers to make it in your locations folder. Renaming a note (by changing its Name and saving) rewrites every link to it across the campaign, including links in fields and in files you have open. Drag a note onto another folder in the file tree to move it; it takes that folder's type and keeps what you filled in.
->
-> Press **Read** at the top right (or Ctrl+R) to see a note formatted, the way GitHub shows a README: its name as a title, its fields in a box on the right like a wiki, then headings, lists, tables, quotes, colored code, pictures (`![[map.png]]`, or from the web), and other notes embedded with `![[Note]]`. **Edit > Insert Picture** adds a picture from anywhere on your computer. Click a link there to read the note it points to. **View > Open Notes in Reading View** makes notes open that way. You can edit right there: click a paragraph or a field to change it in place, and it's formatted again when you click away.
->
-> Campaigns stay plain files, so you can edit them in Obsidian or any text editor. When a campaign opens, Dungeon Elements checks its notes and marks any it can't show as intended with a ⚠ (the ⚠ in the status bar lists what's wrong). When you switch back to the app, open files that changed elsewhere are reloaded, and if you have unsaved changes it asks which version to keep. The roadmap lives in [PLAN.md](PLAN.md). _"Dungeon Elements" is a working title._
+> Dungeon Elements is in **early development**, but Phases 0 and 1 of the [plan](PLAN.md) are done: you can build a campaign as a wiki of linked Markdown notes, read it formatted, and roll dice beside it. Keep backups of campaigns you care about. _"Dungeon Elements" is a working title._
+
+## What it does
+
+**Campaigns and notes**
+
+- Open a campaign folder, or make a new one with starter folders (items, journal, locations, lore, NPCs, players, quests). The file tree on the left lists its folders and notes, and each note opens in a tab.
+- Everything is in the **File**, **Edit**, **View**, and **Help** menus, with the usual shortcuts: **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), **Save All** (Ctrl+Alt+S), and **Close Tab** (Ctrl+W).
+- A folder can give its notes fields in a `_type.yaml` (each starter folder has one). Its notes open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. **Edit > Types** changes a folder's fields, and the round **+** on a form adds a field to just that note. **Form**, **Markdown**, and **Read** at the top right switch between the form, the Markdown text, and the reading view.
+- Right-click the file tree, tabs, editors, and forms to rename, move, or delete notes and folders (deleted ones go to the Recycle Bin or Trash), make new ones, copy a link, and more. Drag a note onto another folder to move it; it takes that folder's type and keeps what you filled in.
+
+**Links, like a wiki**
+
+- Link notes the Obsidian way: type `[[` and pick a note from the suggestions, or select some text and press **Edit > Insert Link** (Ctrl+K). Links can show other text (`[[Mira|the smuggler]]`) or point to a heading (`[[Mira#Appearance]]`), and notes can have aliases, so the BBEG can also go by `[[Jerry]]`.
+- Ctrl+click a link to open the note; a link to a note that doesn't exist yet makes it. Link fields point at a folder, so typing a new place in an NPC's Location offers to make it in your locations folder.
+- Rename a note (in the app or outside it) and every link to it follows. Note names can hold any characters (`Chapter 1: The Inn`, `John's Long Johns`); the file gets a name that works everywhere.
+- At the end of each note, **Linked from** lists the notes that link to it, so an NPC shows every quest, place, and journal entry they turn up in.
+
+**Reading and writing**
+
+- **Read** (Ctrl+R) shows a note formatted, the way GitHub shows a README: its name as a title, its fields in a box on the right like a wiki's infobox, then headings, lists, tables, quotes, colored code, pictures (`![[map.png]]`, or from the web), and other notes embedded with `![[Note]]`.
+- Edit right in the reading view: click a paragraph or a field to change it in place, or a task box to tick it.
+- No need to know Markdown: a formatting toolbar makes headings, bold and italic text, lists, task lists, links, and pictures, and shows the Markdown it writes. If you do know it, type it: Enter carries lists on, Ctrl+B and Ctrl+I work, and the marks are dimmed so the words stand out.
+- **Edit > Insert Picture**, or dropping a picture on the window, copies it into the campaign and embeds it.
+
+**Dice**
+
+- The d20 button at the right of the tab bar opens a dice roller: click a die, or type an expression like `2d6+3`, `d%`, or `4d6kh3`. Advantage and disadvantage work on a d20, or on any die for systems that allow it.
+- Fields with dice in them, like Damage `1d8 + 3 slashing`, get a roll button in the form and in the reading view.
+
+**Your files stay yours**
+
+- Campaigns are plain files, so you can edit them in Obsidian or any text editor at the same time. The campaign folder is watched: notes changed, renamed, or deleted elsewhere show up right away, and if you have unsaved changes it asks which version to keep.
+- Notes the app can't show as intended (broken front matter, a word in a number field, a broken link) get a ⚠ in the tree. Hover it to see what's wrong, and click it for a list of fixes.
+- Pick a color theme in **View** (Dark or High Contrast), or make your own (see [Themes](#themes)).
 
 ## Why Dungeon Elements?
 
@@ -36,31 +62,31 @@ Game Masters pour years into their campaigns. That work shouldn't be locked insi
 - **🦀 Pure Rust.** A native desktop app built with [iced](https://iced.rs), aiming to be fast, stable, and secure.
 - **🎲 Any system.** System-agnostic: not tied to D&D, Shadowdark, or any other game. Built for GMs and solo players on Windows and Linux.
 
-## How it will work
+## How it works
 
 Each campaign is just a folder. Open the folder and your campaign is there:
 
 ```text
 my-campaign/
 ├── locations/
-│   ├── the-sunken-keep.md
-│   └── the-sunken-keep.svg
+│   └── the-sunken-keep.md
 ├── npcs/
 │   └── mira-the-innkeeper.md
 ├── players/
 ├── quests/
 ├── items/
+├── journal/
 └── lore/
 ```
 
-Type `[[` and pick a note, or select a name in your notes and press Ctrl+K, to create an Obsidian-compatible `[[link]]`. If a page with that name exists, it gets linked; if not, opening the link creates it for you. Rename a page and every link to it follows. At the end of each note in the reading view, **Linked from** lists the notes that link to it, so an NPC shows every quest, place and journal entry they turn up in. Over time, your notes grow into a connected wiki of your world.
+Every note is a Markdown file with its fields in YAML front matter, and `[[links]]` tie them together the way Obsidian does, so the same folder opens in Obsidian too. Over time, your notes grow into a connected wiki of your world.
 
 ## Roadmap
 
 | Phase | Name | Goals |
 | :---: | --- | --- |
 | **0** ✅ | _Call to Action_ (v0.1) | Basic iced GUI · write, save, and open Markdown · one folder per campaign · YAML metadata · detect outside edits |
-| **1** | _Inciting Incident_ | Polished file display · Obsidian-style `[[links]]` that survive renames · WYSIWYG editing · built-in dice roller |
+| **1** ✅ | _Inciting Incident_ (v0.2) | Reading view · Obsidian-style `[[links]]` that survive renames · backlinks · formatting toolbar · built-in dice roller |
 | **2** | _Rising Action_ | Basic SVG map editor · name and roll table generators |
 
 Dungeon Elements is **not** a virtual tabletop and has no multiplayer sync. It's for building and tracking campaigns, not hosting them.
@@ -73,7 +99,7 @@ Dungeon Elements is **not** a virtual tabletop and has no multiplayer sync. It's
 - 📜 **Quest tracker:** build quests and get story suggestions for inspiration (suggestions, not generated stories)
 - 📚 **World and lore wiki:** your Markdown files as a browsable wiki, linked to your maps
 - 🖨️ **PDF export:** player handouts and table maps with a square, hex, or blank overlay
-- 📓 **Solo journaling:** built-in dice rollers and a side-by-side view of your journal with lore, rules, or roll tables
+- 📓 **Solo journaling:** a side-by-side view of your journal with lore, rules, or roll tables
 
 See [PLAN.md](PLAN.md) for the full plan and checklists.
 
