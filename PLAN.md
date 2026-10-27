@@ -71,7 +71,8 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
 - [x] Backlinks, so the notes read like a wiki: the reading view lists the notes that link to this one ("Linked from"), so an NPC shows the quests, locations and journal entries they appear in
 - [ ] Syntax-highlighting and live preview
   - [x] Live preview in the reading view: click a block (paragraph, list, table, heading...) to edit its Markdown in place; it is formatted again when you click elsewhere or press Escape. Fields in the box, and the title, are edited the same way, and clicking under the note adds text
-  - [ ] Link suggestions while typing `[[` in a block, and toggling task boxes with a click
+  - [x] Link suggestions while typing `[[` in a block (Tab or a click inserts one), and in a field in the box (Enter picks the first). Names, aliases and file names are ranked together, so whatever starts with what was typed comes first
+  - [ ] Toggling task boxes with a click
 - [x] Built-in dice roller, keep everything close without needing to leave the app
   - [x] The d20 button at the right of the tab bar opens a pane along the bottom of the main pane (`reference/dungeon_elements_layout_plan_with_roll_results.png`): the result on the left, and a button for each die (d20, d12, d10, d100, d8, d6, d4) on the right
   - [x] Each die has a Count box; clicking the die (or pressing Enter in its box) rolls that many and shows each result, their total, and the few rolls before

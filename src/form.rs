@@ -649,20 +649,17 @@ impl Form {
                                 input = input.on_submit(accept.clone());
                             }
 
-                            let input: Element<'a, M> =
-                                if field.kind == Kind::Link && !value.trim().is_empty() {
-                                    row![
-                                        input,
-                                        button(text("Open").size(13))
-                                            .padding([8, 10])
-                                            .style(style::secondary(c))
-                                            .on_press(map(Message::FollowLink(index))),
-                                    ]
-                                    .spacing(6)
-                                    .into()
-                                } else {
-                                    input.into()
-                                };
+                            // The input is always first in a row, so the Open button
+                            // showing up as the first letter is typed doesn't make iced
+                            // build a new input, which would lose the focus.
+                            let open =
+                                (field.kind == Kind::Link && !value.trim().is_empty()).then(|| {
+                                    button(text("Open").size(13))
+                                        .padding([8, 10])
+                                        .style(style::secondary(c))
+                                        .on_press(map(Message::FollowLink(index)))
+                                });
+                            let input = row![input].push(open).spacing(6);
 
                             column![label(index, field.label()), input]
                                 .spacing(6)

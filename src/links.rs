@@ -137,6 +137,16 @@ pub fn normalize(target: &str) -> String {
         .to_lowercase()
 }
 
+/// Whether a word in `name` starts with `query`, like "inn" in "chapter 1 - the inn".
+fn starts_word(name: &str, query: &str) -> bool {
+    name.match_indices(query).any(|(at, _)| {
+        name[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_alphanumeric())
+    })
+}
+
 /// The campaign's notes, for finding the note a link points to.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
@@ -287,10 +297,12 @@ impl Index {
         }
     }
 
-    /// Notes whose name contains `query`, best matches first: `(link text, label)` pairs.
-    /// Notes inside `folder`, if given, come before the rest.
+    /// Notes whose name, file name or alias contains `query`, best matches first:
+    /// `(link text, label)` pairs. Notes inside `folder`, if given, come before the rest.
     ///
-    /// The label shows the folder when two notes share a name.
+    /// Names and aliases are ranked together, so a name that starts with what was typed
+    /// comes before one that only has it in the middle, whichever kind it is. The label
+    /// shows the folder when two notes share a name.
     pub fn suggest(
         &self,
         query: &str,
@@ -299,70 +311,61 @@ impl Index {
         limit: usize,
     ) -> Vec<(String, String)> {
         let query = normalize(query);
-        let mut matches: Vec<&Entry> = self
+        // Each note by its file name (or its path, which the query may be typed as)...
+        let names = self
             .notes
             .iter()
-            .filter(|entry| entry.path != from && entry.key.contains(&query))
-            .collect();
+            .enumerate()
+            .filter(|(_, entry)| entry.key.contains(&query))
+            .map(|(index, entry)| (index, normalize(entry.name()), None));
+        // ...and by its other names. A name that only differs from the file's in its
+        // punctuation is the same name, and shows on the file's suggestion instead.
+        let aliases = self
+            .aliases
+            .iter()
+            .filter(|(alias, index, _)| {
+                alias.contains(&query) && *alias != normalize(self.notes[*index].name())
+            })
+            .map(|(alias, index, written)| (*index, alias.clone(), Some(written.as_str())));
 
-        let rank = |entry: &Entry| {
-            let name = entry.name().to_lowercase();
+        let mut matches: Vec<(usize, String, Option<&str>)> = names
+            .chain(aliases)
+            .filter(|(index, _, _)| self.notes[*index].path != from)
+            .collect();
+        matches.sort_by_cached_key(|(index, name, alias)| {
+            let entry = &self.notes[*index];
             (
                 folder.is_some_and(|folder| !entry.path.starts_with(folder)),
                 !name.starts_with(&query),
+                !starts_word(name, &query),
                 !name.contains(&query),
-                name,
+                name.clone(),
+                alias.is_some(),
                 entry.key.clone(),
             )
-        };
-        matches.sort_by_cached_key(|entry| rank(entry));
+        });
 
-        let mut suggestions: Vec<(String, String)> = matches
+        matches
             .into_iter()
-            .take(limit)
-            .filter_map(|entry| {
+            .filter_map(|(index, _, alias)| {
+                let entry = &self.notes[index];
                 let link = self.link_text(&entry.path, from, false)?;
-                // `Chapter 1 - The Inn.md`, called "Chapter 1: The Inn", is linked as
-                // `[[Chapter 1 - The Inn|Chapter 1: The Inn]]`, so it shows its real name.
-                Some(match self.written_name(entry) {
-                    Some(name) => (format!("{link}|{name}"), name.to_string()),
-                    None => (link, self.label(entry)),
+                Some(match alias {
+                    // Obsidian links to an alias as `[[BBEG|Jerry]]`: the note, showing the alias.
+                    Some(alias) => (
+                        format!("{link}|{alias}"),
+                        format!("{alias} ({})", self.label(entry)),
+                    ),
+                    // `Chapter 1 - The Inn.md`, called "Chapter 1: The Inn", is linked as
+                    // `[[Chapter 1 - The Inn|Chapter 1: The Inn]]`, so it shows its real name.
+                    None => match self.written_name(entry) {
+                        Some(name) => (format!("{link}|{name}"), name.to_string()),
+                        None => (link, self.label(entry)),
+                    },
                 })
             })
-            .collect();
-
-        // Notes that go by another name are suggested by it too. The link names the note
-        // and shows the alias, `[[BBEG|Jerry]]`, which is how Obsidian links to an alias.
-        let mut by_alias: Vec<&(String, usize, String)> = self
-            .aliases
-            .iter()
-            .filter(|(alias, index, _)| alias.contains(&query) && self.notes[*index].path != from)
-            .collect();
-        by_alias.sort_by_key(|(alias, index, _)| {
-            let entry = &self.notes[*index];
-            (
-                folder.is_some_and(|folder| !entry.path.starts_with(folder)),
-                !alias.starts_with(&query),
-                alias.clone(),
-            )
-        });
-        for (_, index, alias) in by_alias {
-            if suggestions.len() >= limit {
-                break;
-            }
-            let entry = &self.notes[*index];
-            // A name that only differs from the file's in its punctuation is the same name.
-            if normalize(alias) == normalize(entry.name()) {
-                continue;
-            }
-            if let Some(link) = self.link_text(&entry.path, from, false) {
-                suggestions.push((
-                    format!("{link}|{alias}"),
-                    format!("{alias} ({})", self.label(entry)),
-                ));
-            }
-        }
-        suggestions
+            .take(limit)
+            .collect()
     }
 
     /// [`Self::written_name`] of the note at `path`.
@@ -1277,6 +1280,49 @@ mod tests {
         };
         let from = root.join(format!("{from}.md"));
         relink_note(text, &from, &rename)
+    }
+
+    #[test]
+    fn suggests_names_and_aliases_together() {
+        let root = Path::new("/c");
+        let aliases = HashMap::from([
+            (root.join("npcs/BBEG.md"), vec!["Jerry".to_string()]),
+            (root.join("lore/Old Inn.md"), vec!["The Inn".to_string()]),
+        ]);
+        let index = campaign(
+            root,
+            &[
+                "npcs/BBEG",
+                "npcs/Bijerry",
+                "npcs/Jerrod",
+                "lore/Old Inn",
+                "lore/Spinning",
+            ],
+        )
+        .with_aliases(&aliases);
+        let from = root.join("Day.md");
+
+        // An alias that starts with what was typed comes before a name that only has it
+        // in the middle, and isn't crowded out by them.
+        assert_eq!(
+            index.suggest("jer", &from, None, 2),
+            [
+                ("Jerrod".to_string(), "Jerrod".to_string()),
+                ("BBEG|Jerry".to_string(), "Jerry (BBEG)".to_string()),
+            ]
+        );
+        // A word starting with it comes before the middle of a word.
+        assert_eq!(
+            index.suggest("inn", &from, None, 5),
+            [
+                ("Old Inn".to_string(), "Old Inn".to_string()),
+                (
+                    "Old Inn|The Inn".to_string(),
+                    "The Inn (Old Inn)".to_string()
+                ),
+                ("Spinning".to_string(), "Spinning".to_string()),
+            ]
+        );
     }
 
     #[test]
