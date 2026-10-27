@@ -53,7 +53,7 @@ my-campaign/
 └── lore/
 ```
 
-Type `[[` and pick a note, or select a name in your notes and press Ctrl+K, to create an Obsidian-compatible `[[link]]`. If a page with that name exists, it gets linked; if not, opening the link creates it for you. Rename a page and every link to it follows. Over time, your notes grow into a connected wiki of your world.
+Type `[[` and pick a note, or select a name in your notes and press Ctrl+K, to create an Obsidian-compatible `[[link]]`. If a page with that name exists, it gets linked; if not, opening the link creates it for you. Rename a page and every link to it follows. At the end of each note in the reading view, **Linked from** lists the notes that link to it, so an NPC shows every quest, place and journal entry they turn up in. Over time, your notes grow into a connected wiki of your world.
 
 ## Roadmap
 

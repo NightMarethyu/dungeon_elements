@@ -90,6 +90,21 @@ struct Block {
     content: markdown::Content,
 }
 
+/// A note that links to the one shown, for the list under it ("Linked from").
+#[derive(Debug, Clone, PartialEq)]
+pub struct Backlink {
+    /// What kind of note it is (its folder's type), to list it with others like it.
+    pub group: String,
+    pub name: String,
+    /// The link to it from the note shown, to open it.
+    pub link: String,
+    /// Where it links to the note shown: the lines, or the fields with their values.
+    pub lines: Vec<String>,
+}
+
+/// The most places shown for each note in the list of backlinks.
+const BACKLINK_LINES: usize = 3;
+
 /// What clicking a link in the reading view does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Click {
@@ -241,12 +256,13 @@ impl Preview {
     }
 
     /// The page. `names` are the notes that exist, so links to missing ones can be dimmed
-    /// like in the editor.
+    /// like in the editor; `backlinks` are the notes that link to this one, listed at the end.
     pub fn view<'a, M: Clone + 'a>(
         &'a self,
         c: Colors,
         names: Names,
         web: &'a web::Pictures,
+        backlinks: Vec<Backlink>,
         mut edit: Editing<'a, M>,
     ) -> Element<'a, M> {
         let reader = Reader {
@@ -327,6 +343,9 @@ impl Preview {
             }
         };
         page = page.push(add);
+        if !backlinks.is_empty() {
+            page = page.push(linked_from(c, settings, backlinks).map(edit.on_link));
+        }
 
         scrollable(
             mouse_area(
@@ -507,6 +526,93 @@ fn block_ranges(body: &str) -> Vec<Range<usize>> {
         })
         .filter(|range| !range.is_empty())
         .collect()
+}
+
+/// The list of the notes that link to the one shown, under a "Linked from" heading, in
+/// groups by kind. Each note's name opens it; under it are the places it links here.
+fn linked_from<'a>(
+    c: Colors,
+    settings: markdown::Settings,
+    backlinks: Vec<Backlink>,
+) -> Element<'a, Uri> {
+    let bold = Font {
+        weight: font::Weight::Bold,
+        ..Font::DEFAULT
+    };
+    let count = backlinks.len();
+    let heading = row![
+        text("Linked from").size(settings.h3_size).font(bold),
+        text(if count == 1 {
+            "1 note".to_string()
+        } else {
+            format!("{count} notes")
+        })
+        .size(settings.text_size * 0.85)
+        .color(c.text_muted),
+    ]
+    .spacing(10)
+    .align_y(iced::alignment::Vertical::Bottom);
+
+    let mut groups = column![].spacing(18);
+    let mut backlinks = backlinks.into_iter().peekable();
+    while let Some(first) = backlinks.next() {
+        let group = first.group.clone();
+        let mut notes = column![].spacing(10);
+        let mut next = Some(first);
+        while let Some(backlink) = next {
+            let name = rich_text([Span::new(backlink.name)
+                .link(format!("{NOTE}{}", backlink.link))
+                .color(c.accent)
+                .font(bold)])
+            .size(settings.text_size)
+            .on_link_click(|url: Uri| url);
+            let more = backlink.lines.len().saturating_sub(BACKLINK_LINES);
+            let mut lines: Vec<Element<'a, Uri>> = backlink
+                .lines
+                .into_iter()
+                .take(BACKLINK_LINES)
+                .map(|line| {
+                    text(line)
+                        .size(settings.text_size * 0.9)
+                        .color(c.text_muted)
+                        .into()
+                })
+                .collect();
+            if more > 0 {
+                lines.push(
+                    text(format!("and {more} more"))
+                        .size(settings.text_size * 0.8)
+                        .color(c.text_muted)
+                        .into(),
+                );
+            }
+            notes = notes.push(column![name, column(lines).spacing(2)].spacing(2));
+            next = backlinks.next_if(|backlink| backlink.group == group);
+        }
+        groups = groups.push(
+            column![
+                text(group)
+                    .size(settings.text_size * 0.85)
+                    .font(bold)
+                    .color(c.text_muted),
+                row![
+                    rule::vertical(3).style(style::accent_rule(c)),
+                    notes.width(Fill),
+                ]
+                .height(Length::Shrink)
+                .spacing(14),
+            ]
+            .spacing(6),
+        );
+    }
+
+    column![
+        column![heading, rule::horizontal(1).style(style::separator(c))].spacing(8),
+        groups,
+    ]
+    .spacing(14)
+    .padding(padding::bottom(40))
+    .into()
 }
 
 /// What clicking the link to `url`, in the note at `path`, should do.
