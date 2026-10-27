@@ -2994,6 +2994,22 @@ impl Workspace {
                 let Some(tab) = self.active_tab_mut() else {
                     return Task::none();
                 };
+                let reading = tab.reading();
+                match &mut tab.edit {
+                    Some(ReadEdit::Block { content, .. }) => {
+                        links::complete(content, &link);
+                        tab.modified = true;
+                        return iced::widget::operation::focus(BLOCK_EDITOR);
+                    }
+                    Some(ReadEdit::Field(_)) => {
+                        if let Some(form) = &mut tab.form {
+                            tab.modified |= form.complete_link(&link);
+                        }
+                        return iced::widget::operation::focus(FIELD_EDITOR);
+                    }
+                    None if reading => return Task::none(),
+                    None => {}
+                }
                 if tab.shows_form() {
                     let Some(form) = &mut tab.form else {
                         return Task::none();
@@ -4100,13 +4116,18 @@ impl Workspace {
 
     fn editor(&self, c: Colors) -> Element<'_, Message> {
         let suggestions = self.link_suggestions();
-        let editor = self.editor_body(c, &suggestions.notes);
+        let editor = self.editor_body(c, &suggestions);
 
-        let mut view = column![];
-        if self.active_tab().is_some_and(|tab| tab.changed_outside) {
-            view = view.push(changed_outside_banner(c));
-        }
-        view = view.push(editor);
+        // The banner's place is kept when there is none, so the editor stays where iced
+        // looks for it and keeps the focus when the note changes outside while typing.
+        // (Not with `space().height(0)`: columns leave out children with no size.)
+        let banner: Element<'_, Message> =
+            if self.active_tab().is_some_and(|tab| tab.changed_outside) {
+                changed_outside_banner(c)
+            } else {
+                space().into()
+            };
+        let mut view = column![banner, editor];
         // Below the note, so the text doesn't jump while a problem comes and goes as it is typed.
         if let Some(path) = self.active_tab().and_then(|tab| tab.path.as_ref())
             && self.dialog.is_none()
@@ -4117,7 +4138,7 @@ impl Workspace {
             }
         }
         if !self.active_tab().is_some_and(Tab::reading) {
-            view = view.push(self.link_bar(c, suggestions));
+            view = view.push(self.link_bar(c, &suggestions));
         }
         view.into()
     }
@@ -4130,10 +4151,22 @@ impl Workspace {
         let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
             return none;
         };
-        let form = tab.form.as_ref().filter(|_| tab.shows_form());
-        let query = match form {
-            Some(form) => form.link_query(),
-            None => links::query(&tab.content).map(|query| (query, false)),
+        // In the reading view, the link is typed in the block or field being edited.
+        let form = match &tab.edit {
+            Some(ReadEdit::Field(key)) => tab
+                .form
+                .as_ref()
+                .filter(|form| form.short_field(key).map(|(index, ..)| index) == form.focus()),
+            _ => tab.form.as_ref().filter(|_| tab.shows_form()),
+        };
+        let query = match (&tab.edit, form) {
+            (Some(ReadEdit::Block { content, .. }), _) => {
+                links::query(content).map(|query| (query, false))
+            }
+            (_, Some(form)) => form.link_query(),
+            (Some(ReadEdit::Field(_)), None) => None,
+            (None, None) if tab.reading() => None,
+            (None, None) => links::query(&tab.content).map(|query| (query, false)),
         };
         let Some((query, in_field)) = query else {
             return none;
@@ -4213,12 +4246,7 @@ impl Workspace {
 
     /// The bar under the editor: notes to link to while a `[[link]]` is being typed, or a
     /// button to open the link the cursor is in.
-    fn link_bar<'a>(&self, c: Colors, suggestions: Suggestions) -> Element<'a, Message> {
-        let Suggestions {
-            notes: suggestions,
-            in_field,
-            create,
-        } = suggestions;
+    fn link_bar<'a>(&self, c: Colors, suggestions: &Suggestions) -> Element<'a, Message> {
         let bar = |content| {
             container(content)
                 .padding([6, 16])
@@ -4227,35 +4255,8 @@ impl Workspace {
                 .into()
         };
 
-        if !suggestions.is_empty() || create.is_some() {
-            let suggestions_count = suggestions.len();
-            let chips = suggestions.into_iter().map(|(link, label)| {
-                button(text(label).size(13))
-                    .padding([3, 10])
-                    .style(style::secondary(c))
-                    .on_press(Message::CompleteLink(link))
-                    .into()
-            });
-            let create = create.map(|(index, label)| {
-                button(text(label).size(13))
-                    .padding([3, 10])
-                    .style(style::secondary(c))
-                    .on_press(Message::Form(form::Message::FollowLink(index)))
-            });
-            let hint = match (suggestions_count, in_field) {
-                (0, _) => "",
-                (_, true) => "Enter picks the first",
-                (_, false) => "Tab inserts the first",
-            };
-            let chips = row(chips).push(create);
-            return bar(row![
-                text("Link to").size(13).color(c.text_muted),
-                chips.spacing(6).wrap(),
-                space::horizontal(),
-                text(hint).size(12).color(c.text_muted),
-            ]
-            .spacing(10)
-            .align_y(Center));
+        if let Some(chips) = suggestion_chips(c, suggestions, false) {
+            return bar(chips);
         }
 
         let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
@@ -4291,7 +4292,8 @@ impl Workspace {
             text(hint).size(12).color(c.text_muted),
         ]
         .spacing(10)
-        .align_y(Center))
+        .align_y(Center)
+        .into())
     }
 
     /// Opens the note link field `index` of the active tab points to. If there is none,
@@ -4789,7 +4791,7 @@ impl Workspace {
         }
     }
 
-    fn editor_body(&self, c: Colors, suggestions: &[(String, String)]) -> Element<'_, Message> {
+    fn editor_body(&self, c: Colors, suggestions: &Suggestions) -> Element<'_, Message> {
         let Some(tab) = self.active_tab() else {
             return center(
                 column![
@@ -4805,7 +4807,25 @@ impl Workspace {
             .into();
         };
 
+        let accept = suggestions
+            .notes
+            .first()
+            .map(|(link, _)| Message::CompleteLink(link.clone()));
+
         if let Some(preview) = &tab.preview {
+            // The notes the link being typed could be, under the block or field it is in.
+            let chips = || {
+                let chips =
+                    suggestion_chips(c, suggestions, true).map(|chips| -> Element<'_, Message> {
+                        container(chips)
+                            .padding([6, 10])
+                            .width(Fill)
+                            .style(style::panel(c.sidebar))
+                            .into()
+                    });
+                // Always there, so the editor above it keeps its focus when it shows up.
+                chips.unwrap_or_else(|| space().into())
+            };
             let mut editing = preview::Editing {
                 on_link: Message::PreviewLink,
                 on_block: Message::EditBlock,
@@ -4817,14 +4837,15 @@ impl Workspace {
             };
             match &tab.edit {
                 Some(ReadEdit::Block { index, content, .. }) => {
-                    editing.block = Some((*index, block_editor(c, content, self.link_colors(c))));
+                    let editor = block_editor(c, content, self.link_colors(c), accept.clone());
+                    editing.block = Some((*index, column![editor, chips()].spacing(4).into()));
                 }
                 Some(ReadEdit::Field(key)) => {
                     editing.field = tab
                         .form
                         .as_ref()
-                        .and_then(|form| field_input(c, form, key))
-                        .map(|input| (key.clone(), input));
+                        .and_then(|form| field_input(c, form, key, accept.clone()))
+                        .map(|input| (key.clone(), column![input, chips()].spacing(4).into()));
                 }
                 None => {}
             }
@@ -4839,10 +4860,6 @@ impl Workspace {
             })
             .into();
         }
-
-        let accept = suggestions
-            .first()
-            .map(|(link, _)| Message::CompleteLink(link.clone()));
 
         if let Some(form) = &tab.form
             && !tab.source
@@ -5718,11 +5735,15 @@ fn block_editor(
     c: Colors,
     content: &text_editor::Content,
     link_colors: links::Colors,
+    accept: Option<Message>,
 ) -> Element<'_, Message> {
     let editor = text_editor(content)
         .id(BLOCK_EDITOR)
         .on_action(Message::BlockEdit)
-        .key_binding(|key_press| {
+        .key_binding(move |key_press| {
+            if let Some(binding) = links::tab_binding(&key_press, &accept) {
+                return Some(binding);
+            }
             if matches!(key_press.key, Key::Named(keyboard::key::Named::Escape)) {
                 return Some(text_editor::Binding::Custom(Message::FinishEditing));
             }
@@ -5745,20 +5766,83 @@ fn block_editor(
         .into()
 }
 
+/// The notes to link to while a link is being typed, as buttons, with a hint on picking
+/// the first; or `None` if there is nothing to suggest.
+///
+/// `narrow` stacks the hint over the buttons, for under a block or field in the reading view.
+fn suggestion_chips<'a>(
+    c: Colors,
+    suggestions: &Suggestions,
+    narrow: bool,
+) -> Option<Element<'a, Message>> {
+    if suggestions.notes.is_empty() && suggestions.create.is_none() {
+        return None;
+    }
+    let chips = suggestions.notes.iter().map(|(link, label)| {
+        button(text(label.clone()).size(13))
+            .padding([3, 10])
+            .style(style::secondary(c))
+            .on_press(Message::CompleteLink(link.clone()))
+            .into()
+    });
+    let create = suggestions.create.as_ref().map(|(index, label)| {
+        button(text(label.clone()).size(13))
+            .padding([3, 10])
+            .style(style::secondary(c))
+            .on_press(Message::Form(form::Message::FollowLink(*index)))
+    });
+    let hint = match (suggestions.notes.len(), suggestions.in_field) {
+        (0, _) => "",
+        (_, true) => "Enter picks the first",
+        (_, false) => "Tab inserts the first",
+    };
+    let chips = row(chips).push(create).spacing(6).wrap();
+    if narrow {
+        let hint = match hint {
+            "" => "Link to".to_string(),
+            hint => format!("Link to ({hint})"),
+        };
+        return Some(
+            column![text(hint).size(12).color(c.text_muted), chips]
+                .spacing(6)
+                .into(),
+        );
+    }
+    Some(
+        row![
+            text("Link to").size(13).color(c.text_muted),
+            chips,
+            space::horizontal(),
+            text(hint).size(12).color(c.text_muted),
+        ]
+        .spacing(10)
+        .align_y(Center)
+        .into(),
+    )
+}
+
 /// Opens the right-click menu of the text editor right-clicked at `position`.
 fn editor_menu(position: Point) -> Message {
     Message::OpenContextMenu(Target::Editor, position)
 }
 
 /// The input for the field with front matter `key` in the reading view, if it has one.
-fn field_input<'a>(c: Colors, form: &'a Form, key: &str) -> Option<Element<'a, Message>> {
+///
+/// In a link field, Enter picks `accept`, the first note suggested, if there is one.
+fn field_input<'a>(
+    c: Colors,
+    form: &'a Form,
+    key: &str,
+    accept: Option<Message>,
+) -> Option<Element<'a, Message>> {
     let (index, field, value) = form.short_field(key)?;
+    let accept = accept.filter(|_| field.kind == types::Kind::Link);
     match value {
         form::FieldValue::Text(value) => Some(
             text_input(&field.label(), value)
                 .id(FIELD_EDITOR)
                 .on_input(move |value| Message::Form(form::Message::Text(index, value)))
-                .on_submit(Message::FinishEditing)
+                .on_submit(accept.unwrap_or(Message::FinishEditing))
                 .size(15)
                 .padding([4, 8])
                 .style(style::input(c))
