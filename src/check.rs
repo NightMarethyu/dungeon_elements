@@ -187,7 +187,8 @@ pub fn note(
         None => None,
         Some(id) => {
             let id = note::value_to_text(id);
-            let found = types.values().flatten().find(|ty| ty.id == id);
+            let in_folder = types.get(folder).and_then(|ty| ty.as_ref().ok());
+            let found = types::named(types, in_folder, &id);
             if found.is_none() {
                 problems.push((
                     format!(

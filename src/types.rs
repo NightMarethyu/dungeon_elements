@@ -1,12 +1,20 @@
 //! Content types: the `_type.yaml` file in a folder lists the fields every note in it has.
+//!
+//! A subfolder's type is a kind of its parent folder's, like a child class: Weapons in
+//! Items has every Item field, and the fields its own `_type.yaml` adds or changes. A
+//! subfolder with no `_type.yaml` has its parent's type.
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 /// The name of the file in a folder that defines its content type.
 pub const TYPE_FILE: &str = "_type.yaml";
+
+/// Each folder's content type, or what is wrong with its `_type.yaml`.
+pub type Types = HashMap<PathBuf, Result<ContentType, String>>;
 
 /// The `_type.yaml` files of the default campaign template, by folder.
 pub const STARTER_TYPES: &[(&str, &str)] = &[
@@ -36,11 +44,23 @@ pub struct ContentType {
     pub icon: Option<String>,
     #[serde(default)]
     pub fields: Vec<Field>,
+    /// The keys of the parent folder's fields that this subfolder's notes don't have.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_fields: Vec<String>,
+    /// The ids of the types this one is a kind of, nearest first. Worked out by
+    /// [`resolve`], never saved.
+    #[serde(skip)]
+    pub parents: Vec<String>,
 }
 
 impl ContentType {
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_else(|| title_case(&self.id))
+    }
+
+    /// Whether this is the type `id`, or a kind of it.
+    pub fn is_a(&self, id: &str) -> bool {
+        self.id == id || self.parents.iter().any(|parent| parent == id)
     }
 
     /// The index of the field that names the note, which is also its filename.
@@ -219,6 +239,112 @@ pub fn load(folder: &Path) -> Option<Result<ContentType, String>> {
     )
 }
 
+/// The type of a subfolder whose own `_type.yaml` is `own`, in a folder of type `parent`:
+/// the parent's fields in the parent's order (less the ones `own` removes, and as `own`
+/// changes them), then the fields only `own` has.
+pub fn inherit(parent: &ContentType, own: &ContentType) -> ContentType {
+    // The name is the note's filename, so it can't be removed.
+    let kept: Vec<&Field> = parent
+        .fields
+        .iter()
+        .filter(|field| field.key == "name" || !own.removed_fields.contains(&field.key))
+        .collect();
+    let mut fields: Vec<Field> = kept
+        .iter()
+        .map(|field| {
+            own.fields
+                .iter()
+                .find(|changed| changed.key == field.key)
+                .unwrap_or(field)
+                .clone()
+        })
+        .collect();
+    fields.extend(
+        own.fields
+            .iter()
+            .filter(|field| kept.iter().all(|kept| kept.key != field.key))
+            .cloned(),
+    );
+
+    let mut parents = vec![parent.id.clone()];
+    parents.extend(parent.parents.iter().cloned());
+    ContentType {
+        fields,
+        parents,
+        ..own.clone()
+    }
+}
+
+/// Works out the type of every folder in `folders` (listed parents first) from their own
+/// `_type.yaml` files, `own`: a subfolder's type is a kind of its parent's (see
+/// [`inherit`]), and a subfolder with no `_type.yaml` has its parent's type. Folders in
+/// the campaign folder itself don't take the campaign folder's type.
+pub fn resolve(root: &Path, folders: &[PathBuf], own: &Types) -> Types {
+    let mut all = Types::new();
+    if let Some(ty) = own.get(root) {
+        all.insert(root.to_path_buf(), ty.clone());
+    }
+
+    for folder in folders {
+        let parent = folder
+            .parent()
+            .filter(|parent| *parent != root)
+            .and_then(|parent| all.get(parent));
+        let ty = match (own.get(folder), parent) {
+            (Some(Ok(ty)), Some(Ok(parent))) => Ok(inherit(parent, ty)),
+            (Some(Ok(_)), Some(Err(_))) => {
+                Err("the type of the folder it is in can't be read, so it can't add to it".into())
+            }
+            (Some(ty), _) => ty.clone(),
+            (None, Some(Ok(parent))) => Ok(parent.clone()),
+            (None, _) => continue,
+        };
+        all.insert(folder.clone(), ty);
+    }
+    all
+}
+
+/// The type a note in a folder of type `folder` is read with when its `type:` is `id`:
+/// the folder's, if it is that type or a kind of it (so an Item moved into Weapons is
+/// read as a Weapon), or else the type in `types` with that id. `None` if there is none.
+pub fn named<'a>(
+    types: &'a Types,
+    folder: Option<&'a ContentType>,
+    id: &str,
+) -> Option<&'a ContentType> {
+    if let Some(ty) = folder.filter(|ty| ty.is_a(id)) {
+        return Some(ty);
+    }
+    // A type is found in the folder that has it first, so `item` is Items' type, not
+    // one copied to a subfolder.
+    let mut found: Vec<_> = types
+        .iter()
+        .filter_map(|(folder, ty)| Some((folder, ty.as_ref().ok()?)))
+        .filter(|(_, ty)| ty.id == id)
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(b.0));
+    found.first().map(|(_, ty)| *ty)
+}
+
+/// A name for one note of a folder: "Weapons" makes "Weapon", "Enemies" makes "Enemy".
+pub fn singular(folder: &str) -> String {
+    let name = title_case(folder);
+    let lower = name.to_lowercase();
+    let cut = if lower.ends_with("ies") && name.len() > 4 {
+        return format!("{}y", &name[..name.len() - 3]);
+    } else if ["sses", "xes", "ches", "shes"]
+        .iter()
+        .any(|end| lower.ends_with(end))
+    {
+        2
+    } else if lower.ends_with('s') && !lower.ends_with("ss") && name.len() > 3 {
+        1
+    } else {
+        0
+    };
+    name[..name.len() - cut].to_string()
+}
+
 /// Turns a name like "Hit Points" into a key like `hit_points`.
 pub fn key_from(name: &str) -> String {
     let mut key = String::new();
@@ -287,6 +413,96 @@ mod tests {
         assert_eq!(ty.fields[0].label(), "Attunement Required");
         assert_eq!(ty.fields[0].kind, Kind::Text);
         assert_eq!(ty.fields[0].width, Width::Half);
+    }
+
+    fn folders(root: &Path, names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(|name| root.join(name)).collect()
+    }
+
+    #[test]
+    fn subfolders_are_kinds_of_their_parents() {
+        let root = Path::new("campaign");
+        let folders = folders(
+            root,
+            &[
+                "items",
+                "items/weapons",
+                "items/weapons/swords",
+                "items/gear",
+                "npcs",
+            ],
+        );
+        let mut own = Types::new();
+        own.insert(root.join("items"), parse(STARTER_TYPES[0].1));
+        own.insert(
+            root.join("items/weapons"),
+            parse(
+                "type: weapon\nlabel: Weapon\nremoved_fields: [owner, name]\nfields:\n  - key: damage\n  - key: rarity\n    kind: text\n",
+            ),
+        );
+        own.insert(
+            root.join("items/weapons/swords"),
+            parse("type: sword\nfields:\n  - key: hilt\n"),
+        );
+
+        let all = resolve(root, &folders, &own);
+        let keys = |folder: &str| -> Vec<String> {
+            let ty = all[&root.join(folder)].as_ref().unwrap();
+            ty.fields.iter().map(|field| field.key.clone()).collect()
+        };
+        assert_eq!(
+            keys("items"),
+            ["name", "value", "rarity", "owner", "history", "stats"]
+        );
+        // Owner is removed (the name can't be), rarity changed in place, damage added.
+        assert_eq!(
+            keys("items/weapons"),
+            ["name", "value", "rarity", "history", "stats", "damage"]
+        );
+        assert_eq!(
+            keys("items/weapons/swords"),
+            [&keys("items/weapons")[..], &["hilt".to_string()]].concat()
+        );
+        // Gear has no type of its own, so it has Items'.
+        assert_eq!(keys("items/gear"), keys("items"));
+        assert!(!all.contains_key(&root.join("npcs")));
+
+        let weapon = all[&root.join("items/weapons")].as_ref().unwrap();
+        assert_eq!(weapon.fields[2].kind, Kind::Text);
+        let sword = all[&root.join("items/weapons/swords")].as_ref().unwrap();
+        assert_eq!(sword.parents, ["weapon", "item"]);
+        assert!(sword.is_a("item") && sword.is_a("sword") && !sword.is_a("npc"));
+
+        // A note that says it's an item is read as a sword in Swords, and as an item elsewhere.
+        assert_eq!(named(&all, Some(sword), "item").unwrap().id, "sword");
+        assert_eq!(named(&all, None, "item").unwrap().fields.len(), 6);
+        assert_eq!(named(&all, None, "weapon").unwrap().id, "weapon");
+        assert!(named(&all, None, "npc").is_none());
+
+        // Nothing worked out is saved.
+        assert!(!sword.to_yaml().unwrap().contains("weapon"));
+    }
+
+    #[test]
+    fn subfolders_of_broken_types() {
+        let root = Path::new("campaign");
+        let folders = folders(root, &["a", "a/b", "a/c"]);
+        let mut own = Types::new();
+        own.insert(root.join("a"), Err("broken".into()));
+        own.insert(root.join("a/b"), parse("type: b\n"));
+        let all = resolve(root, &folders, &own);
+        assert!(all[&root.join("a/b")].is_err());
+        assert!(!all.contains_key(&root.join("a/c")));
+    }
+
+    #[test]
+    fn names_one_note_of_a_folder() {
+        assert_eq!(singular("weapons"), "Weapon");
+        assert_eq!(singular("Enemies"), "Enemy");
+        assert_eq!(singular("armor"), "Armor");
+        assert_eq!(singular("bosses"), "Boss");
+        assert_eq!(singular("magic_items"), "Magic Item");
+        assert_eq!(singular("gas"), "Gas");
     }
 
     #[test]

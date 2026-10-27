@@ -1,6 +1,8 @@
 //! The Edit > Types dialog: the campaign's folders on the left, the selected folder's type on the right.
+//!
+//! A subfolder's type shows the fields it inherits from its parent folder's, which can be
+//! changed or removed for the subfolder only, then the fields only it has.
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,7 +13,7 @@ use iced::{Center, Element, Fill};
 
 use crate::style;
 use crate::theme::Colors;
-use crate::types::{self, ContentType, Field, Kind, Width};
+use crate::types::{self, ContentType, Field, Kind, Types, Width};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -30,6 +32,12 @@ pub enum Message {
     MoveDown(usize),
     RemoveField(usize),
     AddField,
+    /// Copies the inherited field with this key into the subfolder's own, to change it.
+    ChangeInherited(String),
+    /// Leaves the inherited field with this key out of the subfolder's notes.
+    RemoveInherited(String),
+    /// Brings back an inherited field that was removed.
+    KeepInherited(String),
     Save,
     Cancel,
 }
@@ -57,6 +65,8 @@ struct Folder {
     path: PathBuf,
     /// The folder's path inside the campaign, like `npcs/villains`.
     name: String,
+    /// The folder it is in, if that is in the list (folders in the campaign folder have none).
+    parent: Option<usize>,
     state: State,
     /// Whether the type changed since the dialog opened.
     changed: bool,
@@ -67,7 +77,7 @@ enum State {
     Untyped,
     /// The `_type.yaml` can't be read; it has to be fixed by hand.
     Broken(String),
-    Typed(Draft),
+    Typed(Box<Draft>),
 }
 
 /// A type being edited. Text is kept as typed until it is saved.
@@ -77,6 +87,8 @@ struct Draft {
     id: String,
     label: String,
     fields: Vec<FieldDraft>,
+    /// The keys of the inherited fields the folder's notes don't have.
+    removed: Vec<String>,
 }
 
 struct FieldDraft {
@@ -136,6 +148,7 @@ impl Draft {
             id: ty.id.clone(),
             label: ty.label(),
             fields: ty.fields.iter().map(FieldDraft::from).collect(),
+            removed: ty.removed_fields.clone(),
         }
     }
 
@@ -144,18 +157,16 @@ impl Draft {
             id: self.id.trim().to_string(),
             label: Some(self.label.trim().to_string()).filter(|label| !label.is_empty()),
             fields: self.fields.iter().map(FieldDraft::to_field).collect(),
+            removed_fields: self.removed.clone(),
             ..self.base.clone()
         }
     }
 }
 
 impl Editor {
-    /// Lists every folder in the campaign, with its type if it has one.
-    pub fn new(
-        root: &Path,
-        folders: &[PathBuf],
-        types: &HashMap<PathBuf, Result<ContentType, String>>,
-    ) -> Self {
+    /// Lists every folder in the campaign (parents first), with the type its own
+    /// `_type.yaml` gives it, if it has one.
+    pub fn new(root: &Path, folders: &[PathBuf], own: &Types) -> Self {
         let folders = folders
             .iter()
             .map(|path| Folder {
@@ -164,10 +175,13 @@ impl Editor {
                     .unwrap_or(path)
                     .to_string_lossy()
                     .replace('\\', "/"),
-                state: match types.get(path) {
+                parent: folders
+                    .iter()
+                    .position(|parent| Some(parent.as_path()) == path.parent()),
+                state: match own.get(path) {
                     None => State::Untyped,
                     Some(Err(error)) => State::Broken(error.clone()),
-                    Some(Ok(ty)) => State::Typed(Draft::from(ty)),
+                    Some(Ok(ty)) => State::Typed(Box::new(Draft::from(ty))),
                 },
                 path: path.clone(),
                 changed: false,
@@ -179,6 +193,26 @@ impl Editor {
             selected: 0,
             error: None,
         }
+    }
+
+    /// The type of the folder at `index` as it is now in the dialog, with what it inherits.
+    fn effective(&self, index: usize) -> Option<ContentType> {
+        let folder = self.folders.get(index)?;
+        let parent = folder.parent.and_then(|parent| self.effective(parent));
+        match (&folder.state, parent) {
+            (State::Typed(draft), Some(parent)) => Some(types::inherit(&parent, &draft.to_type())),
+            (State::Typed(draft), None) => Some(draft.to_type()),
+            (State::Untyped, parent) => parent,
+            (State::Broken(_), _) => None,
+        }
+    }
+
+    /// The type the folder at `index` inherits from the folder it is in.
+    fn inherited(&self, index: usize) -> Option<ContentType> {
+        self.folders
+            .get(index)?
+            .parent
+            .and_then(|parent| self.effective(parent))
     }
 
     /// Shows `folder` first, if it is in the list.
@@ -198,19 +232,38 @@ impl Editor {
             return;
         }
 
+        let inherited = self.inherited(self.selected);
         let Some(folder) = self.folders.get_mut(self.selected) else {
             return;
         };
 
         if let Message::AddType = message {
             if let State::Untyped = folder.state {
-                let id = types::key_from(&folder.name.replace('/', " "));
-                let ty = types::parse(&format!(
-                    "type: {}\nfields:\n  - key: name\n    label: Name\n",
-                    serde_yaml_ng::to_string(&id).unwrap_or_default().trim()
-                ))
-                .expect("a type with only a name field is valid");
-                folder.state = State::Typed(Draft::from(&ty));
+                let ty = match &inherited {
+                    // A kind of its parent's type, named for one of its notes ("Weapon"),
+                    // which has the parent's fields until some are added.
+                    Some(_) => {
+                        let last = folder.name.rsplit('/').next().unwrap_or(&folder.name);
+                        let label = types::singular(last);
+                        ContentType {
+                            id: types::key_from(&label),
+                            label: Some(label),
+                            icon: None,
+                            fields: Vec::new(),
+                            removed_fields: Vec::new(),
+                            parents: Vec::new(),
+                        }
+                    }
+                    None => {
+                        let id = types::key_from(&folder.name.replace('/', " "));
+                        types::parse(&format!(
+                            "type: {}\nfields:\n  - key: name\n    label: Name\n",
+                            serde_yaml_ng::to_string(&id).unwrap_or_default().trim()
+                        ))
+                        .expect("a type with only a name field is valid")
+                    }
+                };
+                folder.state = State::Typed(Box::new(Draft::from(&ty)));
                 folder.changed = true;
             }
             return;
@@ -271,6 +324,24 @@ impl Editor {
                 }
             }
             Message::AddField => fields.push(FieldDraft::from(&Field::for_note("", Kind::Text))),
+            Message::ChangeInherited(key) => {
+                let field = inherited
+                    .iter()
+                    .flat_map(|ty| &ty.fields)
+                    .find(|field| field.key == key);
+                if let Some(field) = field
+                    && fields.iter().all(|own| own.key != key)
+                {
+                    fields.push(FieldDraft::from(field));
+                }
+                draft.removed.retain(|removed| *removed != key);
+            }
+            Message::RemoveInherited(key) => {
+                if key != "name" && !draft.removed.contains(&key) {
+                    draft.removed.push(key);
+                }
+            }
+            Message::KeepInherited(key) => draft.removed.retain(|removed| *removed != key),
             Message::Select(_) | Message::AddType | Message::Save | Message::Cancel => {}
         }
     }
@@ -287,10 +358,17 @@ impl Editor {
             };
 
             let ty = draft.to_type();
+            // The name can come from the type it is a kind of.
+            let all = self.effective(index).unwrap_or_else(|| ty.clone());
             let problem = if ty.fields.iter().any(|field| field.key.is_empty()) {
                 Err("every field needs a name".to_string())
-            } else if !ty.fields.iter().any(|field| field.key == "name") {
+            } else if !all.fields.iter().any(|field| field.key == "name") {
                 Err("it needs a field with the key \"name\": it is the note's filename".to_string())
+            } else if all.parents.contains(&ty.id) {
+                Err(format!(
+                    "its id `{}` is the id of the type it is a kind of; give it one of its own",
+                    ty.id
+                ))
             } else {
                 ty.to_yaml()
             };
@@ -314,20 +392,31 @@ impl Editor {
 
     pub fn view(&self, c: Colors) -> Element<'_, Message> {
         let list = column(self.folders.iter().enumerate().map(|(index, folder)| {
-            let detail = match &folder.state {
-                State::Untyped => "no type".to_string(),
-                State::Broken(_) => "can't be read".to_string(),
-                State::Typed(draft) => draft.label.clone(),
+            let inherited = self.inherited(index);
+            let detail = match (&folder.state, &inherited) {
+                (State::Untyped, None) => "no type".to_string(),
+                (State::Untyped, Some(parent)) => {
+                    format!("{}, like the folder it's in", parent.label())
+                }
+                (State::Broken(_), _) => "can't be read".to_string(),
+                (State::Typed(draft), None) => draft.label.clone(),
+                (State::Typed(draft), Some(parent)) => {
+                    format!("{}, a kind of {}", draft.label, parent.label())
+                }
             };
             let changed = if folder.changed { " •" } else { "" };
+            // Subfolders are indented under the folder they are in, and named by their own name.
+            let depth = folder.name.matches('/').count();
+            let name = folder.name.rsplit('/').next().unwrap_or(&folder.name);
 
-            button(
+            button(row![
+                space().width(depth as f32 * 14.0),
                 column![
-                    text(format!("{}{changed}", folder.name)).size(14),
+                    text(format!("{name}{changed}")).size(14),
                     text(detail).size(12).color(c.text_muted),
                 ]
                 .spacing(2),
-            )
+            ])
             .width(Fill)
             .padding([6, 10])
             .style(style::flat(c, index == self.selected))
@@ -346,7 +435,7 @@ impl Editor {
 
         let detail = match self.folders.get(self.selected) {
             None => space().into(),
-            Some(folder) => self.folder_view(c, folder),
+            Some(folder) => self.folder_view(c, folder, self.inherited(self.selected)),
         };
 
         let mut footer = row![].spacing(8).align_y(Center);
@@ -395,7 +484,12 @@ impl Editor {
         .into()
     }
 
-    fn folder_view<'a>(&'a self, c: Colors, folder: &'a Folder) -> Element<'a, Message> {
+    fn folder_view<'a>(
+        &'a self,
+        c: Colors,
+        folder: &'a Folder,
+        inherited: Option<ContentType>,
+    ) -> Element<'a, Message> {
         let label = |label| text(label).size(12).color(c.text_muted);
         let input = |placeholder: &str, value: &str| {
             text_input(placeholder, value)
@@ -405,6 +499,37 @@ impl Editor {
         };
 
         let draft = match &folder.state {
+            State::Untyped if let Some(parent) = &inherited => {
+                let fields = parent
+                    .fields
+                    .iter()
+                    .map(|field| format!("{} ({})", field.label(), field.kind))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return column![
+                    text(format!(
+                        "Notes in {} are {} notes, like the folder it's in.",
+                        folder.name,
+                        parent.label()
+                    ))
+                    .size(14)
+                    .color(c.text),
+                    text(format!("Their fields: {fields}."))
+                        .size(13)
+                        .color(c.text_muted),
+                    text(format!(
+                        "Make it a kind of {0} to give its notes fields of their own as well, like Weapons in Items: every {0} field, and the ones you add.",
+                        parent.label()
+                    ))
+                    .size(13)
+                    .color(c.text_muted),
+                    button(text(format!("Make it a kind of {}", parent.label())))
+                        .style(style::primary(c))
+                        .on_press(Message::AddType),
+                ]
+                .spacing(12)
+                .into();
+            }
             State::Untyped => {
                 return column![
                     text(format!("Notes in {} have no fields.", folder.name))
@@ -490,16 +615,32 @@ impl Editor {
                 .menu_style(style::choice_menu(c)),
                 small("↑", (index > 0).then_some(Message::MoveUp(index))),
                 small("↓", (index + 1 < count).then_some(Message::MoveDown(index))),
-                // The name is the note's filename, so every type keeps it.
+                // The name is the note's filename, so every type keeps it (a subfolder's
+                // own change to it can go, since the inherited one comes back).
                 small(
                     "Remove",
-                    (field.key != "name").then_some(Message::RemoveField(index))
+                    (field.key != "name" || inherited.is_some())
+                        .then_some(Message::RemoveField(index))
                 ),
             ]
             .spacing(6)
             .align_y(Center);
 
             let mut block = column![controls].spacing(6);
+            if let Some(parent) = &inherited
+                && parent.fields.iter().any(|inherited| inherited.key == field.key)
+            {
+                block = block.push(
+                    text(format!(
+                        "Changes {}'s field for these notes; it stays where {} has it. Remove it to use {}'s again.",
+                        parent.label(),
+                        parent.label(),
+                        parent.label()
+                    ))
+                    .size(12)
+                    .color(c.text_muted),
+                );
+            }
             if field.kind == Kind::Choice {
                 block = block.push(
                     input("Options, separated by commas", &field.options)
@@ -540,16 +681,70 @@ impl Editor {
         ]
         .spacing(6);
 
+        let mut body = column![header].spacing(16);
+
+        // A subfolder's type lists what it inherits first, as its notes show it.
+        if let Some(parent) = &inherited {
+            let rows = parent.fields.iter().map(|field| {
+                let changed = draft.fields.iter().any(|own| own.key == field.key);
+                let removed = draft.removed.contains(&field.key);
+                let detail = if changed {
+                    "changed below".to_string()
+                } else if removed {
+                    "removed from these notes".to_string()
+                } else {
+                    field.kind.to_string()
+                };
+                let key = field.key.clone();
+                let mut controls = row![
+                    text(field.label())
+                        .size(14)
+                        .color(if removed { c.text_muted } else { c.text })
+                        .width(Fill),
+                    text(detail).size(13).color(c.text_muted).width(200),
+                ]
+                .spacing(6)
+                .align_y(Center);
+                if removed {
+                    controls =
+                        controls.push(small("Bring back", Some(Message::KeepInherited(key))));
+                } else if !changed {
+                    controls =
+                        controls.push(small("Change", Some(Message::ChangeInherited(key.clone()))));
+                    controls = controls.push(small(
+                        "Remove",
+                        (field.key != "name").then_some(Message::RemoveInherited(key)),
+                    ));
+                }
+                Element::from(controls)
+            });
+            body = body.push(
+                column![
+                    text(format!(
+                        "From {} (the folder it's in). Changes there show here too.",
+                        parent.label()
+                    ))
+                    .size(13)
+                    .color(c.text),
+                    column(rows).spacing(4),
+                ]
+                .spacing(6),
+            );
+            body = body.push(
+                text(format!("Fields only {} notes have", draft.label))
+                    .size(13)
+                    .color(c.text),
+            );
+        }
+
         scrollable(
-            column![
-                header,
-                column![header_row, column(fields).spacing(8)].spacing(6),
-                button("Add field")
-                    .style(style::secondary(c))
-                    .on_press(Message::AddField),
-            ]
-            .spacing(16)
-            .padding([0, 12]),
+            body.push(column![header_row, column(fields).spacing(8)].spacing(6))
+                .push(
+                    button("Add field")
+                        .style(style::secondary(c))
+                        .on_press(Message::AddField),
+                )
+                .padding([0, 12]),
         )
         .height(Fill)
         .into()
@@ -573,7 +768,7 @@ mod tests {
         fs::create_dir_all(&items).unwrap();
         fs::create_dir_all(root.join("notes")).unwrap();
 
-        let mut types = HashMap::new();
+        let mut types = Types::new();
         types.insert(items.clone(), types::parse(yaml));
         let editor = Editor::new(&root, &[items, root.join("notes")], &types);
         (root, editor)
@@ -621,6 +816,52 @@ mod tests {
         editor.update(Message::RemoveField(0));
         assert!(editor.save().is_err(), "no name field");
         assert!(!root.join("items").join(types::TYPE_FILE).exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn makes_a_subfolder_a_kind_of_its_parent() {
+        let (root, _) = editor(types::STARTER_TYPES[0].1);
+        let items = root.join("items");
+        let weapons = items.join("weapons");
+        fs::create_dir_all(&weapons).unwrap();
+        let mut own = Types::new();
+        own.insert(items.clone(), types::parse(types::STARTER_TYPES[0].1));
+        let mut editor = Editor::new(&root, &[items, weapons.clone()], &own);
+
+        editor.update(Message::Select(1));
+        assert_eq!(editor.inherited(1).unwrap().id, "item");
+        assert_eq!(
+            editor.effective(1).unwrap().fields.len(),
+            6,
+            "Items' fields"
+        );
+
+        editor.update(Message::AddType);
+        editor.update(Message::AddField);
+        editor.update(Message::FieldLabel(0, "Damage".into()));
+        editor.update(Message::RemoveInherited("owner".into()));
+        editor.update(Message::RemoveInherited("name".into()));
+        editor.update(Message::ChangeInherited("rarity".into()));
+        editor.update(Message::FieldOptions(1, "Common, Magic".into()));
+        assert_eq!(editor.save().unwrap(), std::slice::from_ref(&weapons));
+
+        let own = types::load(&weapons).unwrap().unwrap();
+        assert_eq!(own.id, "weapon");
+        assert_eq!(own.label(), "Weapon");
+        assert_eq!(own.removed_fields, ["owner"]);
+        let keys: Vec<_> = own.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            ["damage", "rarity"],
+            "only what it adds or changes is saved"
+        );
+        assert_eq!(own.fields[1].options, ["Common", "Magic"]);
+
+        // Its own id can't be its parent's.
+        editor.update(Message::Id("item".into()));
+        assert!(editor.save().is_err());
 
         fs::remove_dir_all(root).unwrap();
     }

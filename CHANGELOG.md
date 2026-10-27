@@ -4,6 +4,18 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Subfolders
+
+- Subfolders work like child classes: a subfolder of a folder with fields can be **a kind of** its type. Weapons in Items has every Item field (Value, Rarity...) and fields of its own (Damage); Enemies in NPCs starts out like any NPC and adds a Challenge Rating. Changes to the parent's fields show up in its subfolders, and subfolders can have subfolders of their own.
+- Right-click a folder for **New Subfolder...**, which offers a kind of the folder's type (its fields are added next in **Edit > Types**) or the same fields as the folder. A subfolder with no fields of its own has its parent's fields.
+- **Edit > Types** shows subfolders under their folder, and lists the fields a subfolder inherits: **Change** one for the subfolder only, **Remove** it from the subfolder's notes, or **Bring back** one that was removed.
+- Right-clicking a folder offers a new note of each of its kinds (**New Item**, **New Weapon**), and the **+** next to a folder says what it makes when you point at it.
+- A note moved into a subfolder becomes that kind of note and keeps what was filled in. A note that says it's an Item but is in Weapons is read as a Weapon.
+
+### Fixes
+
+- On Linux, the app kept reloading the campaign in the background, using the processor and closing menus as soon as they opened: reading the notes again after a change looked like another change.
+
 ### Help
 
 - **Help > How-To Guides** (F1) opens a Help window with short guides: getting started, notes and fields, links, reading and formatting, dice, and your files. The start screen links to it too.
