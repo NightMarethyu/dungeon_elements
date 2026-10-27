@@ -146,6 +146,9 @@ struct Workspace {
     /// A hash of each note's text as of the last scan, to tell a note renamed outside
     /// the app from one deleted while another was made.
     fingerprints: HashMap<PathBuf, u64>,
+    /// The names to show in the file tree and tabs for notes whose name has characters a
+    /// file name can't hold, like `Chapter 1: The Inn` for `Chapter 1 - The Inn.md`.
+    titles: HashMap<PathBuf, String>,
     /// The folders in the tree that are expanded.
     expanded: HashSet<PathBuf>,
     tabs: Vec<Tab>,
@@ -1118,7 +1121,7 @@ impl Workspace {
         let types = load_types(&root, &tree);
         let index = links::Index::new(&root, markdown_files(&tree));
         let problems = check::campaign(&root, &tree, &types, &index, &check::Gone::new());
-        let fingerprints = fingerprints(&tree);
+        let (fingerprints, titles) = fingerprints(&tree);
         let status = match problems_summary(&problems) {
             Some(summary) => format!("Opened {}. {summary}", root.display()),
             None => format!("Opened {}", root.display()),
@@ -1129,6 +1132,7 @@ impl Workspace {
             gone: check::Gone::new(),
             ignored: HashSet::new(),
             fingerprints,
+            titles,
             tree,
             status,
             root,
@@ -1177,7 +1181,7 @@ impl Workspace {
         self.tree = campaign::scan(&self.root);
         self.types = load_types(&self.root, &self.tree);
         self.index = links::Index::new(&self.root, markdown_files(&self.tree));
-        self.fingerprints = fingerprints(&self.tree);
+        (self.fingerprints, self.titles) = fingerprints(&self.tree);
         self.problems =
             check::campaign(&self.root, &self.tree, &self.types, &self.index, &self.gone);
         let ignored = &self.ignored;
@@ -2189,7 +2193,7 @@ impl Workspace {
         if path.is_dir() {
             self.relative(path)
         } else {
-            display_name(path, false)
+            self.tree_name(path, false)
         }
     }
 
@@ -2512,6 +2516,23 @@ impl Workspace {
                 })
         })?;
         self.link_folder(field)
+    }
+
+    /// The name the file tree shows for the file at `path`: the note's name as written,
+    /// or (with File Extensions on, or if it has none) its file name.
+    fn tree_name(&self, path: &Path, show_extensions: bool) -> String {
+        match self.titles.get(path) {
+            Some(title) if !show_extensions => title.clone(),
+            _ => display_name(path, show_extensions),
+        }
+    }
+
+    /// The name on a tab, like [`Self::tree_name`].
+    fn tab_name(&self, tab: &Tab, show_extensions: bool) -> String {
+        match &tab.path {
+            Some(path) => self.tree_name(path, show_extensions),
+            None => tab.name(show_extensions),
+        }
     }
 
     /// The ⚠ after a file tree row whose file has problems (or, for a collapsed folder,
@@ -3317,7 +3338,7 @@ impl Workspace {
                         .to_string_lossy()
                         .into_owned()
                 } else {
-                    display_name(&path, false)
+                    self.tree_name(&path, false)
                 };
                 self.dialog = Some(Dialog::Rename {
                     path,
@@ -3850,7 +3871,7 @@ impl Workspace {
 
             let name = match entry.children {
                 Some(_) => entry.name.clone(),
-                None => display_name(&entry.path, settings.show_extensions),
+                None => self.tree_name(&entry.path, settings.show_extensions),
             };
 
             let indent = space().width(f32::from(8 + depth * 14));
@@ -3935,7 +3956,7 @@ impl Workspace {
 
             let tab = container(
                 row![
-                    button(text(tab.name(settings.show_extensions)).size(13))
+                    button(text(self.tab_name(tab, settings.show_extensions)).size(13))
                         .padding([8, 4])
                         .style(style::tab_button(c, active))
                         .on_press(Message::SelectTab(tab.id)),
@@ -4878,19 +4899,36 @@ fn markdown_files(entries: &[Entry]) -> Vec<PathBuf> {
     files
 }
 
-/// A hash of the text of each note in the file tree.
-fn fingerprints(tree: &[Entry]) -> HashMap<PathBuf, u64> {
+/// A hash of the text of each note in the file tree, and the names of the notes whose
+/// name field holds characters their file name can't (see [`Workspace::titles`]).
+fn fingerprints(tree: &[Entry]) -> (HashMap<PathBuf, u64>, HashMap<PathBuf, String>) {
     use std::hash::{Hash, Hasher};
 
-    markdown_files(tree)
-        .into_iter()
-        .filter_map(|path| {
-            let bytes = std::fs::read(&path).ok()?;
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            bytes.hash(&mut hasher);
-            Some((path, hasher.finish()))
-        })
-        .collect()
+    let mut hashes = HashMap::new();
+    let mut titles = HashMap::new();
+    for path in markdown_files(tree) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut hasher);
+        hashes.insert(path.clone(), hasher.finish());
+        if let Some(title) = title(&path, &text) {
+            titles.insert(path, title);
+        }
+    }
+    (hashes, titles)
+}
+
+/// The name to show for the note at `path` holding `text`, if it isn't its file name:
+/// its name field, when that is the name the file was named after (like `Chapter 1:
+/// The Inn` for `Chapter 1 - The Inn.md`).
+fn title(path: &Path, text: &str) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let note = note::parse(text).ok()?;
+    let name = note::value_to_text(note.front.get("name")?);
+    let name = name.trim();
+    (name != stem && campaign::note_file_name(name) == stem).then(|| name.to_string())
 }
 
 /// Which of the notes `removed` since the last scan were renamed or moved to which of
