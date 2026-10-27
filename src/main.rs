@@ -3,6 +3,7 @@
 // Release builds on Windows open without a console window behind the app.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod backlinks;
 mod campaign;
 mod check;
 mod code;
@@ -160,6 +161,9 @@ struct Workspace {
     dialog: Option<Dialog>,
     /// The campaign's notes, for following and rewriting `[[links]]`.
     index: links::Index,
+    /// What each note links to, for the notes that link to the one in the reading view.
+    /// Open notes count as their tabs have them, unsaved changes and all.
+    backlinks: backlinks::Backlinks,
     /// Whether Ctrl (Cmd on macOS) is held, so a click on a link opens it.
     ctrl: bool,
     /// The row of the file tree under the mouse: a file, a folder, or the campaign
@@ -1121,6 +1125,7 @@ impl Workspace {
         let types = load_types(&root, &tree);
         let scan = scan_notes(&tree);
         let index = links::Index::new(&root, markdown_files(&tree)).with_aliases(&scan.aliases);
+        let backlinks = backlinks::Backlinks::new(scan.mentions, &index);
         let problems = check::campaign(&root, &tree, &types, &index, &check::Gone::new());
         let (fingerprints, titles) = (scan.hashes, scan.titles);
         let status = match problems_summary(&problems) {
@@ -1143,6 +1148,7 @@ impl Workspace {
             next_id: 0,
             dialog: None,
             index,
+            backlinks,
             ctrl: false,
             hovered: None,
             drag: None,
@@ -1184,6 +1190,7 @@ impl Workspace {
         let scan = scan_notes(&self.tree);
         self.index =
             links::Index::new(&self.root, markdown_files(&self.tree)).with_aliases(&scan.aliases);
+        self.backlinks = backlinks::Backlinks::new(scan.mentions, &self.index);
         (self.fingerprints, self.titles) = (scan.hashes, scan.titles);
         self.problems =
             check::campaign(&self.root, &self.tree, &self.types, &self.index, &self.gone);
@@ -1207,6 +1214,8 @@ impl Workspace {
         let Ok(text) = tab.text() else {
             return;
         };
+        self.backlinks
+            .set(path.clone(), backlinks::mentions(&text), &self.index);
         let mut found = check::file(
             &path,
             &text,
@@ -1240,6 +1249,8 @@ impl Workspace {
     fn recheck_file(&mut self, path: &Path) {
         self.problems.retain(|problem| problem.path != path);
         if let Ok(text) = std::fs::read_to_string(path) {
+            self.backlinks
+                .set(path.to_path_buf(), backlinks::mentions(&text), &self.index);
             let mut found = check::file(
                 path,
                 &text,
@@ -2547,6 +2558,48 @@ impl Workspace {
             Some(title) if !show_extensions => title.clone(),
             _ => display_name(path, show_extensions),
         }
+    }
+
+    /// The notes that link to the note at `path`, for the reading view's "Linked from":
+    /// grouped by their folder's type, then by name.
+    fn linked_from(&self, path: &Path) -> Vec<preview::Backlink> {
+        let mut found: Vec<preview::Backlink> = self
+            .backlinks
+            .to(path)
+            .into_iter()
+            .filter_map(|(from, mentions)| {
+                let link = self.index.link_text(from, path, false)?;
+                let folder = from.parent()?;
+                let ty = self.types.get(folder).and_then(|ty| ty.as_ref().ok());
+                let group = match ty {
+                    Some(ty) => ty.label(),
+                    None if folder == self.root => "Other notes".into(),
+                    None => types::title_case(&display_name(folder, false)),
+                };
+                let lines = mentions
+                    .into_iter()
+                    .map(|mention| match mention {
+                        backlinks::Mention::Field { key, value } => {
+                            let label = ty
+                                .and_then(|ty| ty.fields.iter().find(|field| field.key == *key))
+                                .map_or_else(|| types::title_case(key), types::Field::label);
+                            format!("{label}: {value}")
+                        }
+                        backlinks::Mention::Line(line) => line.clone(),
+                    })
+                    .collect();
+                Some(preview::Backlink {
+                    group,
+                    name: self.tree_name(from, false),
+                    link,
+                    lines,
+                })
+            })
+            .collect();
+        found.sort_by_cached_key(|backlink| {
+            (backlink.group.to_lowercase(), backlink.name.to_lowercase())
+        });
+        found
     }
 
     /// The name on a tab, like [`Self::tree_name`].
@@ -4775,10 +4828,12 @@ impl Workspace {
                 }
                 None => {}
             }
-            let preview = container(preview.view(c, self.index.names(), &self.web, editing))
-                .width(Fill)
-                .height(Fill)
-                .style(style::panel(c.background));
+            let linked_from = self.linked_from(&tab.note_path());
+            let preview =
+                container(preview.view(c, self.index.names(), &self.web, linked_from, editing))
+                    .width(Fill)
+                    .height(Fill)
+                    .style(style::panel(c.background));
             return context_menu::area(preview, |position| {
                 Message::OpenContextMenu(Target::Reading, position)
             })
@@ -4934,6 +4989,8 @@ struct Scan {
     titles: HashMap<PathBuf, String>,
     /// Each note's other names, from its `aliases`.
     aliases: HashMap<PathBuf, Vec<String>>,
+    /// Each note's links, for [`backlinks::Backlinks`].
+    mentions: HashMap<PathBuf, Vec<(String, backlinks::Mention)>>,
 }
 
 /// Reads every note in the file tree for a [`Scan`].
@@ -4948,6 +5005,8 @@ fn scan_notes(tree: &[Entry]) -> Scan {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);
         scan.hashes.insert(path.clone(), hasher.finish());
+        scan.mentions
+            .insert(path.clone(), backlinks::mentions(&text));
 
         let Ok(note) = note::parse(&text) else {
             continue;

@@ -68,7 +68,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Links to other notes that a rename would make ambiguous are rewritten as paths, so they keep pointing where they did
   - [x] Drag a note in the file tree onto a folder (or a note in it) to move it there. It takes the folder's type and keeps every field that has something in it; fields the new type doesn't have become the note's own. Links that named its old folder are rewritten
   - [x] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke. The campaign folder is watched, so outside edits, renames and deletes show up right away; a note renamed outside keeps its tab and its links are updated. Links that look broken (a note spelled almost the same exists, or the note was renamed or deleted outside) get a ⚠ with a tooltip, and clicking it opens a dialog of fixes
-- [ ] Backlinks, so the notes read like a wiki: the reading view lists the notes that link to this one ("Linked from"), so an NPC shows the quests, locations and journal entries they appear in
+- [x] Backlinks, so the notes read like a wiki: the reading view lists the notes that link to this one ("Linked from"), so an NPC shows the quests, locations and journal entries they appear in
 - [ ] Syntax-highlighting and live preview
   - [x] Live preview in the reading view: click a block (paragraph, list, table, heading...) to edit its Markdown in place; it is formatted again when you click elsewhere or press Escape. Fields in the box, and the title, are edited the same way, and clicking under the note adds text
   - [ ] Link suggestions while typing `[[` in a block, and toggling task boxes with a click
