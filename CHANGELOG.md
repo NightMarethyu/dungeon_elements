@@ -18,6 +18,8 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 - Links work with any name: apostrophes and quotes (`John's Long Johns`), accents, other alphabets and emoji. In the front matter a link is read as the YAML string it's in, so `owner: '[[John''s Long Johns]]'` links to John's Long Johns, and renaming or relinking writes names with the escaping YAML needs. Typing a link in the front matter in the Markdown source escapes it too.
 - A note's name can hold characters a file name can't (`Chapter 1: The Inn`, `What?`, `The "Lucky" Inn`). The name field keeps the name as typed, and the file gets a name that works in Windows, macOS, Linux, and in links (`Chapter 1 - The Inn.md`, `What.md`, `The 'Lucky' Inn.md`). Links written with the full name still find the note. The file tree, tabs and dialogs show the name as typed (View > File Extensions shows the real file names).
+- Aliases, the Obsidian way: list other names for a note under **Aliases** (add a field called Aliases, or `aliases:` in the front matter). The BBEG can go by Jerry: `[[Jerry]]` finds the note, and typing `[[Jer` suggests "Jerry (BBEG)", which links as `[[BBEG|Jerry]]` so it works in Obsidian too.
+- A note whose name has characters its file name can't gets that name as an alias, so Obsidian finds it by its real name, and links to it show the real name: `[[Chapter 1 - The Inn|Chapter 1: The Inn]]`. Renaming it updates the alias and the name those links show (links showing words of their own keep them).
 - Fixed a crash when a line with an accented letter or other non-English character held a `[[link]]`.
 
 ### Fixing problems

@@ -1119,9 +1119,10 @@ impl Workspace {
     fn open(root: PathBuf, open_in_reading: bool) -> Self {
         let tree = campaign::scan(&root);
         let types = load_types(&root, &tree);
-        let index = links::Index::new(&root, markdown_files(&tree));
+        let scan = scan_notes(&tree);
+        let index = links::Index::new(&root, markdown_files(&tree)).with_aliases(&scan.aliases);
         let problems = check::campaign(&root, &tree, &types, &index, &check::Gone::new());
-        let (fingerprints, titles) = fingerprints(&tree);
+        let (fingerprints, titles) = (scan.hashes, scan.titles);
         let status = match problems_summary(&problems) {
             Some(summary) => format!("Opened {}. {summary}", root.display()),
             None => format!("Opened {}", root.display()),
@@ -1180,8 +1181,10 @@ impl Workspace {
     fn rescan(&mut self) {
         self.tree = campaign::scan(&self.root);
         self.types = load_types(&self.root, &self.tree);
-        self.index = links::Index::new(&self.root, markdown_files(&self.tree));
-        (self.fingerprints, self.titles) = fingerprints(&self.tree);
+        let scan = scan_notes(&self.tree);
+        self.index =
+            links::Index::new(&self.root, markdown_files(&self.tree)).with_aliases(&scan.aliases);
+        (self.fingerprints, self.titles) = (scan.hashes, scan.titles);
         self.problems =
             check::campaign(&self.root, &self.tree, &self.types, &self.index, &self.gone);
         let ignored = &self.ignored;
@@ -1324,6 +1327,11 @@ impl Workspace {
                     && let Ok(text) =
                         fix::set_value(&text, "name", Some(&new_name.to_string_lossy()))
                 {
+                    let text = with_alias(
+                        &text,
+                        &new_name.to_string_lossy(),
+                        Some(&old_name.to_string_lossy()),
+                    );
                     let _ = std::fs::write(new, text);
                 }
             }
@@ -1829,12 +1837,26 @@ impl Workspace {
         {
             // Applied right away, so a second Ctrl+S before then can't save a new note twice.
             let old = tab.path.clone();
-            let result = save_named(tab, &text, &form.ty.label());
+            let old_name = old
+                .as_deref()
+                .and_then(Path::file_stem)
+                .map(|stem| stem.to_string_lossy());
+            let written = match tab.note_name() {
+                Some(name) => with_alias(&text, &name, old_name.as_deref()),
+                None => text.clone(),
+            };
+            let result = save_named(tab, &written, &form.ty.label());
             let renamed = match (old, &result) {
                 (Some(old), Ok(new)) if old != *new => Some((old, new.clone())),
                 _ => None,
             };
             let task = self.update(Message::Saved(id, result.map(Some)));
+            // The alias it was given shows in the form.
+            if written != text
+                && let Some(index) = self.tabs.iter().position(|tab| tab.id == id)
+            {
+                let _ = self.reload_tab(index);
+            }
             if let Some((old, new)) = renamed {
                 let done = format!(
                     "Renamed {} to {}",
@@ -4294,7 +4316,8 @@ impl Workspace {
     /// The status bar says `done`, then how many links changed.
     fn relink(&mut self, moved: &[(PathBuf, PathBuf)], done: &str) {
         let notes = markdown_files(&self.tree);
-        let after = links::Index::new(&self.root, notes.iter().cloned());
+        // Already read again after the rename, with the notes' aliases.
+        let after = self.index.clone();
         let before = links::Index::new(
             &self.root,
             notes.iter().map(|path| {
@@ -4510,7 +4533,9 @@ impl Workspace {
             self.form_for(path, &text),
             Ok(Some(form)) if form.ty.name_field().is_some()
         );
-        let renamed = with_name(&text, name, wants_name);
+        let old_name = path.file_stem().map(|stem| stem.to_string_lossy());
+        let renamed = with_name(&text, name, wants_name)
+            .map(|text| with_alias(&text, name, old_name.as_deref()));
 
         if target != path {
             std::fs::rename(path, &target)
@@ -4899,33 +4924,73 @@ fn markdown_files(entries: &[Entry]) -> Vec<PathBuf> {
     files
 }
 
-/// A hash of the text of each note in the file tree, and the names of the notes whose
-/// name field holds characters their file name can't (see [`Workspace::titles`]).
-fn fingerprints(tree: &[Entry]) -> (HashMap<PathBuf, u64>, HashMap<PathBuf, String>) {
+/// What a scan of the campaign's notes found, besides the file tree.
+#[derive(Default)]
+struct Scan {
+    /// A hash of each note's text.
+    hashes: HashMap<PathBuf, u64>,
+    /// The names of the notes whose name field holds characters their file name can't
+    /// (see [`Workspace::titles`]).
+    titles: HashMap<PathBuf, String>,
+    /// Each note's other names, from its `aliases`.
+    aliases: HashMap<PathBuf, Vec<String>>,
+}
+
+/// Reads every note in the file tree for a [`Scan`].
+fn scan_notes(tree: &[Entry]) -> Scan {
     use std::hash::{Hash, Hasher};
 
-    let mut hashes = HashMap::new();
-    let mut titles = HashMap::new();
+    let mut scan = Scan::default();
     for path in markdown_files(tree) {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);
-        hashes.insert(path.clone(), hasher.finish());
-        if let Some(title) = title(&path, &text) {
-            titles.insert(path, title);
+        scan.hashes.insert(path.clone(), hasher.finish());
+
+        let Ok(note) = note::parse(&text) else {
+            continue;
+        };
+        if let Some(title) = title(&path, &note) {
+            scan.titles.insert(path.clone(), title);
+        }
+        let aliases: Vec<String> = match note.front.get(form::ALIASES_KEY) {
+            Some(serde_yaml_ng::Value::Sequence(items)) => {
+                items.iter().map(note::value_to_text).collect()
+            }
+            Some(serde_yaml_ng::Value::String(alias)) => vec![alias.clone()],
+            _ => Vec::new(),
+        };
+        if !aliases.is_empty() {
+            scan.aliases.insert(path, aliases);
         }
     }
-    (hashes, titles)
+    scan
+}
+
+/// The note `text`, with `name` among its aliases if its file name can't be `name`, so
+/// Obsidian's link search finds it by the name as written. The alias it had for its old
+/// name `old` (a file name), if any, goes.
+fn with_alias(text: &str, name: &str, old: Option<&str>) -> String {
+    let name = name.trim();
+    let mut text = text.to_string();
+    if let Some(old) = old
+        && let Ok(without) = fix::remove_alias_for(&text, old, name)
+    {
+        text = without;
+    }
+    if campaign::note_file_name(name) == name {
+        return text;
+    }
+    fix::add_alias(&text, name).unwrap_or(text)
 }
 
 /// The name to show for the note at `path` holding `text`, if it isn't its file name:
 /// its name field, when that is the name the file was named after (like `Chapter 1:
 /// The Inn` for `Chapter 1 - The Inn.md`).
-fn title(path: &Path, text: &str) -> Option<String> {
+fn title(path: &Path, note: &note::Note) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
-    let note = note::parse(text).ok()?;
     let name = note::value_to_text(note.front.get("name")?);
     let name = name.trim();
     (name != stem && campaign::note_file_name(name) == stem).then(|| name.to_string())
@@ -5019,6 +5084,12 @@ fn create_linked_note(
             front.insert("type".into(), ty.id.clone().into());
             if ty.name_field().is_some() {
                 front.insert("name".into(), (*name).into());
+            }
+            if campaign::note_file_name(name) != *name {
+                front.insert(
+                    form::ALIASES_KEY.into(),
+                    serde_yaml_ng::Value::Sequence(vec![(*name).into()]),
+                );
             }
             note::to_markdown(&front, &[], "")?
         }

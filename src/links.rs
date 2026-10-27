@@ -5,7 +5,7 @@
 //! two notes share a name. Renaming a note rewrites every link to it ([`relink_note`]), so
 //! links keep working here and in Obsidian.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -145,6 +145,8 @@ pub struct Index {
     /// Every name a link can use to reach a note, as [`normalize`]d: each note's
     /// path in the campaign and every shorter path ending in its filename.
     names: Names,
+    /// Other names notes go by (their `aliases`): `(normalized alias, note, alias)`.
+    aliases: Arc<Vec<(String, usize, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,7 +206,29 @@ impl Index {
         Index {
             notes: Arc::new(notes),
             names: Names(Arc::new(names)),
+            aliases: Arc::default(),
         }
+    }
+
+    /// The index, where links can also use the other names in `aliases` (each note's
+    /// `aliases`), as in Obsidian: `[[Jerry]]` finds the note BBEG if it goes by Jerry.
+    pub fn with_aliases(mut self, aliases: &HashMap<PathBuf, Vec<String>>) -> Self {
+        let mut found = Vec::new();
+        for (index, entry) in self.notes.iter().enumerate() {
+            for alias in aliases.get(&entry.path).into_iter().flatten() {
+                let key = normalize(alias);
+                if !key.is_empty() {
+                    found.push((key, index, alias.trim().to_string()));
+                }
+            }
+        }
+        found.sort();
+
+        let mut names: HashSet<String> = (*self.names.0).clone();
+        names.extend(found.iter().map(|(key, _, _)| key.clone()));
+        self.names = Names(Arc::new(names));
+        self.aliases = Arc::new(found);
+        self
     }
 
     pub fn names(&self) -> Names {
@@ -216,6 +240,21 @@ impl Index {
     /// Like Obsidian: names are compared without case; when several notes match, an exact
     /// path wins, then a note in the same folder as `from`, then the one nearest the top.
     pub fn resolve(&self, target: &str, from: &Path) -> Option<&Path> {
+        // A note's own name wins over another's alias.
+        self.resolve_name(target, from).or_else(|| {
+            let target = normalize(target);
+            let folder = from.parent();
+            self.aliases
+                .iter()
+                .filter(|(alias, _, _)| *alias == target)
+                .map(|(_, index, _)| &self.notes[*index])
+                .min_by_key(|entry| (entry.path.parent() != folder, entry.key.clone()))
+                .map(|entry| entry.path.as_path())
+        })
+    }
+
+    /// Like [`Self::resolve`], but only by the notes' file names, not their aliases.
+    pub fn resolve_name(&self, target: &str, from: &Path) -> Option<&Path> {
         let target = normalize(target);
         if target.is_empty() {
             return None;
@@ -278,14 +317,70 @@ impl Index {
         };
         matches.sort_by_cached_key(|entry| rank(entry));
 
-        matches
+        let mut suggestions: Vec<(String, String)> = matches
             .into_iter()
             .take(limit)
             .filter_map(|entry| {
                 let link = self.link_text(&entry.path, from, false)?;
-                Some((link, self.label(entry)))
+                // `Chapter 1 - The Inn.md`, called "Chapter 1: The Inn", is linked as
+                // `[[Chapter 1 - The Inn|Chapter 1: The Inn]]`, so it shows its real name.
+                Some(match self.written_name(entry) {
+                    Some(name) => (format!("{link}|{name}"), name.to_string()),
+                    None => (link, self.label(entry)),
+                })
             })
-            .collect()
+            .collect();
+
+        // Notes that go by another name are suggested by it too. The link names the note
+        // and shows the alias, `[[BBEG|Jerry]]`, which is how Obsidian links to an alias.
+        let mut by_alias: Vec<&(String, usize, String)> = self
+            .aliases
+            .iter()
+            .filter(|(alias, index, _)| alias.contains(&query) && self.notes[*index].path != from)
+            .collect();
+        by_alias.sort_by_key(|(alias, index, _)| {
+            let entry = &self.notes[*index];
+            (
+                folder.is_some_and(|folder| !entry.path.starts_with(folder)),
+                !alias.starts_with(&query),
+                alias.clone(),
+            )
+        });
+        for (_, index, alias) in by_alias {
+            if suggestions.len() >= limit {
+                break;
+            }
+            let entry = &self.notes[*index];
+            // A name that only differs from the file's in its punctuation is the same name.
+            if normalize(alias) == normalize(entry.name()) {
+                continue;
+            }
+            if let Some(link) = self.link_text(&entry.path, from, false) {
+                suggestions.push((
+                    format!("{link}|{alias}"),
+                    format!("{alias} ({})", self.label(entry)),
+                ));
+            }
+        }
+        suggestions
+    }
+
+    /// [`Self::written_name`] of the note at `path`.
+    pub fn written_name_of(&self, path: &Path) -> Option<&str> {
+        let entry = self.notes.iter().find(|entry| entry.path == path)?;
+        self.written_name(entry)
+    }
+
+    /// The name `entry` is written with, if its file name had to leave out characters:
+    /// the alias that reads as its file name (`Chapter 1: The Inn` for `Chapter 1 - The Inn`).
+    fn written_name(&self, entry: &Entry) -> Option<&str> {
+        let name = normalize(entry.name());
+        self.aliases
+            .iter()
+            .find(|(alias, index, written)| {
+                self.notes[*index].path == entry.path && *alias == name && written != entry.name()
+            })
+            .map(|(_, _, written)| written.as_str())
     }
 
     /// How to show `entry` in a list of notes: its name, or its path when two notes share
@@ -410,7 +505,8 @@ impl Rename<'_> {
 fn relinked(target: &str, from: &Path, rename: &Rename) -> Option<String> {
     let meant = rename.before.resolve(target, &rename.was(from))?;
     let meant = rename.now(meant);
-    if rename.after.resolve(target, from) == Some(meant) {
+    // Only by name: Obsidian doesn't follow a link to an alias.
+    if rename.after.resolve_name(target, from) == Some(meant) {
         return None;
     }
 
@@ -418,6 +514,10 @@ fn relinked(target: &str, from: &Path, rename: &Rename) -> Option<String> {
     let mut replacement = rename.after.link_text(meant, from, as_path)?;
     if target.to_lowercase().ends_with(".md") {
         replacement.push_str(".md");
+    }
+    // A note whose name has characters its file name can't shows that name.
+    if let Some(name) = rename.after.written_name_of(meant) {
+        replacement = format!("{replacement}|{name}");
     }
     Some(replacement)
 }
@@ -473,13 +573,58 @@ fn rewrite(text: &str, new_target: &mut dyn FnMut(&str) -> Option<String>) -> (S
 
     // From the end, so earlier ranges stay valid.
     for link in find(text).into_iter().rev() {
-        if let Some(replacement) = new_target(&text[link.target.clone()]) {
-            result.replace_range(link.target.clone(), &replacement);
+        let old = &text[link.target.clone()];
+        if let Some(replacement) = new_target(old) {
+            retarget(&mut result, text, &link, old, &replacement, Quote::Plain);
             changed += 1;
         }
     }
 
     (result, changed)
+}
+
+/// Points `link`, found in `text`, at `replacement` in `result` (a copy of `text` that
+/// is only changed after the link). `old` is where it pointed.
+///
+/// A replacement like `Note|Shown` also sets the text the link shows, if it showed none
+/// or showed the old note's name, but not if it shows words of its own.
+fn retarget(
+    result: &mut String,
+    text: &str,
+    link: &Link,
+    old: &str,
+    replacement: &str,
+    quote: Quote,
+) {
+    let (target, shown) = match replacement.split_once('|') {
+        Some((target, shown)) => (target, Some(shown)),
+        None => (replacement, None),
+    };
+
+    if let Some(shown) = shown {
+        let close = link.range.end - 2;
+        let tail = &text[link.target.end..close];
+        match tail.find('|') {
+            Some(pipe) => {
+                let range = link.target.end + pipe + 1..close;
+                let current = unquote(&text[range.clone()], quote);
+                if normalize(&current) == normalize(old) {
+                    result.replace_range(range, &requote(shown, quote));
+                }
+            }
+            None => {
+                // In a table, a bare | would end the cell.
+                let line_start = text[..link.range.start].rfind('\n').map_or(0, |i| i + 1);
+                let pipe = if text[line_start..].trim_start().starts_with('|') {
+                    "\\|"
+                } else {
+                    "|"
+                };
+                result.insert_str(close, &format!("{pipe}{}", requote(shown, quote)));
+            }
+        }
+    }
+    result.replace_range(link.target.clone(), &requote(target, quote));
 }
 
 /// Like [`rewrite`], for a whole note, front matter included. Returns `None` if no link changed.
@@ -536,8 +681,9 @@ fn rewrite_yaml(yaml: &str, new_target: &mut dyn FnMut(&str) -> Option<String>) 
 
     for link in find(yaml).into_iter().rev() {
         let quote = quote_at(yaml, link.target.start);
-        if let Some(replacement) = new_target(&unquote(&yaml[link.target.clone()], quote)) {
-            result.replace_range(link.target.clone(), &requote(&replacement, quote));
+        let old = unquote(&yaml[link.target.clone()], quote);
+        if let Some(replacement) = new_target(&old) {
+            retarget(&mut result, yaml, &link, &old, &replacement, quote);
             changed += 1;
         }
     }
@@ -1131,6 +1277,70 @@ mod tests {
         };
         let from = root.join(format!("{from}.md"));
         relink_note(text, &from, &rename)
+    }
+
+    #[test]
+    fn links_can_use_aliases() {
+        let root = Path::new("/c");
+        let aliases = HashMap::from([
+            (root.join("npcs/BBEG.md"), vec!["Jerry".to_string()]),
+            (
+                root.join("lore/Chapter 1 - The Inn.md"),
+                vec!["Chapter 1: The Inn".to_string()],
+            ),
+        ]);
+        let index = campaign(
+            root,
+            &["npcs/BBEG", "npcs/Jeremy", "lore/Chapter 1 - The Inn"],
+        )
+        .with_aliases(&aliases);
+        let from = root.join("Day.md");
+
+        assert_eq!(
+            index.resolve("jerry", &from),
+            Some(root.join("npcs/BBEG.md").as_path())
+        );
+        assert!(index.names().contains("Jerry"));
+        assert_eq!(
+            index.suggest("jer", &from, None, 5),
+            [
+                ("Jeremy".to_string(), "Jeremy".to_string()),
+                ("BBEG|Jerry".to_string(), "Jerry (BBEG)".to_string()),
+            ]
+        );
+        assert_eq!(
+            index.suggest("chapter", &from, None, 5),
+            [(
+                "Chapter 1 - The Inn|Chapter 1: The Inn".to_string(),
+                "Chapter 1: The Inn".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn renaming_a_note_with_punctuation_updates_the_name_links_show() {
+        let root = Path::new("/c");
+        let before = campaign(root, &["Chapter 1 - The Inn", "Day"]);
+        let after = campaign(root, &["Chapter 2 - Docks", "Day"]).with_aliases(&HashMap::from([(
+            root.join("Chapter 2 - Docks.md"),
+            vec!["Chapter 2: Docks".to_string()],
+        )]));
+        let moved = [(
+            root.join("Chapter 1 - The Inn.md"),
+            root.join("Chapter 2 - Docks.md"),
+        )];
+        let rename = Rename {
+            moved: &moved,
+            before: &before,
+            after: &after,
+        };
+        let text = "---\nwhere: '[[Chapter 1 - The Inn]]'\n---\n\n[[Chapter 1 - The Inn|Chapter 1: The Inn]], [[Chapter 1 - The Inn|that night]]\n\n| a | [[Chapter 1 - The Inn]] |\n";
+        let (new, count) = relink_note(text, &root.join("Day.md"), &rename).unwrap();
+        assert_eq!(count, 4);
+        assert_eq!(
+            new,
+            "---\nwhere: '[[Chapter 2 - Docks|Chapter 2: Docks]]'\n---\n\n[[Chapter 2 - Docks|Chapter 2: Docks]], [[Chapter 2 - Docks|that night]]\n\n| a | [[Chapter 2 - Docks\\|Chapter 2: Docks]] |\n"
+        );
     }
 
     #[test]

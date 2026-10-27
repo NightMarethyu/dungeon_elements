@@ -28,6 +28,9 @@ pub fn field_id(index: usize) -> String {
 }
 
 /// Whether front matter `key` is one the form manages itself, rather than a field.
+/// The front matter key for a note's other names, which links can use too, as in Obsidian.
+pub const ALIASES_KEY: &str = "aliases";
+
 pub fn is_reserved(key: &str) -> bool {
     key == "type" || key == REMOVED_KEY
 }
@@ -314,6 +317,16 @@ impl Form {
             return Err(format!("This note already has a field called {label:?}"));
         }
 
+        // Obsidian's other names for a note are a list under `aliases`.
+        if label.eq_ignore_ascii_case(ALIASES_KEY) {
+            self.fields.push(Field {
+                label: None,
+                ..Field::for_note(ALIASES_KEY, Kind::Tags)
+            });
+            self.inputs.push(Input::empty(Kind::Tags));
+            return Ok(());
+        }
+
         self.fields.push(Field::for_note(label, kind));
         self.inputs.push(Input::empty(kind));
         Ok(())
@@ -341,7 +354,9 @@ impl Form {
     pub fn link_field(&self, index: usize) -> Option<(&Field, &str)> {
         match (self.fields.get(index), self.inputs.get(index)) {
             (Some(field), Some(Input::Text(value))) if field.kind == Kind::Link => {
-                Some((field, note::unlink(value)))
+                // `BBEG|Jerry` (a link to an alias, made in Obsidian) is a link to BBEG.
+                let target = note::unlink(value);
+                Some((field, target.split(['|', '#']).next().unwrap_or(target)))
             }
             _ => None,
         }
@@ -363,7 +378,8 @@ impl Form {
                 true
             }
             Input::Text(value) if self.fields[index].kind == Kind::Link => {
-                *value = link.to_string();
+                // A link field holds just the note: `BBEG`, not `BBEG|Jerry`.
+                *value = link.split('|').next().unwrap_or(link).to_string();
                 // The link is done, so stop suggesting notes for it.
                 self.focus = None;
                 true
