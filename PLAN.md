@@ -90,6 +90,9 @@ Stretch goal:
 
 The campaign's people and plots. Everything here is notes, types and links, built on Phase 1's wiki, so it needs no new kinds of panes.
 
+- [ ] Help menu improvements
+  - [ ] Show all the keyboard shortcuts dialog box
+  - [ ] Basic How-Tos dialog
 - [ ] Content types grow up (see [Content types](#content-types))
   - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
   - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
