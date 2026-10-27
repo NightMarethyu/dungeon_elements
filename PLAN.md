@@ -67,7 +67,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Renaming a note in the app (changing its name and saving) rewrites every link to it across the campaign: in note bodies, front matter fields, and open tabs, unsaved changes included. Shown text and headings are kept
   - [x] Links to other notes that a rename would make ambiguous are rewritten as paths, so they keep pointing where they did
   - [x] Drag a note in the file tree onto a folder (or a note in it) to move it there. It takes the folder's type and keeps every field that has something in it; fields the new type doesn't have become the note's own. Links that named its old folder are rewritten
-  - [ ] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke
+  - [x] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke. The campaign folder is watched, so outside edits, renames and deletes show up right away; a note renamed outside keeps its tab and its links are updated. Links that look broken (a note spelled almost the same exists, or the note was renamed or deleted outside) get a ⚠ with a tooltip, and clicking it opens a dialog of fixes
 - [ ] Backlinks, so the notes read like a wiki: the reading view lists the notes that link to this one ("Linked from"), so an NPC shows the quests, locations and journal entries they appear in
 - [ ] Syntax-highlighting and live preview
   - [x] Live preview in the reading view: click a block (paragraph, list, table, heading...) to edit its Markdown in place; it is formatted again when you click elsewhere or press Escape. Fields in the box, and the title, are edited the same way, and clicking under the note adds text
@@ -89,6 +89,7 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
   - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
   - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
+  - [ ] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add new fields to improve QoL)
 - [ ] Player management
   - [ ] The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types
   - [ ] Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)

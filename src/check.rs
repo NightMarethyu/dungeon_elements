@@ -4,7 +4,7 @@
 //! When a campaign opens (and when it is refreshed), every note and `_type.yaml`
 //! is checked, and anything that would show up wrong in a form is listed as a problem.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -12,6 +12,7 @@ use serde_yaml_ng::Value;
 
 use crate::campaign::{self, Entry};
 use crate::form::{self, REMOVED_KEY};
+use crate::links::{self, Index};
 use crate::note;
 use crate::types::{self, ContentType, Kind};
 
@@ -20,13 +21,39 @@ use crate::types::{self, ContentType, Kind};
 pub struct Problem {
     pub path: PathBuf,
     pub message: String,
+    /// What kind of problem it is, so it can be offered a fix.
+    pub issue: Issue,
 }
+
+/// What kind of problem a [`Problem`] is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Issue {
+    /// A `[[link]]` to `target` points nowhere, though it likely meant a note: one with
+    /// almost the same name, or one that was there before it was renamed or deleted
+    /// outside the app (`gone`).
+    Link { target: String, gone: bool },
+    /// Long text field `key` is in the front matter instead of a `## Label` section.
+    InFrontMatter { key: String },
+    /// The note's `type:` names no folder's type.
+    UnknownType,
+    /// Choice field `key` holds `value`, which isn't one of its options.
+    NotAnOption { key: String, value: String },
+    /// Anything else, which is fixed by hand.
+    Other,
+}
+
+/// The names of the notes deleted or renamed outside the app since the campaign opened,
+/// as [`links::normalize`]d link targets, so links to them can be told from links to
+/// notes that were never made.
+pub type Gone = HashSet<String>;
 
 /// Checks every note and type file in the campaign.
 pub fn campaign(
     root: &Path,
     tree: &[Entry],
     types: &HashMap<PathBuf, Result<ContentType, String>>,
+    index: &Index,
+    gone: &Gone,
 ) -> Vec<Problem> {
     let mut problems = Vec::new();
 
@@ -39,6 +66,7 @@ pub fn campaign(
         problems.push(Problem {
             path: folder.join(types::TYPE_FILE),
             message: error.clone(),
+            issue: Issue::Other,
         });
     }
 
@@ -49,19 +77,87 @@ pub fn campaign(
             problems.push(Problem {
                 message: "can't be read as text".into(),
                 path,
+                issue: Issue::Other,
             });
             continue;
         };
-        let folder = path.parent().unwrap_or(root);
-        for message in note(&text, folder, types) {
-            problems.push(Problem {
-                path: path.clone(),
-                message,
-            });
-        }
+        problems.extend(file(&path, &text, root, types, index, gone));
     }
 
     problems
+}
+
+/// What is wrong with the note at `path` if it held `text`: what is on disk, or what an
+/// open tab holds.
+pub fn file(
+    path: &Path,
+    text: &str,
+    root: &Path,
+    types: &HashMap<PathBuf, Result<ContentType, String>>,
+    index: &Index,
+    gone: &Gone,
+) -> Vec<Problem> {
+    let folder = path.parent().unwrap_or(root);
+    note(text, folder, types)
+        .into_iter()
+        .chain(broken_links(text, path, index, gone))
+        .map(|(message, issue)| Problem {
+            path: path.to_path_buf(),
+            message,
+            issue,
+        })
+        .collect()
+}
+
+/// The links in the note `text` at `path` that look broken: they point nowhere, but a
+/// note with almost the same name exists, or the note they named was renamed or deleted
+/// outside the app. Links to notes that were never made are fine: they are notes to write.
+pub fn broken_links(text: &str, path: &Path, index: &Index, gone: &Gone) -> Vec<(String, Issue)> {
+    let mut seen = HashSet::new();
+    let mut problems = Vec::new();
+
+    for target in links::targets(text) {
+        let target = target.trim();
+        if !is_note_link(target) || index.resolve(target, path).is_some() {
+            continue;
+        }
+        if !seen.insert(links::normalize(target)) {
+            continue;
+        }
+
+        let is_gone = gone.contains(&links::normalize(target));
+        let message = if is_gone {
+            format!(
+                "It links to [[{target}]], which was renamed or deleted outside Dungeon Elements"
+            )
+        } else if let Some((name, _)) = index.similar(target, path, 1).into_iter().next() {
+            format!("It links to [[{target}]], but no note has that name. Did you mean {name}?")
+        } else {
+            continue;
+        };
+        problems.push((
+            message,
+            Issue::Link {
+                target: target.to_string(),
+                gone: is_gone,
+            },
+        ));
+    }
+
+    problems
+}
+
+/// Whether a link target names a note, rather than a picture or other file like `map.png`.
+fn is_note_link(target: &str) -> bool {
+    match target.rsplit_once('.') {
+        Some((_, extension)) => {
+            extension.eq_ignore_ascii_case("md")
+                || extension.is_empty()
+                || extension.len() > 5
+                || !extension.chars().all(|c| c.is_ascii_alphanumeric())
+        }
+        None => true,
+    }
 }
 
 fn collect_notes(entries: &[Entry], notes: &mut Vec<PathBuf>) {
@@ -79,10 +175,10 @@ pub fn note(
     text: &str,
     folder: &Path,
     types: &HashMap<PathBuf, Result<ContentType, String>>,
-) -> Vec<String> {
+) -> Vec<(String, Issue)> {
     let note = match note::parse(text) {
         Ok(note) => note,
-        Err(error) => return vec![capitalize(&error)],
+        Err(error) => return vec![(capitalize(&error), Issue::Other)],
     };
 
     let mut problems = Vec::new();
@@ -93,8 +189,11 @@ pub fn note(
             let id = note::value_to_text(id);
             let found = types.values().flatten().find(|ty| ty.id == id);
             if found.is_none() {
-                problems.push(format!(
-                    "Its `type: {id}` doesn't match any folder's type, so its folder's fields are used"
+                problems.push((
+                    format!(
+                        "Its `type: {id}` doesn't match any folder's type, so its folder's fields are used"
+                    ),
+                    Issue::UnknownType,
                 ));
             }
             found
@@ -105,8 +204,9 @@ pub fn note(
     match note.front.get(REMOVED_KEY) {
         None | Some(Value::String(_)) => {}
         Some(Value::Sequence(keys)) if keys.iter().all(|key| matches!(key, Value::String(_))) => {}
-        Some(_) => problems.push(format!(
-            "`{REMOVED_KEY}` should be a list of field keys, so it is ignored"
+        Some(_) => problems.push((
+            format!("`{REMOVED_KEY}` should be a list of field keys, so it is ignored"),
+            Issue::Other,
         )),
     }
 
@@ -117,8 +217,13 @@ pub fn note(
 
             if field.kind == Kind::Longtext {
                 if value.is_some() {
-                    problems.push(format!(
-                        "{label} is in the front matter, but its text belongs in a `## {label}` section, so the form doesn't show it"
+                    problems.push((
+                        format!(
+                            "{label} is in the front matter, but its text belongs in a `## {label}` section, so the form doesn't show it"
+                        ),
+                        Issue::InFrontMatter {
+                            key: field.key.clone(),
+                        },
                     ));
                 }
                 let sections = note
@@ -130,8 +235,11 @@ pub fn note(
                     })
                     .count();
                 if sections > 1 {
-                    problems.push(format!(
-                        "It has {sections} `## {label}` sections; the form shows the first as {label} and the others as separate fields"
+                    problems.push((
+                        format!(
+                            "It has {sections} `## {label}` sections; the form shows the first as {label} and the others as separate fields"
+                        ),
+                        Issue::Other,
                     ));
                 }
                 continue;
@@ -140,7 +248,14 @@ pub fn note(
             if let Some(value) = value
                 && let Some(problem) = value_problem(field.kind, &field.options, value)
             {
-                problems.push(format!("{label} {problem}"));
+                let issue = match field.kind {
+                    Kind::Choice => Issue::NotAnOption {
+                        key: field.key.clone(),
+                        value: note::value_to_text(value),
+                    },
+                    _ => Issue::Other,
+                };
+                problems.push((format!("{label} {problem}"), issue));
             }
         }
     }
@@ -151,8 +266,9 @@ pub fn note(
         let listed = form::is_reserved(&key)
             || ty.is_some_and(|ty| ty.fields.iter().any(|field| field.key == key));
         if !listed && form::kind_of(value).is_none() {
-            problems.push(format!(
-                "`{key}` is nested YAML, which the form can't show (it is kept as it is)"
+            problems.push((
+                format!("`{key}` is nested YAML, which the form can't show (it is kept as it is)"),
+                Issue::Other,
             ));
         }
     }
@@ -229,6 +345,9 @@ mod tests {
 
     fn check(text: &str) -> Vec<String> {
         note(text, Path::new("items"), &item_types())
+            .into_iter()
+            .map(|(message, _)| message)
+            .collect()
     }
 
     #[test]
@@ -272,6 +391,32 @@ mod tests {
     }
 
     #[test]
+    fn reports_links_that_look_broken() {
+        let root = Path::new("/c");
+        let index = Index::new(root, [root.join("npcs/Bob.md"), root.join("Old Mill.md")]);
+        let from = root.join("items/Ring.md");
+        let text = "---\nowner: '[[Bobby]]'\n---\n\n[[Bob]], [[bobby]], [[Dragon]], [[Old Mill]], ![[map.png]], [[Mira]]\n";
+        let gone = Gone::from(["mira".to_string()]);
+
+        let problems = broken_links(text, &from, &index, &gone);
+        let issues: Vec<_> = problems.iter().map(|(_, issue)| issue.clone()).collect();
+        assert_eq!(
+            issues,
+            [
+                Issue::Link {
+                    target: "Bobby".into(),
+                    gone: false
+                },
+                Issue::Link {
+                    target: "Mira".into(),
+                    gone: true
+                },
+            ]
+        );
+        assert!(problems[0].0.contains("Did you mean Bob?"), "{problems:?}");
+    }
+
+    #[test]
     fn checks_a_campaign_folder() {
         let root =
             std::env::temp_dir().join(format!("dungeon_elements_check_{}", std::process::id()));
@@ -298,7 +443,8 @@ mod tests {
             types.insert(folder.clone(), types::load(&folder).unwrap());
         }
 
-        let problems = campaign(&root, &tree, &types);
+        let index = Index::new(&root, [root.join("items").join("Ring.md")]);
+        let problems = campaign(&root, &tree, &types, &index, &Gone::new());
         let paths: Vec<_> = problems
             .iter()
             .map(|problem| problem.path.clone())

@@ -114,6 +114,62 @@ pub fn copy_picture(root: &Path, file: &Path) -> Result<PathBuf, String> {
 }
 
 /// Checks that `name` can be used as a file or folder name on both Windows and Linux.
+/// The file name, without `.md`, for a note called `name`.
+///
+/// A note's name can be anything, like `John's "Long" Johns` or `Chapter 1: The Inn`, but
+/// its file name must work in Windows Explorer, macOS and Linux, and in a `[[link]]`. So
+/// characters that can't be in one are swapped for something close (`:` for ` -`, `"` for
+/// `'`, brackets for parentheses) or left out (`?`, `*`, `#`, `^`). Accents, other
+/// alphabets and emoji are kept as they are.
+pub fn note_file_name(name: &str) -> String {
+    let safe = safe_name(name);
+    if safe.is_empty() {
+        "Untitled".into()
+    } else {
+        safe
+    }
+}
+
+/// [`note_file_name`], but empty if nothing is left of `name`.
+pub fn safe_name(name: &str) -> String {
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+
+    let mut swapped = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            ':' => swapped.push_str(" -"),
+            '/' | '\\' | '|' => swapped.push('-'),
+            '"' => swapped.push('\''),
+            '<' | '[' => swapped.push('('),
+            '>' | ']' => swapped.push(')'),
+            '?' | '*' | '#' | '^' => {}
+            c if c.is_control() => swapped.push(' '),
+            c => swapped.push(c),
+        }
+    }
+
+    // Runs of spaces become one, and Windows drops spaces and periods at the ends.
+    let mut safe = swapped.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = safe.trim_matches(|c: char| c == '.' || c == ' ').len();
+    if trimmed != safe.len() {
+        safe = safe
+            .trim_matches(|c: char| c == '.' || c == ' ')
+            .to_string();
+    }
+
+    let stem = safe.split('.').next().unwrap_or(&safe);
+    if RESERVED
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        safe.push('_');
+    }
+    safe
+}
+
 pub fn validate_name(name: &str) -> Result<(), String> {
     const RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -262,6 +318,30 @@ mod tests {
         assert!(validate_name("NUL.txt").is_err());
         assert!(validate_name("The Sunken Keep").is_ok());
         assert!(validate_name("Console Wars").is_ok());
+    }
+
+    #[test]
+    fn note_names_become_safe_file_names() {
+        let cases = [
+            ("John's Long Johns", "John's Long Johns"),
+            ("The \"Lucky\" Inn", "The 'Lucky' Inn"),
+            ("Chapter 1: The Inn", "Chapter 1 - The Inn"),
+            ("What?", "What"),
+            ("Room #3 [old]", "Room 3 (old)"),
+            ("A/B\\C|D", "A-B-C-D"),
+            ("Ends with dots...", "Ends with dots"),
+            ("  spaced   out  ", "spaced out"),
+            ("Con", "Con_"),
+            ("Ælfrida Ō'Brien 🐉", "Ælfrida Ō'Brien 🐉"),
+            ("Дракон", "Дракон"),
+            ("???", "Untitled"),
+        ];
+        for (name, file) in cases {
+            assert_eq!(note_file_name(name), file, "{name}");
+            assert!(validate_name(&note_file_name(name)).is_ok(), "{name}");
+            // Doing it twice changes nothing.
+            assert_eq!(note_file_name(file), file, "{file}");
+        }
     }
 
     #[test]
