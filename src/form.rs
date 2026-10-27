@@ -413,18 +413,6 @@ impl Form {
         }
     }
 
-    /// Wraps the selection in the long text field last typed in as a `[[link]]`.
-    /// Returns whether there was such a field.
-    pub fn insert_link(&mut self) -> bool {
-        match self.focus.map(|index| &mut self.inputs[index]) {
-            Some(Input::Long(content)) => {
-                links::insert(content);
-                true
-            }
-            _ => false,
-        }
-    }
-
     /// Types `text` at the cursor in the long text field last typed in. Returns whether
     /// there was such a field.
     pub fn insert_text(&mut self, text: &str) -> bool {

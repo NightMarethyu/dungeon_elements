@@ -942,7 +942,8 @@ pub fn under_cursor(content: &Content) -> Option<String> {
 }
 
 /// Applies `action` to `content`, closing a typed `[[` with `]]` the way Obsidian does
-/// (and typing over that `]]` instead of adding another).
+/// (and typing over that `]]` instead of adding another), and carrying lists on when
+/// Enter is pressed in one.
 pub fn perform(content: &mut Content, action: Action) {
     let cursor = content.cursor();
     let caret = cursor
@@ -960,6 +961,7 @@ pub fn perform(content: &mut Content, action: Action) {
         .is_some_and(|start| !before[start..].contains("]]"));
 
     match action {
+        Action::Edit(Edit::Enter) if crate::format::continue_list(content) => {}
         Action::Edit(Edit::Insert('['))
             if caret && before.ends_with('[') && !after.starts_with(']') =>
         {

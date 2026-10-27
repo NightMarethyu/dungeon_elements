@@ -11,6 +11,7 @@ mod context_menu;
 mod dice;
 mod fix;
 mod form;
+mod format;
 mod icon;
 mod links;
 mod menu;
@@ -452,6 +453,7 @@ enum Message {
     ReloadThemes,
     ToggleExtensions(bool),
     ToggleTypeFiles(bool),
+    ToggleToolbar(bool),
     ShowAbout,
     CloseAbout,
     Exit,
@@ -474,6 +476,8 @@ enum Message {
     NewNoteIn(PathBuf),
     Form(form::Message),
     ToggleSource,
+    /// Edits the active tab's note in its Markdown source (true) or its form (false).
+    SetSource(bool),
     /// Switches the active tab between the reading view and editing.
     ToggleReading,
     /// Shows the active tab in the reading view (true) or an editor (false).
@@ -481,6 +485,8 @@ enum Message {
     ToggleOpenInReading(bool),
     /// A link in the reading view was clicked.
     PreviewLink(String),
+    /// A task box in the reading view was clicked; its `[ ]` is here in the note's text.
+    ToggleTask(usize),
     /// Edits block `index` of the reading view in place.
     EditBlock(usize),
     BlockEdit(text_editor::Action),
@@ -501,6 +507,8 @@ enum Message {
     /// Opens the note a link points to, creating it if there is none.
     FollowLink(String),
     InsertLink,
+    /// Formats the text being typed in, from the formatting toolbar or Ctrl+B and Ctrl+I.
+    Format(format::Command),
     /// Asks for a picture to add to the note.
     InsertPicture,
     /// Copies this picture into the campaign and embeds it in the note.
@@ -825,6 +833,11 @@ impl App {
                 self.save_settings();
                 return Task::none();
             }
+            Message::ToggleToolbar(show) => {
+                self.settings.show_toolbar = show;
+                self.save_settings();
+                return Task::none();
+            }
             Message::ToggleOpenInReading(on) => {
                 self.settings.open_in_reading = on;
                 self.save_settings();
@@ -1033,6 +1046,7 @@ impl App {
         });
         let shows_source =
             active_tab.is_some_and(|tab| tab.form.is_some() && tab.source && !tab.reading());
+        let shows_form = active_tab.is_some_and(Tab::shows_form);
         let when = |enabled: bool, message: Message| enabled.then_some(message);
 
         match open {
@@ -1095,12 +1109,16 @@ impl App {
                     item("Reading View", when(can_read, Message::ToggleReading))
                         .shortcut("Ctrl+R")
                         .checked(reading),
+                    item("Edit as Form", when(has_form, Message::SetSource(false)))
+                        .checked(shows_form),
+                    item("Edit as Markdown", when(has_form, Message::SetSource(true)))
+                        .shortcut("Ctrl+E")
+                        .checked(shows_source),
                     item(
-                        "Show Markdown Source",
-                        when(has_form, Message::ToggleSource),
+                        "Formatting Toolbar",
+                        Some(Message::ToggleToolbar(!self.settings.show_toolbar)),
                     )
-                    .shortcut("Ctrl+E")
-                    .checked(shows_source),
+                    .checked(self.settings.show_toolbar),
                     item(
                         "Open Notes in Reading View",
                         Some(Message::ToggleOpenInReading(!self.settings.open_in_reading)),
@@ -2741,6 +2759,7 @@ impl Workspace {
                 | Message::CloseActiveTab
                 | Message::CloseCampaign
                 | Message::ToggleSource
+                | Message::SetSource(_)
                 | Message::SetReading(_)
                 | Message::PreviewLink(_)
                 | Message::FollowLink(_)
@@ -3041,35 +3060,14 @@ impl Workspace {
                 self.web.insert(url, picture);
                 Task::none()
             }
-            Message::InsertLink => {
-                let Some(tab) = self.active_tab_mut() else {
-                    return Task::none();
-                };
-                if !tab.is_note() {
-                    return Task::none();
-                }
-                if tab.shows_form() {
-                    let Some(form) = &mut tab.form else {
-                        return Task::none();
-                    };
-                    let focus = form.focus();
-                    if form.insert_link() {
-                        tab.modified = true;
-                        if let Some(index) = focus {
-                            return iced::widget::operation::focus(form::field_id(index));
-                        }
-                    } else {
-                        self.status =
-                            "Click in a text box first, then press Ctrl+K to add a link there"
-                                .into();
-                    }
-                    Task::none()
-                } else {
-                    links::insert(&mut tab.content);
-                    tab.modified = true;
-                    iced::widget::operation::focus(EDITOR)
-                }
-            }
+            Message::InsertLink => self.change_focused_text(
+                links::insert,
+                "Click in a text box first, then press Ctrl+K to add a link there",
+            ),
+            Message::Format(command) => self.change_focused_text(
+                |content| format::apply(content, command),
+                "Click in a text box first, then pick how to format it",
+            ),
             Message::ToggleReading => {
                 let reading = self.active_tab().is_some_and(Tab::reading);
                 self.update(Message::SetReading(!reading))
@@ -3186,7 +3184,34 @@ impl Workspace {
                     None => Task::none(),
                 }
             }
+            Message::ToggleTask(at) => {
+                let root = self.root.clone();
+                let index = self.index.clone();
+                if let Some(tab) = self.active_tab_mut()
+                    && let Some(preview) = &tab.preview
+                {
+                    // Ticking a box doesn't move anything in the note, so a block being
+                    // edited is still where it was, and goes back in after.
+                    let text = tab.text().unwrap_or_else(|_| tab.content.text());
+                    if text == preview.source()
+                        && let Some(new) = preview::toggle_task(&text, at)
+                    {
+                        tab.set_text(&new);
+                        tab.modified = true;
+                        tab.preview = Some(tab.make_preview(&root, &index));
+                    }
+                }
+                self.finish_editing();
+                Task::none()
+            }
             Message::ToggleSource => {
+                // From the reading view, go to the Markdown source.
+                let source = self
+                    .active_tab()
+                    .is_some_and(|tab| tab.reading() || !tab.source);
+                self.update(Message::SetSource(source))
+            }
+            Message::SetSource(source) => {
                 let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
                     return Task::none();
                 };
@@ -3194,8 +3219,8 @@ impl Workspace {
                     return Task::none();
                 };
 
-                // From the reading view, go to whichever editor was asked for.
-                if tab.preview.take().is_some() && tab.source {
+                tab.preview = None;
+                if tab.source == source {
                     return Task::none();
                 }
                 if tab.source {
@@ -3786,13 +3811,20 @@ impl Workspace {
                     item("Insert Picture...", when(is_note, Message::InsertPicture))
                         .shortcut("Ctrl+Shift+K"),
                 ]);
+                // In a typed note's Markdown source, the way back to its form.
+                if active.is_some_and(|tab| tab.form.is_some() && tab.source && !tab.reading()) {
+                    entries.extend([
+                        Entry::Separator,
+                        item("Edit as Form", Some(Message::SetSource(false))).shortcut("Ctrl+E"),
+                    ]);
+                }
                 entries
             }
             Target::Form => {
                 let mut entries = vec![
                     item("Add Field to This Note...", Some(Message::ShowAddField)),
                     Entry::Separator,
-                    item("Show Markdown Source", Some(Message::ToggleSource)).shortcut("Ctrl+E"),
+                    item("Edit as Markdown", Some(Message::SetSource(true))).shortcut("Ctrl+E"),
                     item("Reading View", Some(Message::SetReading(true))).shortcut("Ctrl+R"),
                 ];
                 note_items(&mut entries);
@@ -3817,7 +3849,10 @@ impl Workspace {
         settings: &Settings,
         dice: &dice::Icons,
     ) -> Element<'a, Message> {
-        let mut main = column![self.tab_bar(c, settings, dice), self.editor(c)];
+        let mut main = column![
+            self.tab_bar(c, settings, dice),
+            self.editor(c, settings.show_toolbar)
+        ];
         if self.dice.open {
             main = main
                 .push(rule::horizontal(c.border_width.max(1.0)).style(style::separator(c)))
@@ -4089,23 +4124,52 @@ impl Workspace {
         ]
         .align_y(Center);
 
-        // Edit and Read switch a note between its editor and the reading view.
+        // These switch a note between its editor and the reading view. A note with a type
+        // can be edited as a form or as Markdown, so it has a button for each.
         if let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) {
-            let switch = |label, read: bool| {
-                let selected = tab.reading() == read;
-                button(text(label).size(13))
-                    .padding([4, 10])
-                    .style(style::flat(c, selected))
-                    .on_press(Message::SetReading(read))
+            let switch = |label, selected: bool, message, tip| {
+                tooltip(
+                    button(text(label).size(13))
+                        .padding([4, 10])
+                        .style(style::flat(c, selected))
+                        .on_press(message),
+                    container(text(tip).size(12))
+                        .padding([2, 6])
+                        .style(style::dropdown(c)),
+                    tooltip::Position::Bottom,
+                )
             };
-            let switch = tooltip(
-                row![switch("Edit", false), switch("Read", true)].spacing(2),
-                container(text("Switch between editing and reading (Ctrl+R)").size(12))
-                    .padding([2, 6])
-                    .style(style::dropdown(c)),
-                tooltip::Position::Bottom,
-            );
-            bar = bar.push(container(switch).padding([0, 6]));
+            let reading = tab.reading();
+            let mut switches = row![].spacing(2);
+            if tab.form.is_some() {
+                switches = switches
+                    .push(switch(
+                        "Form",
+                        tab.shows_form(),
+                        Message::SetSource(false),
+                        "Edit the note's fields in a form (Ctrl+E switches)",
+                    ))
+                    .push(switch(
+                        "Markdown",
+                        tab.source && !reading,
+                        Message::SetSource(true),
+                        "Edit the note as Markdown text (Ctrl+E switches)",
+                    ));
+            } else {
+                switches = switches.push(switch(
+                    "Edit",
+                    !reading,
+                    Message::SetReading(false),
+                    "Edit the note (Ctrl+R switches)",
+                ));
+            }
+            switches = switches.push(switch(
+                "Read",
+                reading,
+                Message::SetReading(true),
+                "Read the note formatted (Ctrl+R switches)",
+            ));
+            bar = bar.push(container(switches).padding([0, 6]));
         }
 
         container(bar.push(container(roll).padding([0, 6])))
@@ -4114,9 +4178,14 @@ impl Workspace {
             .into()
     }
 
-    fn editor(&self, c: Colors) -> Element<'_, Message> {
+    fn editor(&self, c: Colors, show_toolbar: bool) -> Element<'_, Message> {
         let suggestions = self.link_suggestions();
         let editor = self.editor_body(c, &suggestions);
+        // Like the banner, its place is kept when it is hidden.
+        let toolbar = show_toolbar
+            .then(|| self.format_bar(c))
+            .flatten()
+            .unwrap_or_else(|| space().into());
 
         // The banner's place is kept when there is none, so the editor stays where iced
         // looks for it and keeps the focus when the note changes outside while typing.
@@ -4127,7 +4196,7 @@ impl Workspace {
             } else {
                 space().into()
             };
-        let mut view = column![banner, editor];
+        let mut view = column![toolbar, banner, editor];
         // Below the note, so the text doesn't jump while a problem comes and goes as it is typed.
         if let Some(path) = self.active_tab().and_then(|tab| tab.path.as_ref())
             && self.dialog.is_none()
@@ -4791,6 +4860,47 @@ impl Workspace {
         }
     }
 
+    /// Changes the text editor being typed in (see [`Self::focused_text_mut`]) with
+    /// `change`, and gives it back the focus. If there is none, says `hint` instead.
+    fn change_focused_text(
+        &mut self,
+        change: impl FnOnce(&mut text_editor::Content),
+        hint: &str,
+    ) -> Task<Message> {
+        if !self.active_tab().is_some_and(Tab::is_note) {
+            return Task::none();
+        }
+        let Some((content, id)) = self.focused_text_mut() else {
+            self.status = hint.into();
+            return Task::none();
+        };
+        change(content);
+        if let Some(tab) = self.active_tab_mut() {
+            tab.modified = true;
+        }
+        iced::widget::operation::focus(id)
+    }
+
+    /// The formatting toolbar, while a note is being edited.
+    fn format_bar(&self, c: Colors) -> Option<Element<'_, Message>> {
+        let tab = self.active_tab().filter(|tab| tab.is_note())?;
+        if tab.reading() && !matches!(tab.edit, Some(ReadEdit::Block { .. })) {
+            return None;
+        }
+        let content = self.focused_text();
+        // A form's long text fields are the note's `## ` sections, so headings in them
+        // start at `###`.
+        let types = format::TextType::ALL
+            .into_iter()
+            .filter(|kind| !(tab.shows_form() && matches!(kind, format::TextType::Heading(1 | 2))))
+            .collect();
+        Some(format_bar(
+            c,
+            types,
+            content.map(|content| (format::text_type(content), format::list(content))),
+        ))
+    }
+
     fn editor_body(&self, c: Colors, suggestions: &Suggestions) -> Element<'_, Message> {
         let Some(tab) = self.active_tab() else {
             return center(
@@ -4829,6 +4939,7 @@ impl Workspace {
             let mut editing = preview::Editing {
                 on_link: Message::PreviewLink,
                 on_block: Message::EditBlock,
+                on_task: Message::ToggleTask,
                 on_field: Message::EditField,
                 on_add: Message::AddText,
                 on_page: Message::FinishEditing,
@@ -5387,6 +5498,8 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "r" => Some(Message::ToggleReading),
         "k" if modifiers.shift() => Some(Message::InsertPicture),
         "k" => Some(Message::InsertLink),
+        "b" => Some(Message::Format(format::Command::Bold)),
+        "i" => Some(Message::Format(format::Command::Italic)),
         _ => None,
     }
 }
@@ -5728,6 +5841,143 @@ fn replace_block(text: &str, range: std::ops::Range<usize>, edited: &str) -> Str
     }
 
     format!("{before}{edited}{after}")
+}
+
+/// The formatting toolbar: a dropdown for what the line is (a paragraph, a heading...),
+/// then buttons for bold, italic, strikethrough, lists, links and pictures. Each button's
+/// tooltip shows the Markdown it writes, for those who want to learn to type it.
+///
+/// `types` are the text types to offer; `line` is what the line with the cursor is (its text type and list), to show them
+/// picked, or `None` when no text box has the cursor.
+fn format_bar<'a>(
+    c: Colors,
+    types: Vec<format::TextType>,
+    line: Option<(Option<format::TextType>, Option<format::List>)>,
+) -> Element<'a, Message> {
+    use format::{Command, List};
+
+    let tip = |content: Element<'a, Message>, tip: &'a str| -> Element<'a, Message> {
+        tooltip(
+            content,
+            container(text(tip).size(12))
+                .padding([2, 6])
+                .style(style::dropdown(c)),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    };
+    let tool = |label: Element<'a, Message>, command: Message, picked: bool, hint: &'a str| {
+        tip(
+            button(container(label).center_y(20))
+                .padding([2, 8])
+                .style(style::flat(c, picked))
+                .on_press(command)
+                .into(),
+            hint,
+        )
+    };
+    let font = |weight, style| iced::Font {
+        weight,
+        style,
+        ..iced::Font::DEFAULT
+    };
+    let letter = |letter: &'a str, font: iced::Font| -> Element<'a, Message> {
+        text(letter).size(14).font(font).into()
+    };
+    let bar = || -> Element<'a, Message> {
+        container(rule::vertical(1).style(style::separator(c)))
+            .height(20)
+            .padding([0, 4])
+            .into()
+    };
+    // A small task box like the reading view's, beside the word.
+    let task_box = container(space())
+        .width(11)
+        .height(11)
+        .style(style::task_box(c, false));
+
+    let (text_type, list) = line.unwrap_or_default();
+    // What the line is. (No tooltip: it would cover the list of choices.)
+    let types = pick_list(types, text_type, |picked| {
+        Message::Format(Command::Text(picked))
+    })
+    .placeholder(if line.is_some() { "List item" } else { "Text" })
+    .text_size(13)
+    .padding([3, 8])
+    .width(124)
+    .style(style::choice(c))
+    .menu_style(style::choice_menu(c));
+    let format = |command| Message::Format(command);
+    let normal = iced::font::Weight::Normal;
+    let upright = iced::font::Style::Normal;
+
+    let tools = row![
+        types,
+        bar(),
+        tool(
+            letter("B", font(iced::font::Weight::Bold, upright)),
+            format(Command::Bold),
+            false,
+            "Bold (Ctrl+B): **text**",
+        ),
+        tool(
+            letter("I", font(normal, iced::font::Style::Italic)),
+            format(Command::Italic),
+            false,
+            "Italic (Ctrl+I): *text*",
+        ),
+        tool(
+            iced::widget::rich_text([iced::widget::span::<(), _>("S").strikethrough(true)])
+                .size(14)
+                .into(),
+            format(Command::Strikethrough),
+            false,
+            "Strikethrough: ~~text~~",
+        ),
+        bar(),
+        tool(
+            text("• List").size(13).into(),
+            format(Command::List(List::Bullet)),
+            list == Some(List::Bullet),
+            "Bulleted list: - item",
+        ),
+        tool(
+            text("1. List").size(13).into(),
+            format(Command::List(List::Numbered)),
+            list == Some(List::Numbered),
+            "Numbered list: 1. item",
+        ),
+        tool(
+            row![task_box, text("Tasks").size(13)]
+                .spacing(5)
+                .align_y(Center)
+                .into(),
+            format(Command::List(List::Task)),
+            list == Some(List::Task),
+            "Task list: - [ ] task (click a box in the reading view to tick it)",
+        ),
+        bar(),
+        tool(
+            text("Link").size(13).into(),
+            Message::InsertLink,
+            false,
+            "Link to a note (Ctrl+K): [[Note]]",
+        ),
+        tool(
+            text("Picture").size(13).into(),
+            Message::InsertPicture,
+            false,
+            "Add a picture from your computer (Ctrl+Shift+K): ![[picture.png]]",
+        ),
+    ]
+    .spacing(2)
+    .align_y(Center);
+
+    container(tools)
+        .padding([4, 10])
+        .width(Fill)
+        .style(style::panel(c.sidebar))
+        .into()
 }
 
 /// The editor for a block of the note in the reading view.

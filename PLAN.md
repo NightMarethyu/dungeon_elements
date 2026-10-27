@@ -69,10 +69,14 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - [x] Drag a note in the file tree onto a folder (or a note in it) to move it there. It takes the folder's type and keeps every field that has something in it; fields the new type doesn't have become the note's own. Links that named its old folder are rewritten
   - [x] Notice renames done outside the app (in Explorer or Obsidian with link updating off) and offer to fix the links that broke. The campaign folder is watched, so outside edits, renames and deletes show up right away; a note renamed outside keeps its tab and its links are updated. Links that look broken (a note spelled almost the same exists, or the note was renamed or deleted outside) get a ⚠ with a tooltip, and clicking it opens a dialog of fixes
 - [x] Backlinks, so the notes read like a wiki: the reading view lists the notes that link to this one ("Linked from"), so an NPC shows the quests, locations and journal entries they appear in
-- [ ] Syntax-highlighting and live preview
+- [x] Live preview (syntax highlighting was dropped: this isn't meant to be a code editor; see the lighter typing helpers below)
   - [x] Live preview in the reading view: click a block (paragraph, list, table, heading...) to edit its Markdown in place; it is formatted again when you click elsewhere or press Escape. Fields in the box, and the title, are edited the same way, and clicking under the note adds text
   - [x] Link suggestions while typing `[[` in a block (Tab or a click inserts one), and in a field in the box (Enter picks the first). Names, aliases and file names are ranked together, so whatever starts with what was typed comes first
-  - [ ] Toggling task boxes with a click
+  - [x] Toggling task boxes with a click: clicking a box in the reading view ticks or unticks it in the note (`- [ ]` to `- [x]`), in numbered lists too (`1. [ ]`)
+- [ ] Formatting without knowing Markdown, a lighter take on syntax highlighting and WYSIWYG: those who know Markdown type it, and those who don't use buttons that write it for them
+  - [x] A formatting toolbar over the note while it's edited (in the Markdown source, the form, or a block of the reading view; View > Formatting Toolbar hides it): a dropdown for what the line is (Paragraph, Heading 1–4, Quote), Bold, Italic, Strikethrough, bulleted, numbered and task lists, Link and Picture. Each tooltip shows the Markdown it writes, and pressing a button again takes the format away
+  - [x] Enter continues a list, task list or quote (`- `, `1. ` numbered on, `- [ ] `) and ends it on an empty item; Ctrl+B / Ctrl+I make the selection (or the word at the cursor) bold or italic
+  - [ ] Dim the Markdown marks (`#`, `**`, `[ ]`) in the editors so the words stand out
 - [x] Built-in dice roller, keep everything close without needing to leave the app
   - [x] The d20 button at the right of the tab bar opens a pane along the bottom of the main pane (`reference/dungeon_elements_layout_plan_with_roll_results.png`): the result on the left, and a button for each die (d20, d12, d10, d100, d8, d6, d4) on the right
   - [x] Each die has a Count box; clicking the die (or pressing Enter in its box) rolls that many and shows each result, their total, and the few rolls before
@@ -80,7 +84,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
 
 Stretch goal:
 
-- [ ] Add editor features to make Markdown more intuitive (WYSIWYG)
+- [ ] Add editor features to make Markdown more intuitive (WYSIWYG). Being done the lighter way above: a formatting toolbar instead of a full WYSIWYG editor
 
 ### Phase 2: rising action
 

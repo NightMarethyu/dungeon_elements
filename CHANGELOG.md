@@ -53,6 +53,11 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - **View > Open Notes in Reading View** opens notes formatted instead of in an editor.
 - Edit right in the reading view: click a paragraph, list, table, or heading to edit its Markdown in place, and it's formatted again when you click elsewhere or press Escape. Click a field in the box to change it (a choice shows its options, and a checkbox flips), click the title to rename the note, and click under the note to add more.
 - Typing `[[` in a block you're editing in the reading view suggests notes right under it, by name, alias or file name; press Tab (or click one) to insert it. A link field in the box suggests notes the same way (Enter picks the first), with its folder's notes first and **+ New Location** (or whatever the folder holds) for a place that doesn't exist yet.
+- Click a task box (`- [ ] Find the cave`) in the reading view to tick or untick it; the note changes as if you typed the `x`. Task boxes show in numbered lists (`1. [ ] Sneak in`) too.
+- A formatting toolbar shows over the note while you edit it, so you don't need to know Markdown: pick what a line is (Paragraph, Heading 1–4, Quote), make text bold, italic or crossed out, make bulleted, numbered or task lists, or add a link or picture. It writes the Markdown for you, and each button's tooltip shows what it writes. Press a button again to take the format away. In the reading view it shows while you edit a block; **View > Formatting Toolbar** hides it.
+- Ctrl+B and Ctrl+I make the selected text (or the word at the cursor) bold or italic.
+- Pressing Enter in a list starts the next item (numbered one more, or with an empty task box), and pressing it on an empty item ends the list. Quotes carry on the same way.
+- A note with a type has **Form**, **Markdown** and **Read** buttons at the right of the tab bar, so it's clear how to switch between its form, its Markdown text and the reading view (other notes have **Edit** and **Read**). **View > Edit as Form** and **View > Edit as Markdown** (Ctrl+E switches) do the same, and right-clicking the Markdown text offers **Edit as Form**.
 
 ### Dice roller
 
