@@ -476,6 +476,8 @@ enum Message {
     NewNoteIn(PathBuf),
     Form(form::Message),
     ToggleSource,
+    /// Edits the active tab's note in its Markdown source (true) or its form (false).
+    SetSource(bool),
     /// Switches the active tab between the reading view and editing.
     ToggleReading,
     /// Shows the active tab in the reading view (true) or an editor (false).
@@ -1044,6 +1046,7 @@ impl App {
         });
         let shows_source =
             active_tab.is_some_and(|tab| tab.form.is_some() && tab.source && !tab.reading());
+        let shows_form = active_tab.is_some_and(Tab::shows_form);
         let when = |enabled: bool, message: Message| enabled.then_some(message);
 
         match open {
@@ -1106,12 +1109,11 @@ impl App {
                     item("Reading View", when(can_read, Message::ToggleReading))
                         .shortcut("Ctrl+R")
                         .checked(reading),
-                    item(
-                        "Show Markdown Source",
-                        when(has_form, Message::ToggleSource),
-                    )
-                    .shortcut("Ctrl+E")
-                    .checked(shows_source),
+                    item("Edit as Form", when(has_form, Message::SetSource(false)))
+                        .checked(shows_form),
+                    item("Edit as Markdown", when(has_form, Message::SetSource(true)))
+                        .shortcut("Ctrl+E")
+                        .checked(shows_source),
                     item(
                         "Formatting Toolbar",
                         Some(Message::ToggleToolbar(!self.settings.show_toolbar)),
@@ -2757,6 +2759,7 @@ impl Workspace {
                 | Message::CloseActiveTab
                 | Message::CloseCampaign
                 | Message::ToggleSource
+                | Message::SetSource(_)
                 | Message::SetReading(_)
                 | Message::PreviewLink(_)
                 | Message::FollowLink(_)
@@ -3202,6 +3205,13 @@ impl Workspace {
                 Task::none()
             }
             Message::ToggleSource => {
+                // From the reading view, go to the Markdown source.
+                let source = self
+                    .active_tab()
+                    .is_some_and(|tab| tab.reading() || !tab.source);
+                self.update(Message::SetSource(source))
+            }
+            Message::SetSource(source) => {
                 let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
                     return Task::none();
                 };
@@ -3209,8 +3219,8 @@ impl Workspace {
                     return Task::none();
                 };
 
-                // From the reading view, go to whichever editor was asked for.
-                if tab.preview.take().is_some() && tab.source {
+                tab.preview = None;
+                if tab.source == source {
                     return Task::none();
                 }
                 if tab.source {
@@ -3801,13 +3811,20 @@ impl Workspace {
                     item("Insert Picture...", when(is_note, Message::InsertPicture))
                         .shortcut("Ctrl+Shift+K"),
                 ]);
+                // In a typed note's Markdown source, the way back to its form.
+                if active.is_some_and(|tab| tab.form.is_some() && tab.source && !tab.reading()) {
+                    entries.extend([
+                        Entry::Separator,
+                        item("Edit as Form", Some(Message::SetSource(false))).shortcut("Ctrl+E"),
+                    ]);
+                }
                 entries
             }
             Target::Form => {
                 let mut entries = vec![
                     item("Add Field to This Note...", Some(Message::ShowAddField)),
                     Entry::Separator,
-                    item("Show Markdown Source", Some(Message::ToggleSource)).shortcut("Ctrl+E"),
+                    item("Edit as Markdown", Some(Message::SetSource(true))).shortcut("Ctrl+E"),
                     item("Reading View", Some(Message::SetReading(true))).shortcut("Ctrl+R"),
                 ];
                 note_items(&mut entries);
@@ -4107,23 +4124,52 @@ impl Workspace {
         ]
         .align_y(Center);
 
-        // Edit and Read switch a note between its editor and the reading view.
+        // These switch a note between its editor and the reading view. A note with a type
+        // can be edited as a form or as Markdown, so it has a button for each.
         if let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) {
-            let switch = |label, read: bool| {
-                let selected = tab.reading() == read;
-                button(text(label).size(13))
-                    .padding([4, 10])
-                    .style(style::flat(c, selected))
-                    .on_press(Message::SetReading(read))
+            let switch = |label, selected: bool, message, tip| {
+                tooltip(
+                    button(text(label).size(13))
+                        .padding([4, 10])
+                        .style(style::flat(c, selected))
+                        .on_press(message),
+                    container(text(tip).size(12))
+                        .padding([2, 6])
+                        .style(style::dropdown(c)),
+                    tooltip::Position::Bottom,
+                )
             };
-            let switch = tooltip(
-                row![switch("Edit", false), switch("Read", true)].spacing(2),
-                container(text("Switch between editing and reading (Ctrl+R)").size(12))
-                    .padding([2, 6])
-                    .style(style::dropdown(c)),
-                tooltip::Position::Bottom,
-            );
-            bar = bar.push(container(switch).padding([0, 6]));
+            let reading = tab.reading();
+            let mut switches = row![].spacing(2);
+            if tab.form.is_some() {
+                switches = switches
+                    .push(switch(
+                        "Form",
+                        tab.shows_form(),
+                        Message::SetSource(false),
+                        "Edit the note's fields in a form (Ctrl+E switches)",
+                    ))
+                    .push(switch(
+                        "Markdown",
+                        tab.source && !reading,
+                        Message::SetSource(true),
+                        "Edit the note as Markdown text (Ctrl+E switches)",
+                    ));
+            } else {
+                switches = switches.push(switch(
+                    "Edit",
+                    !reading,
+                    Message::SetReading(false),
+                    "Edit the note (Ctrl+R switches)",
+                ));
+            }
+            switches = switches.push(switch(
+                "Read",
+                reading,
+                Message::SetReading(true),
+                "Read the note formatted (Ctrl+R switches)",
+            ));
+            bar = bar.push(container(switches).padding([0, 6]));
         }
 
         container(bar.push(container(roll).padding([0, 6])))
