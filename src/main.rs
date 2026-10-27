@@ -12,6 +12,7 @@ mod dice;
 mod fix;
 mod form;
 mod format;
+mod help;
 mod icon;
 mod links;
 mod marks;
@@ -89,6 +90,8 @@ struct App {
     menu: Option<Menu>,
     /// Whether the "About" dialog is showing.
     about: bool,
+    /// The Help window, if it is open.
+    help: Option<help::Help>,
     /// The window's size, for keeping right-click menus inside it.
     window: Size,
 }
@@ -457,6 +460,11 @@ enum Message {
     ToggleToolbar(bool),
     ShowAbout,
     CloseAbout,
+    /// Opens the Help window at a page.
+    ShowHelp(help::Page),
+    Help(help::Message),
+    /// Opens a web page from the Help menu.
+    OpenWeb(&'static str),
     Exit,
     ExitConfirmed(bool),
 
@@ -616,6 +624,7 @@ impl App {
             dice: dice::Icons::new(theme::built_in()[0].colors),
             menu: None,
             about: false,
+            help: None,
             window: window_settings().size,
         };
         let name = app.settings.theme.clone();
@@ -674,6 +683,30 @@ impl App {
         }
     }
 
+    /// Opens the Help window if it is closed, and passes it `message`.
+    fn update_help(&mut self, message: help::Message) -> Task<Message> {
+        let help = self
+            .help
+            .get_or_insert_with(|| help::Help::new(help::Page::Shortcuts));
+        match help.update(message) {
+            Some(help::Action::Scroll) => iced::widget::operation::snap_to(
+                help::PAGE,
+                iced::widget::scrollable::RelativeOffset::START,
+            ),
+            Some(help::Action::Close) => {
+                self.help = None;
+                Task::none()
+            }
+            Some(help::Action::Open(url)) => {
+                if let Err(error) = open_in_browser(&url) {
+                    self.notify(format!("Could not open {url}: {error}"));
+                }
+                Task::none()
+            }
+            None => Task::none(),
+        }
+    }
+
     fn has_unsaved_changes(&self) -> bool {
         match &self.screen {
             Screen::Splash { .. } => false,
@@ -693,13 +726,15 @@ impl App {
     fn subscription(&self) -> Subscription<Message> {
         let keys = match self.screen {
             Screen::Splash { .. } => keyboard::listen().filter_map(|event| match event {
-                keyboard::Event::KeyPressed { key, .. } => escape(&key),
+                keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                    escape(&key).or_else(|| help_key(&key, modifiers))
+                }
                 _ => None,
             }),
             Screen::Workspace(_) => keyboard::listen().filter_map(|event| match event {
-                keyboard::Event::KeyPressed { key, modifiers, .. } => {
-                    escape(&key).or_else(|| shortcut(&key, modifiers))
-                }
+                keyboard::Event::KeyPressed { key, modifiers, .. } => escape(&key)
+                    .or_else(|| help_key(&key, modifiers))
+                    .or_else(|| shortcut(&key, modifiers)),
                 keyboard::Event::ModifiersChanged(modifiers) => Some(Message::Modifiers(modifiers)),
                 _ => None,
             }),
@@ -789,6 +824,10 @@ impl App {
             }
             // Escape closes an open menu, and only that.
             Message::Escape if closed => return Task::none(),
+            Message::Escape if self.help.is_some() => {
+                self.help = None;
+                return Task::none();
+            }
             Message::Escape => {
                 match &mut self.screen {
                     Screen::Splash { new_campaign, .. } if !self.about => *new_campaign = None,
@@ -855,6 +894,17 @@ impl App {
             }
             Message::CloseAbout => {
                 self.about = false;
+                return Task::none();
+            }
+            Message::ShowHelp(page) => {
+                self.about = false;
+                return self.update_help(help::Message::Show(page));
+            }
+            Message::Help(message) => return self.update_help(message),
+            Message::OpenWeb(url) => {
+                if let Err(error) = open_in_browser(url) {
+                    self.notify(format!("Could not open {url}: {error}"));
+                }
                 return Task::none();
             }
             Message::Exit => {
@@ -999,6 +1049,14 @@ impl App {
             Screen::Splash { .. } => None,
         };
         let about = self.about.then(|| modal(about_dialog(c, &self.logos.1)));
+        let help = self.help.as_ref().map(|help| {
+            modal(
+                container(help.view(c).map(Message::Help))
+                    .padding(24)
+                    .center(Fill)
+                    .into(),
+            )
+        });
         let context = workspace.and_then(|workspace| {
             let (target, position) = workspace.context.as_ref()?;
             Some(context_menu::view(
@@ -1021,6 +1079,7 @@ impl App {
             view,
             layer(dialog),
             layer(about),
+            layer(help),
             layer(context),
             layer(dropdown),
         ]
@@ -1135,7 +1194,30 @@ impl App {
                 ]);
                 entries
             }
-            Menu::Help => vec![item("About Dungeon Elements", Some(Message::ShowAbout))],
+            Menu::Help => vec![
+                item(
+                    "How-To Guides",
+                    Some(Message::ShowHelp(help::Page::Guide(0))),
+                )
+                .shortcut("F1"),
+                item(
+                    "Keyboard Shortcuts",
+                    Some(Message::ShowHelp(help::Page::Shortcuts)),
+                )
+                .shortcut("Ctrl+/"),
+                item("What's New", Some(Message::ShowHelp(help::Page::WhatsNew))),
+                Entry::Separator,
+                item(
+                    "Report a Problem...",
+                    Some(Message::OpenWeb(help::ISSUES_URL)),
+                ),
+                item(
+                    "Dungeon Elements on GitHub",
+                    Some(Message::OpenWeb(help::PROJECT_URL)),
+                ),
+                Entry::Separator,
+                item("About Dungeon Elements", Some(Message::ShowAbout)),
+            ],
         }
     }
 }
@@ -5509,6 +5591,17 @@ fn logo(c: Colors, background: iced::Color) -> svg::Handle {
     svg::Handle::from_memory(svg.into_bytes())
 }
 
+/// Maps F1 and Ctrl+/, which open the Help window on any screen.
+fn help_key(key: &Key, modifiers: Modifiers) -> Option<Message> {
+    match key.as_ref() {
+        Key::Named(keyboard::key::Named::F1) => Some(Message::ShowHelp(help::Page::Guide(0))),
+        Key::Character("/") if modifiers.command() => {
+            Some(Message::ShowHelp(help::Page::Shortcuts))
+        }
+        _ => None,
+    }
+}
+
 /// Maps the workspace keyboard shortcuts to their messages.
 fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     if !modifiers.command() {
@@ -5530,6 +5623,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "r" => Some(Message::ToggleReading),
         "k" if modifiers.shift() => Some(Message::InsertPicture),
         "k" => Some(Message::InsertLink),
+        "/" => Some(Message::ShowHelp(help::Page::Shortcuts)),
         "b" => Some(Message::Format(format::Command::Bold)),
         "i" => Some(Message::Format(format::Command::Italic)),
         _ => None,
@@ -5556,6 +5650,13 @@ fn splash<'a>(c: Colors, logo: &svg::Handle, error: Option<&'a str>) -> Element<
         big_button("New Campaign...")
             .style(style::secondary(c))
             .on_press(Message::ShowNewCampaign),
+        button(
+            text("New here? Read the how-to guides (F1)")
+                .size(13)
+                .color(c.accent)
+        )
+        .style(style::flat(c, false))
+        .on_press(Message::ShowHelp(help::Page::Guide(0))),
     ]
     .spacing(12)
     .align_x(Center);

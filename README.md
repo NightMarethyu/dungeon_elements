@@ -23,7 +23,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 **Campaigns and notes**
 
 - Open a campaign folder, or make a new one with starter folders (items, journal, locations, lore, NPCs, players, quests). The file tree on the left lists its folders and notes, and each note opens in a tab.
-- Everything is in the **File**, **Edit**, **View**, and **Help** menus, with the usual shortcuts: **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), **Save All** (Ctrl+Alt+S), and **Close Tab** (Ctrl+W).
+- Everything is in the **File**, **Edit**, **View**, and **Help** menus, with the usual shortcuts: **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), **Save All** (Ctrl+Alt+S), and **Close Tab** (Ctrl+W). **Help > How-To Guides** (F1) explains the basics, and **Help > Keyboard Shortcuts** (Ctrl+/) lists every shortcut.
 - A folder can give its notes fields in a `_type.yaml` (each starter folder has one). Its notes open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. **Edit > Types** changes a folder's fields, and the round **+** on a form adds a field to just that note. **Form**, **Markdown**, and **Read** at the top right switch between the form, the Markdown text, and the reading view.
 - Right-click the file tree, tabs, editors, and forms to rename, move, or delete notes and folders (deleted ones go to the Recycle Bin or Trash), make new ones, copy a link, and more. Drag a note onto another folder to move it; it takes that folder's type and keeps what you filled in.
 
