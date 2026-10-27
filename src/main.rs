@@ -481,6 +481,8 @@ enum Message {
     ToggleOpenInReading(bool),
     /// A link in the reading view was clicked.
     PreviewLink(String),
+    /// A task box in the reading view was clicked; its `[ ]` is here in the note's text.
+    ToggleTask(usize),
     /// Edits block `index` of the reading view in place.
     EditBlock(usize),
     BlockEdit(text_editor::Action),
@@ -3186,6 +3188,26 @@ impl Workspace {
                     None => Task::none(),
                 }
             }
+            Message::ToggleTask(at) => {
+                let root = self.root.clone();
+                let index = self.index.clone();
+                if let Some(tab) = self.active_tab_mut()
+                    && let Some(preview) = &tab.preview
+                {
+                    // Ticking a box doesn't move anything in the note, so a block being
+                    // edited is still where it was, and goes back in after.
+                    let text = tab.text().unwrap_or_else(|_| tab.content.text());
+                    if text == preview.source()
+                        && let Some(new) = preview::toggle_task(&text, at)
+                    {
+                        tab.set_text(&new);
+                        tab.modified = true;
+                        tab.preview = Some(tab.make_preview(&root, &index));
+                    }
+                }
+                self.finish_editing();
+                Task::none()
+            }
             Message::ToggleSource => {
                 let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active) else {
                     return Task::none();
@@ -4829,6 +4851,7 @@ impl Workspace {
             let mut editing = preview::Editing {
                 on_link: Message::PreviewLink,
                 on_block: Message::EditBlock,
+                on_task: Message::ToggleTask,
                 on_field: Message::EditField,
                 on_add: Message::AddText,
                 on_page: Message::FinishEditing,

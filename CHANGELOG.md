@@ -53,6 +53,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - **View > Open Notes in Reading View** opens notes formatted instead of in an editor.
 - Edit right in the reading view: click a paragraph, list, table, or heading to edit its Markdown in place, and it's formatted again when you click elsewhere or press Escape. Click a field in the box to change it (a choice shows its options, and a checkbox flips), click the title to rename the note, and click under the note to add more.
 - Typing `[[` in a block you're editing in the reading view suggests notes right under it, by name, alias or file name; press Tab (or click one) to insert it. A link field in the box suggests notes the same way (Enter picks the first), with its folder's notes first and **+ New Location** (or whatever the folder holds) for a place that doesn't exist yet.
+- Click a task box (`- [ ] Find the cave`) in the reading view to tick or untick it; the note changes as if you typed the `x`. Task boxes show in numbered lists (`1. [ ] Sneak in`) too.
 
 ### Dice roller
 

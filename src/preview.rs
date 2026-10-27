@@ -9,7 +9,7 @@
 //! The page can be edited in place: the body is split into blocks (a paragraph, a list, a
 //! table...), and clicking one or a field asks for an editor to show in its place.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
@@ -38,6 +38,8 @@ use crate::web;
 const NOTE: &str = "note:";
 const EMBED: &str = "embed:";
 const EMBED_NOTE: &str = "embed-note:";
+/// Clicking a task box sends `task:<where its [ ] is in the note's text>`.
+const TASK: &str = "task:";
 
 /// The file types shown as pictures.
 pub const PICTURES: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
@@ -88,6 +90,8 @@ struct Block {
     /// Where it is in the note's text.
     range: Range<usize>,
     content: markdown::Content,
+    /// Where the `[ ]` of each of its task boxes is in the note's text, in order.
+    tasks: Vec<usize>,
 }
 
 /// A note that links to the one shown, for the list under it ("Linked from").
@@ -122,6 +126,8 @@ pub struct Editing<'a, M> {
     pub on_link: fn(Uri) -> M,
     /// Block `index` was clicked.
     pub on_block: fn(usize) -> M,
+    /// The task box whose `[ ]` is at this place in the note's text was clicked.
+    pub on_task: fn(usize) -> M,
     /// The field with this front matter key was clicked (the title is `name`).
     pub on_field: fn(String) -> M,
     /// The space for adding text at the end was clicked.
@@ -183,6 +189,10 @@ impl Preview {
                     &body[range.clone()],
                     true,
                 ))),
+                tasks: task_boxes(&body[range.clone()])
+                    .into_iter()
+                    .map(|at| at + range.start + offset)
+                    .collect(),
                 range: range.start + offset..range.end + offset,
             })
             .collect();
@@ -272,6 +282,8 @@ impl Preview {
             embeds: &self.embeds,
             web,
             code: &self.code,
+            tasks: &[],
+            next_task: Cell::new(0),
         };
         let settings = markdown::Settings {
             code_size: 13.into(),
@@ -372,9 +384,22 @@ impl Preview {
             other => edit.block = other,
         }
 
-        let items = self.blocks[index].content.items();
-        let mut block =
-            container(markdown::view_with(items, settings, reader).map(edit.on_link)).width(Fill);
+        let block = &self.blocks[index];
+        // This block's task boxes can be ticked; they are drawn in the order they are in.
+        let reader = Reader {
+            tasks: &block.tasks,
+            next_task: Cell::new(0),
+            ..reader.clone()
+        };
+        let (on_link, on_task) = (edit.on_link, edit.on_task);
+        let items = block.content.items();
+        let mut block = container(markdown::view_with(items, settings, &reader).map(
+            move |url: Uri| match url.strip_prefix(TASK).and_then(|at| at.parse().ok()) {
+                Some(at) => on_task(at),
+                None => on_link(url),
+            },
+        ))
+        .width(Fill);
         // Each block is laid out on its own, so headings get their space above here.
         if index > 0 && matches!(items.first(), Some(markdown::Item::Heading(..))) {
             block = block.padding(padding::top(settings.text_size / 2.0));
@@ -526,6 +551,32 @@ fn block_ranges(body: &str) -> Vec<Range<usize>> {
         })
         .filter(|range| !range.is_empty())
         .collect()
+}
+
+/// Where the `[ ]` or `[x]` of each task box in `text` is, in order.
+fn task_boxes(text: &str) -> Vec<usize> {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    let options =
+        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    Parser::new_ext(text, options)
+        .into_offset_iter()
+        .filter(|(event, _)| matches!(event, Event::TaskListMarker(_)))
+        .map(|(_, range)| range.start)
+        .collect()
+}
+
+/// The note's `text` with the task box whose `[ ]` is at `at` ticked, or unticked if it
+/// was. `None` if there is no task box there.
+pub fn toggle_task(text: &str, at: usize) -> Option<String> {
+    let tick = match text.get(at..at + 3)? {
+        "[ ]" => "x",
+        "[x]" | "[X]" => " ",
+        _ => return None,
+    };
+    let mut text = text.to_string();
+    text.replace_range(at + 1..at + 2, tick);
+    Some(text)
 }
 
 /// The list of the notes that link to the one shown, under a "Linked from" heading, in
@@ -1009,6 +1060,7 @@ fn markdown_style(c: Colors) -> markdown::Style {
 }
 
 /// Shows Markdown in the theme's colors.
+#[derive(Clone)]
 struct Reader<'a> {
     c: Colors,
     names: Names,
@@ -1016,9 +1068,36 @@ struct Reader<'a> {
     embeds: &'a HashMap<Uri, Embed>,
     web: &'a web::Pictures,
     code: &'a RefCell<HashMap<u64, Option<Vec<code::Line>>>>,
+    /// Where the task boxes shown are in the note's text, so clicking one ticks it. Empty
+    /// where they can't be ticked, like in the box of fields or another note shown here.
+    tasks: &'a [usize],
+    /// How many task boxes have been drawn so far, to tell which one is next.
+    next_task: Cell<usize>,
 }
 
 impl<'a> Reader<'a> {
+    /// The box beside a task, ticked if it is `done`. Clicking it ticks or unticks it.
+    fn task_box(&self, size: iced::Pixels, done: bool) -> Element<'a, Uri> {
+        let tick = text(if done { "✓" } else { "" })
+            .size(size * 0.8)
+            .color(self.c.accent_text)
+            .center();
+        let check = container(tick)
+            .center(size * 1.1)
+            .style(style::task_box(self.c, done));
+        let check = container(check).center_y(text::LineHeight::default().to_absolute(size));
+
+        let index = self.next_task.get();
+        self.next_task.set(index + 1);
+        match self.tasks.get(index) {
+            Some(at) => mouse_area(check)
+                .on_press(format!("{TASK}{at}"))
+                .interaction(Interaction::Pointer)
+                .into(),
+            None => check.into(),
+        }
+    }
+
     /// A box saying why a picture isn't shown, under its description.
     fn no_picture(
         &self,
@@ -1063,7 +1142,16 @@ impl<'a> Reader<'a> {
                 .size(settings.text_size)
                 .color(self.c.text_muted)
                 .into(),
-            Ok(content) => markdown::view_with(content.items(), settings, self),
+            // Its task boxes are ticked in that note, not here.
+            Ok(content) => markdown::view_with(
+                content.items(),
+                settings,
+                &Reader {
+                    tasks: &[],
+                    next_task: Cell::new(0),
+                    ..self.clone()
+                },
+            ),
             Err(why) => text(why.clone())
                 .size(settings.text_size)
                 .color(self.c.text_muted)
@@ -1275,21 +1363,7 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader<'a> {
         column(bullets.iter().map(|bullet| {
             let (marker, items): (Element<'a, Uri>, _) = match bullet {
                 markdown::Bullet::Point { items } => (text("•").size(size).into(), items),
-                markdown::Bullet::Task { items, done } => {
-                    let tick = text(if *done { "✓" } else { "" })
-                        .size(size * 0.8)
-                        .color(self.c.accent_text)
-                        .center();
-                    let check = container(tick)
-                        .center(size * 1.1)
-                        .style(style::task_box(self.c, *done));
-                    (
-                        container(check)
-                            .center_y(text::LineHeight::default().to_absolute(size))
-                            .into(),
-                        items,
-                    )
-                }
+                markdown::Bullet::Task { items, done } => (self.task_box(size, *done), items),
             };
             row![
                 marker,
@@ -1310,6 +1384,48 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader<'a> {
         .into()
     }
 
+    fn ordered_list(
+        &self,
+        settings: markdown::Settings,
+        start: u64,
+        bullets: &'a [markdown::Bullet],
+    ) -> Element<'a, Uri> {
+        // Like iced's own, but with task boxes (`1. [ ] Task`) after the numbers.
+        let size = settings.text_size;
+        let digits = ((start + bullets.len() as u64).max(1) as f32)
+            .log10()
+            .ceil();
+        column(bullets.iter().enumerate().map(|(i, bullet)| {
+            let number = text!("{}.", i as u64 + start)
+                .size(size)
+                .align_x(iced::alignment::Horizontal::Right)
+                .width(size * ((digits / 2.0).ceil() + 1.0));
+            let mut marker = row![number].spacing(settings.spacing.0 / 2.0);
+            let items = match bullet {
+                markdown::Bullet::Point { items } => items,
+                markdown::Bullet::Task { items, done } => {
+                    marker = marker.push(self.task_box(size, *done));
+                    items
+                }
+            };
+            row![
+                marker,
+                markdown::view_with(
+                    items,
+                    markdown::Settings {
+                        spacing: settings.spacing * 0.6,
+                        ..settings
+                    },
+                    self,
+                )
+            ]
+            .spacing(settings.spacing)
+            .into()
+        }))
+        .spacing(settings.spacing * 0.75)
+        .into()
+    }
+
     fn rule(&self, _settings: markdown::Settings) -> Element<'a, Uri> {
         rule::horizontal(2).style(style::separator(self.c)).into()
     }
@@ -1318,6 +1434,41 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ticks_task_boxes_where_they_are() {
+        let body = "Intro\n\n- [ ] Find the [[Keep]]\n  - [x] Ask Ann\n\n1. [X] Pay\n2. Rest\n";
+        let at = task_boxes(body);
+        assert_eq!(at.len(), 3);
+        assert!(at.iter().all(|&at| body[at..].starts_with('[')));
+
+        let ticked = toggle_task(body, at[0]).unwrap();
+        assert!(ticked.contains("- [x] Find"));
+        let unticked = toggle_task(&ticked, at[1]).unwrap();
+        assert!(unticked.contains("  - [ ] Ask Ann"));
+        assert!(toggle_task(body, at[2]).unwrap().contains("1. [ ] Pay"));
+        assert_eq!(toggle_task(body, 0), None);
+        assert_eq!(toggle_task(body, body.len()), None);
+    }
+
+    #[test]
+    fn knows_where_each_blocks_task_boxes_are() {
+        let source = "---\nname: Quests\n---\n- [ ] One\n\n> - [x] Two\n";
+        let preview = Preview::new(
+            source,
+            None,
+            Path::new("Quests.md"),
+            Path::new("."),
+            &Index::default(),
+        );
+        let tasks: Vec<&str> = preview
+            .blocks
+            .iter()
+            .flat_map(|block| &block.tasks)
+            .map(|&at| &source[at..at + 3])
+            .collect();
+        assert_eq!(tasks, ["[ ]", "[x]"]);
+    }
 
     #[test]
     fn rewrites_wiki_links() {
