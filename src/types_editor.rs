@@ -42,8 +42,32 @@ pub enum Message {
     RemoveInherited(String),
     /// Brings back an inherited field that was removed.
     KeepInherited(String),
+    /// Gives the selected folder, which has no type, a type saved from another campaign.
+    UseSaved(SavedType),
+    /// Saves the selected folder's type as a file, to use in other campaigns or share.
+    ExportType,
+    /// Saves the campaign's folders and their types (not its notes) as a template.
+    ExportStructure,
+    /// Adds a template or a type from a file to the ones every campaign can use.
+    Import,
     Save,
     Cancel,
+}
+
+/// A type saved for any campaign to use, as offered for a folder with no type.
+#[derive(Debug, Clone)]
+pub struct SavedType(ContentType);
+
+impl PartialEq for SavedType {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id && self.0.label == other.0.label
+    }
+}
+
+impl std::fmt::Display for SavedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.label())
+    }
 }
 
 /// The folder a link field links to, as picked in the dialog.
@@ -62,7 +86,11 @@ impl std::fmt::Display for LinksTo {
 pub struct Editor {
     folders: Vec<Folder>,
     selected: usize,
+    /// The types saved for any campaign to use.
+    saved: Vec<SavedType>,
     pub error: Option<String>,
+    /// What an export or import did.
+    pub notice: Option<String>,
 }
 
 struct Folder {
@@ -203,8 +231,32 @@ impl Editor {
         Editor {
             folders,
             selected: 0,
+            saved: Vec::new(),
             error: None,
+            notice: None,
         }
+    }
+
+    /// Offers `saved` to folders with no type.
+    pub fn set_saved(&mut self, saved: Vec<ContentType>) {
+        self.saved = saved.into_iter().map(SavedType).collect();
+    }
+
+    /// Whether any type changed since the dialog opened.
+    pub fn has_changes(&self) -> bool {
+        self.folders.iter().any(|folder| folder.changed)
+    }
+
+    /// The selected folder's type on its own, with what it inherits, to export: the file
+    /// name to suggest and its YAML.
+    pub fn export_type(&self) -> Result<(String, String), String> {
+        let ty = self
+            .effective(self.selected)
+            .ok_or("This folder has no type to export")?;
+        Ok((
+            crate::templates::type_file_name(&ty),
+            crate::templates::standalone(&ty)?,
+        ))
     }
 
     /// The type of the folder at `index` as it is now in the dialog, with what it inherits.
@@ -236,6 +288,7 @@ impl Editor {
 
     pub fn update(&mut self, message: Message) {
         self.error = None;
+        self.notice = None;
 
         if let Message::Select(index) = message {
             if index < self.folders.len() {
@@ -248,6 +301,14 @@ impl Editor {
         let Some(folder) = self.folders.get_mut(self.selected) else {
             return;
         };
+
+        if let Message::UseSaved(SavedType(ty)) = message {
+            if let State::Untyped = folder.state {
+                folder.state = State::Typed(Box::new(Draft::from(&ty)));
+                folder.changed = true;
+            }
+            return;
+        }
 
         if let Message::AddType = message {
             if let State::Untyped = folder.state {
@@ -364,7 +425,14 @@ impl Editor {
                 }
             }
             Message::KeepInherited(key) => draft.removed.retain(|removed| *removed != key),
-            Message::Select(_) | Message::AddType | Message::Save | Message::Cancel => {}
+            Message::Select(_)
+            | Message::AddType
+            | Message::UseSaved(_)
+            | Message::ExportType
+            | Message::ExportStructure
+            | Message::Import
+            | Message::Save
+            | Message::Cancel => {}
         }
     }
 
@@ -460,29 +528,45 @@ impl Editor {
             Some(folder) => self.folder_view(c, folder, self.inherited(self.selected)),
         };
 
-        let mut footer = row![].spacing(8).align_y(Center);
-        if let Some(error) = &self.error {
-            footer = footer.push(text(error).size(13).color(c.danger).width(Fill));
+        let changed = self.has_changes();
+        let message = if let Some(error) = &self.error {
+            text(error).size(13).color(c.danger)
+        } else if let Some(notice) = &self.notice {
+            text(notice).size(13).color(c.text)
+        } else if changed {
+            text("Changes apply to every note in the folder. Data in removed fields stays in the notes, as each note's own field. Save the changes to export them.")
+                .size(12)
+                .color(c.text_muted)
         } else {
-            footer = footer.push(
-                text("Changes apply to every note in the folder. Data in removed fields stays in the notes, as each note's own field.")
-                    .size(12)
-                    .color(c.text_muted)
-                    .width(Fill),
-            );
-        }
+            text("Changes apply to every note in the folder. Export a type, or the whole campaign's folders and types, to use them in other campaigns or share them.")
+                .size(12)
+                .color(c.text_muted)
+        };
+
+        let can_export_type = !changed && self.effective(self.selected).is_some();
+        let mut footer = row![
+            button("Import...")
+                .style(style::secondary(c))
+                .on_press(Message::Import),
+            button("Export Type...")
+                .style(style::secondary(c))
+                .on_press_maybe(can_export_type.then_some(Message::ExportType)),
+            button("Export Campaign Structure...")
+                .style(style::secondary(c))
+                .on_press_maybe((!changed).then_some(Message::ExportStructure)),
+            space::horizontal(),
+        ]
+        .spacing(8)
+        .align_y(Center);
         footer = footer.push(
             button("Cancel")
                 .style(style::secondary(c))
                 .on_press(Message::Cancel),
         );
         footer = footer.push(
-            button("Save").style(style::primary(c)).on_press_maybe(
-                self.folders
-                    .iter()
-                    .any(|f| f.changed)
-                    .then_some(Message::Save),
-            ),
+            button("Save")
+                .style(style::primary(c))
+                .on_press_maybe(changed.then_some(Message::Save)),
         );
 
         container(
@@ -495,6 +579,7 @@ impl Editor {
                 ]
                 .spacing(12)
                 .height(Fill),
+                message.width(Fill),
                 footer,
             ]
             .spacing(16),
@@ -503,6 +588,23 @@ impl Editor {
         .height(600)
         .padding(24)
         .style(style::dialog(c))
+        .into()
+    }
+
+    /// A list of the saved types to give a folder with no type, if there are any.
+    fn saved_picker<'a>(&'a self, c: Colors, label: &'a str) -> Element<'a, Message> {
+        if self.saved.is_empty() {
+            return space().into();
+        }
+        column![
+            text(label).size(13).color(c.text_muted),
+            pick_list(self.saved.as_slice(), None::<SavedType>, Message::UseSaved)
+                .placeholder("Pick a saved type")
+                .padding(6)
+                .style(style::choice(c))
+                .menu_style(style::choice_menu(c)),
+        ]
+        .spacing(6)
         .into()
     }
 
@@ -548,6 +650,7 @@ impl Editor {
                     button(text(format!("Make it a kind of {}", parent.label())))
                         .style(style::primary(c))
                         .on_press(Message::AddType),
+                    self.saved_picker(c, "Or make it a kind of a saved type:"),
                 ]
                 .spacing(12)
                 .into();
@@ -563,6 +666,7 @@ impl Editor {
                     button("Give this folder a type")
                         .style(style::primary(c))
                         .on_press(Message::AddType),
+                    self.saved_picker(c, "Or start from a type saved for every campaign:"),
                 ]
                 .spacing(12)
                 .into();
@@ -829,6 +933,26 @@ mod tests {
         types.insert(items.clone(), types::parse(yaml));
         let editor = Editor::new(&root, &[items, root.join("notes")], &types);
         (root, editor)
+    }
+
+    #[test]
+    fn exports_types_and_uses_saved_ones() {
+        let (root, mut editor) = editor(types::STARTER_TYPES[0].1);
+        let (name, yaml) = editor.export_type().unwrap();
+        assert_eq!(name, "Item.type.yaml");
+        assert_eq!(types::parse(&yaml).unwrap().id, "item");
+
+        // Notes has no type, so it has nothing to export, and can start from a saved one.
+        editor.update(Message::Select(1));
+        assert!(editor.export_type().is_err());
+        editor.set_saved(vec![types::parse(types::STARTER_TYPES[4].1).unwrap()]);
+        let saved = editor.saved[0].clone();
+        editor.update(Message::UseSaved(saved));
+        assert!(editor.has_changes());
+        editor.save().unwrap();
+        assert_eq!(types::load(&root.join("notes")).unwrap().unwrap().id, "npc");
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

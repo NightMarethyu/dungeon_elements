@@ -6,10 +6,10 @@ Dungeon Elements keeps a campaign as a folder of Markdown notes on your own driv
 
 1. On the start screen, choose **New Campaign...**
 2. Give it a title and pick where to save it.
-3. Leave **Set up the starter folder structure** ticked to get folders for items, journal, locations, lore, NPCs, players and quests. Each comes with its own note fields.
+3. Under **Start from**, leave **Starter folders** picked to get folders for items, journal, locations, lore, NPCs, players and quests, each with its own note fields. Pick **Empty** for none, or one of your own [templates](guide:templates), like the folders and fields you use for one game system.
 4. Choose **Create**.
 
-To open a campaign you already have, choose **Open Campaign...** and pick its folder.
+To open a campaign you already have, choose **Open Campaign...**. It lists the campaigns you've opened or made, the latest first: click one to open it, or type part of its name to find it and press **Enter**. **×** takes a campaign off the list without touching its folder. **Browse for a Folder...** opens one that isn't listed yet.
 
 ## Find your way around
 
@@ -31,5 +31,6 @@ To open a campaign you already have, choose **Open Campaign...** and pick its fo
 - [Reading and formatting notes](guide:reading-and-formatting)
 - [Rolling dice](guide:dice)
 - [Your files and other apps](guide:your-files)
+- [Templates and sharing types](guide:templates)
 
 Every keyboard shortcut is in [Help > Keyboard Shortcuts](help:shortcuts) (Ctrl+/).
