@@ -267,4 +267,5 @@ After 1.0 (a stretch goal once Phase 5 is done). Ammon has international ties, a
 - Focus mode for writers
   - Full screen app with just what looks like a piece of paper and a background of the user's choosing
 - Timer for specific sprints for writing or for in game timed things like Shadowdark's torch timer
+- Do a check for updated notes, tags, and other file changes and offer fixes
 - More to come as I have more ideas!
