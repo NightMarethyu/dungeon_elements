@@ -4,7 +4,7 @@
 
 A folder can say which fields its notes have, like Name, Location and Status for an NPC. Its notes then open as a **form**. The fields are saved as ordinary Markdown with the short ones at the top of the file, so the note still reads well in any text editor.
 
-- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, tags, a link to another note, a checkbox, long text, steps, or [dice](guide:dice).
+- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, a date, tags, a link to another note, links to several notes, a checkbox, long text, steps, or [dice](guide:dice).
 - A folder without fields holds plain Markdown notes.
 - To give a folder fields, pick it in **Edit > Types...** and add some.
 
@@ -12,6 +12,31 @@ A folder can say which fields its notes have, like Name, Location and Status for
 
 - **Tab** goes to the next field and **Shift+Tab** back to the one before, scrolling the form to show it. Choices and checkboxes are skipped: click them.
 - In a link field, or while typing a `[[link]]`, Tab inserts the suggested note instead.
+
+## Dates
+
+A **date** field holds a date, like when a session was played. A new note starts with today's date.
+
+- Type the date as year-month-day (`2026-10-28`), click **Calendar** to pick a day from a month (**‹** and **›** go to the month before or after), or click **Today**. The day of the week shows under the box.
+- It's saved as `2026-10-28`, which Obsidian reads as a date too.
+- Dates that aren't on a calendar, like a Stardate or the 3rd of Frostfall, are kept as written. For a field that only holds those, untick **Pick the date from a calendar** for it in **Edit > Types...**: it becomes a plain line of text, and new notes start with it empty.
+
+## Tags
+
+A **tags** field groups notes. Each tag is also a note of its own, in the **tags** folder, holding a list of links to the notes tagged with it, so the tag's note shows every note with that tag, here and in Obsidian.
+
+- Type a tag and press **Enter** (or type a comma) to add it. The tags there are already show under the box: click one to add it without typing it, so it's never misspelled. Typing narrows them down.
+- Each tag is a button that opens its note. **×** takes a tag off.
+- Saving the note makes the notes of new tags and adds a link to the note to each one. A tag taken off has the link taken out of its note. Renaming the note renames the links.
+- The tags are saved as a list under `tags:`, which Obsidian reads as tags. A tags field can keep its tag notes in another folder: set **Tag notes in** for it in **Edit > Types...**.
+
+## Links to several notes
+
+A **links to notes** field holds any number of links, like the people who use a kind of magic, or an NPC's allies.
+
+- Type a note's name and press **Enter** (or **Tab**) to add the note suggested. Each linked note is a button that opens it, and **Open all** opens them all at once.
+- Like a link field, it can **Link to** a folder in **Edit > Types...**, whose notes are suggested first and where a new note it names is made.
+- The links are saved as a list of `[[links]]`, which Obsidian shows as links, and each linked note lists this one under **Linked from**.
 
 ## Steps: quests made of smaller quests
 

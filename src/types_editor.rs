@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use iced::widget::{
-    button, column, container, pick_list, row, rule, scrollable, space, text, text_input,
+    button, checkbox, column, container, pick_list, row, rule, scrollable, space, text, text_input,
 };
 use iced::{Center, Element, Fill};
 
@@ -28,6 +28,10 @@ pub enum Message {
     FieldWidth(usize, Width),
     FieldOptions(usize, String),
     FieldFolder(usize, LinksTo),
+    /// The folder a tags field's tag notes go in, as typed.
+    TagFolder(usize, String),
+    /// Whether a date field picks its date from a calendar.
+    FieldCalendar(usize, bool),
     MoveUp(usize),
     MoveDown(usize),
     RemoveField(usize),
@@ -99,8 +103,10 @@ struct FieldDraft {
     width: Width,
     /// A choice field's options, comma separated.
     options: String,
-    /// A link field's folder.
+    /// A link field's folder, or the folder a tags field's tag notes go in.
     folder: Option<String>,
+    /// Whether a date field picks its date from a calendar.
+    calendar: bool,
 }
 
 impl FieldDraft {
@@ -112,6 +118,7 @@ impl FieldDraft {
             width: field.width,
             options: field.options.join(", "),
             folder: field.folder.clone(),
+            calendar: field.calendar != Some(false),
         }
     }
 
@@ -136,7 +143,12 @@ impl FieldDraft {
                 Vec::new()
             },
             width: self.width,
-            folder: self.folder.clone().filter(|_| self.kind.links()),
+            folder: self
+                .folder
+                .clone()
+                .filter(|_| self.kind.links() || self.kind == Kind::Tags)
+                .filter(|folder| !folder.trim().is_empty()),
+            calendar: (self.kind == Kind::Date && !self.calendar).then_some(false),
         }
     }
 }
@@ -306,6 +318,16 @@ impl Editor {
             Message::FieldFolder(index, LinksTo(value)) => {
                 if let Some(field) = fields.get_mut(index) {
                     field.folder = value;
+                }
+            }
+            Message::TagFolder(index, value) => {
+                if let Some(field) = fields.get_mut(index) {
+                    field.folder = Some(value);
+                }
+            }
+            Message::FieldCalendar(index, value) => {
+                if let Some(field) = fields.get_mut(index) {
+                    field.calendar = value;
                 }
             }
             Message::MoveUp(index) => {
@@ -645,6 +667,41 @@ impl Editor {
                 block = block.push(
                     input("Options, separated by commas", &field.options)
                         .on_input(move |value| Message::FieldOptions(index, value)),
+                );
+            }
+            if field.kind == Kind::Date {
+                block = block.push(
+                    row![
+                        checkbox(field.calendar)
+                            .label("Pick the date from a calendar")
+                            .on_toggle(move |on| Message::FieldCalendar(index, on))
+                            .text_size(13)
+                            .style(style::check(c)),
+                        text(if field.calendar {
+                            "Saved as 2026-10-28, which Obsidian reads as a date. New notes start with today's."
+                        } else {
+                            "A line of text instead, for dates that aren't on a calendar, like a Stardate."
+                        })
+                        .size(12)
+                        .color(c.text_muted),
+                    ]
+                    .spacing(12)
+                    .align_y(Center),
+                );
+            }
+            if field.kind == Kind::Tags && field.key != crate::form::ALIASES_KEY {
+                block = block.push(
+                    row![
+                        text("Tag notes in").size(13).color(c.text_muted),
+                        input(types::TAG_FOLDER, field.folder.as_deref().unwrap_or_default())
+                            .on_input(move |value| Message::TagFolder(index, value))
+                            .width(220),
+                        text("Each tag gets a note there, listing links to the notes tagged with it.")
+                            .size(12)
+                            .color(c.text_muted),
+                    ]
+                    .spacing(8)
+                    .align_y(Center),
                 );
             }
             if field.kind.links() {

@@ -90,10 +90,15 @@ pub struct Field {
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "Width::is_half")]
     pub width: Width,
-    /// For `link` and `steps` fields: the folder (inside the campaign, like `locations`) whose notes
-    /// are suggested first, and where a note the link names is made if there is none.
+    /// For `link`, `links` and `steps` fields: the folder (inside the campaign, like `locations`) whose notes
+    /// are suggested first, and where a note the link names is made if there is none. For
+    /// `tags` fields: the folder the tag notes are in, `tags` if not given.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// For `date` fields: `false` for a plain line of text with no calendar, for dates
+    /// that aren't on one (like a Stardate, or a date in the campaign's world).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<bool>,
 }
 
 impl Field {
@@ -106,13 +111,32 @@ impl Field {
             options: Vec::new(),
             width: Width::Half,
             folder: None,
+            calendar: None,
         }
     }
 
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_else(|| title_case(&self.key))
     }
+
+    /// Whether a date field picks its date from a calendar, rather than being plain text.
+    pub fn calendar(&self) -> bool {
+        self.kind == Kind::Date && self.calendar != Some(false)
+    }
+
+    /// The folder (inside the campaign) a tags field's tag notes are in.
+    pub fn tag_folder(&self) -> String {
+        self.folder
+            .as_deref()
+            .map(|folder| folder.trim_matches('/'))
+            .filter(|folder| !folder.is_empty())
+            .unwrap_or(TAG_FOLDER)
+            .to_string()
+    }
 }
+
+/// The folder tag notes are made in, unless a tags field names another.
+pub const TAG_FOLDER: &str = "tags";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -123,10 +147,16 @@ pub enum Kind {
     Number,
     /// One of the field's `options`.
     Choice,
-    /// A comma-separated list, stored as a YAML list (Obsidian reads `tags` as tags).
+    /// A list of tags, stored as a YAML list (Obsidian reads `tags` as tags). Each tag has
+    /// a note of its own in the tags folder, listing links to the notes tagged with it.
     Tags,
     /// The name of another note, stored as an Obsidian `[[link]]`.
     Link,
+    /// Any number of other notes, stored as a YAML list of `[[links]]`.
+    Links,
+    /// A date, picked from a calendar and stored as `2026-10-28`, or any line of text
+    /// (like a date in the campaign's world) if the field has its calendar turned off.
+    Date,
     Checkbox,
     /// Markdown text, stored as a `## Label` section in the note's body.
     Longtext,
@@ -139,29 +169,33 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 9] = [
+    pub const ALL: [Kind; 11] = [
         Kind::Text,
         Kind::Longtext,
         Kind::Steps,
         Kind::Number,
         Kind::Dice,
+        Kind::Date,
         Kind::Choice,
         Kind::Tags,
         Kind::Link,
+        Kind::Links,
         Kind::Checkbox,
     ];
 
     /// The kinds a field added to a single note can have.
     ///
     /// A choice needs its options listed in the type, so it isn't one of them.
-    pub const FOR_NOTE: [Kind; 8] = [
+    pub const FOR_NOTE: [Kind; 10] = [
         Kind::Text,
         Kind::Longtext,
         Kind::Steps,
         Kind::Number,
         Kind::Dice,
+        Kind::Date,
         Kind::Tags,
         Kind::Link,
+        Kind::Links,
         Kind::Checkbox,
     ];
 
@@ -172,7 +206,7 @@ impl Kind {
 
     /// Whether fields of this kind can link to notes, and so have a folder they link to.
     pub fn links(self) -> bool {
-        matches!(self, Kind::Link | Kind::Steps)
+        matches!(self, Kind::Link | Kind::Links | Kind::Steps)
     }
 }
 
@@ -184,6 +218,8 @@ impl std::fmt::Display for Kind {
             Kind::Choice => "Choice",
             Kind::Tags => "Tags",
             Kind::Link => "Link to a note",
+            Kind::Links => "Links to notes",
+            Kind::Date => "Date",
             Kind::Checkbox => "Checkbox",
             Kind::Longtext => "Long text",
             Kind::Steps => "Steps",

@@ -15,13 +15,17 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Point, Rectangle, Vector};
 use serde_yaml_ng::{Mapping, Value};
 
+use chrono::NaiveDate;
+
 use crate::context_menu;
+use crate::date::{self, Month};
 use crate::dice::{self, Dice, Expression, Special};
 use crate::links;
 use crate::note::{self, Note, Section};
 use crate::style;
+use crate::tags;
 use crate::theme::Colors;
-use crate::types::{ContentType, Field, Kind, Width};
+use crate::types::{self, ContentType, Field, Kind, Width};
 
 /// The front matter key listing the type's fields this note doesn't use.
 pub const REMOVED_KEY: &str = "removed_fields";
@@ -85,6 +89,26 @@ pub enum Message {
     FollowStep(usize, usize),
     /// Changes one part of dice field `.0`.
     Dice(usize, DicePart),
+    /// What is typed in the box for a new item of list field `.0`: a tag, or a note to
+    /// link to.
+    ListText(usize, String),
+    /// Enter in a list field's box: adds what is typed in it.
+    ListSubmit(usize),
+    /// Adds an item to a list field, like a tag picked from the ones there are.
+    ListAdd(usize, String),
+    /// Removes item `.1` of list field `.0`.
+    ListRemove(usize, usize),
+    /// Opens the note item `.1` of list field `.0` is about: the note it links to, or the
+    /// tag's note.
+    FollowItem(usize, usize),
+    /// Opens every note a links field links to.
+    FollowAll(usize),
+    /// Shows or hides the calendar of date field `.0`.
+    Calendar(usize),
+    /// Shows the month `.1` months after the one date field `.0`'s calendar shows.
+    CalendarMonth(usize, i32),
+    /// Picks a date in date field `.0`.
+    PickDate(usize, NaiveDate),
 }
 
 /// A part of a dice field, changed in the form.
@@ -261,7 +285,12 @@ impl Message {
     pub fn moves_focus(&self) -> bool {
         matches!(
             self,
-            Message::StepSubmit(..) | Message::StepMove(..) | Message::StepRemove(..)
+            Message::StepSubmit(..)
+                | Message::StepMove(..)
+                | Message::StepRemove(..)
+                | Message::ListSubmit(..)
+                | Message::ListAdd(..)
+                | Message::ListRemove(..)
         )
     }
 }
@@ -332,6 +361,88 @@ impl Steps {
             None => &mut self.draft,
         }
     }
+}
+
+/// What a tags or links field holds: its items, and the one being typed.
+#[derive(Debug, Default)]
+struct List {
+    /// Tags, or the notes linked to (without the `[[ ]]`).
+    items: Vec<String>,
+    draft: String,
+}
+
+impl List {
+    /// The items of a front matter value: tags, or the notes its `[[links]]` link to.
+    fn parse(value: Option<&Value>, links: bool) -> Self {
+        let Some(value) = value else {
+            return Self::default();
+        };
+        let items = if links {
+            link_items(value)
+        } else {
+            tags::items(value)
+        };
+        let mut list = Self::default();
+        for item in items {
+            list.add(&item);
+        }
+        list
+    }
+
+    /// Adds `item` to the end, if it isn't already there. Returns whether it was added.
+    fn add(&mut self, item: &str) -> bool {
+        let item = item.trim();
+        if item.is_empty() || self.items.iter().any(|i| i.eq_ignore_ascii_case(item)) {
+            return false;
+        }
+        self.items.push(item.to_string());
+        true
+    }
+
+    /// The items, with the one being typed as the last.
+    fn all(&self) -> Vec<String> {
+        let mut all = Self {
+            items: self.items.clone(),
+            draft: String::new(),
+        };
+        all.add(&self.draft);
+        all.items
+    }
+}
+
+/// The notes linked to in a links field's front matter value: the text in each of its
+/// `[[links]]`, or each line of it with none.
+fn link_items(value: &Value) -> Vec<String> {
+    let texts: Vec<String> = match value {
+        Value::Sequence(items) => items.iter().map(note::value_to_text).collect(),
+        Value::Null => Vec::new(),
+        value => vec![note::value_to_text(value)],
+    };
+    texts
+        .iter()
+        .flat_map(|text| {
+            let found = links::find(text);
+            if found.is_empty() {
+                return vec![text.trim().to_string()];
+            }
+            found
+                .iter()
+                .map(|link| {
+                    let whole = &text[link.range.clone()];
+                    note::unlink(whole.trim_start_matches('!')).to_string()
+                })
+                .collect()
+        })
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// What a date field holds.
+#[derive(Debug, Default)]
+struct DateInput {
+    text: String,
+    /// The month its calendar shows, while it is open.
+    month: Option<Month>,
 }
 
 /// A line of a list, as [`list_item`] reads it.
@@ -414,6 +525,10 @@ pub enum FieldValue<'a> {
     Choice(Option<&'a str>),
     /// A dice field, edited with [`Form::dice_view`].
     Dice,
+    /// A tags or links field, edited with [`Form::list_view`].
+    List,
+    /// A date field, edited with [`Form::date_view`].
+    Date,
 }
 
 /// What the user typed into one field.
@@ -424,6 +539,8 @@ enum Input {
     Choice(Option<String>),
     Steps(Steps),
     Dice(DiceInput),
+    List(List),
+    Date(DateInput),
 }
 
 impl Input {
@@ -434,7 +551,9 @@ impl Input {
             Kind::Checkbox => Input::Check(false),
             Kind::Choice => Input::Choice(None),
             Kind::Dice => Input::Dice(DiceInput::default()),
-            Kind::Text | Kind::Number | Kind::Tags | Kind::Link => Input::Text(String::new()),
+            Kind::Tags | Kind::Links => Input::List(List::default()),
+            Kind::Date => Input::Date(DateInput::default()),
+            Kind::Text | Kind::Number | Kind::Link => Input::Text(String::new()),
         }
     }
 }
@@ -462,9 +581,19 @@ pub struct Form {
 }
 
 impl Form {
-    /// An empty form for a new note.
+    /// An empty form for a new note. Its calendar dates are today's, like a journal
+    /// entry's date.
     pub fn blank(ty: ContentType) -> Self {
-        Self::from_note(ty, Note::default())
+        let mut form = Self::from_note(ty, Note::default());
+        let today = date::format(date::today());
+        for (field, input) in form.fields.iter().zip(&mut form.inputs) {
+            if let Input::Date(input) = input
+                && field.calendar()
+            {
+                input.text = today.clone();
+            }
+        }
+        form
     }
 
     pub fn from_note(ty: ContentType, note: Note) -> Self {
@@ -536,7 +665,10 @@ impl Form {
                     Kind::Choice => Input::Choice((!text.is_empty()).then_some(text)),
                     Kind::Link => Input::Text(note::unlink(&text).to_string()),
                     Kind::Dice => Input::Dice(DiceInput::parse(&text)),
-                    Kind::Text | Kind::Number | Kind::Tags => Input::Text(text),
+                    Kind::Tags => Input::List(List::parse(value, false)),
+                    Kind::Links => Input::List(List::parse(value, true)),
+                    Kind::Date => Input::Date(DateInput { text, month: None }),
+                    Kind::Text | Kind::Number => Input::Text(text),
                 }
             })
             .collect();
@@ -575,11 +707,103 @@ impl Form {
     /// Applies an edit. Returns whether the note changed.
     pub fn update(&mut self, message: Message) -> bool {
         match message {
-            Message::Text(index, value) => {
-                if let Some(Input::Text(text)) = self.inputs.get_mut(index) {
+            Message::Text(index, value) => match self.inputs.get_mut(index) {
+                Some(Input::Text(text)) => {
                     *text = value;
                     self.focus = Some(index);
                 }
+                Some(Input::Date(input)) => {
+                    input.text = value;
+                    self.focus = Some(index);
+                    // The calendar follows a date typed in.
+                    if let (Some(month), Some(date)) = (&mut input.month, date::parse(&input.text))
+                    {
+                        *month = Month::of(date);
+                    }
+                }
+                _ => return false,
+            },
+            Message::ListText(index, value) => {
+                let tags = self.is_tag_field(index);
+                let Some(Input::List(list)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                self.focus = Some(index);
+                // Tags can be typed separated by commas, as they used to be: each comma
+                // finishes a tag.
+                match value.rsplit_once(',').filter(|_| tags) {
+                    Some((done, rest)) => {
+                        for tag in done.split(',') {
+                            list.add(tag.trim().trim_start_matches('#'));
+                        }
+                        list.draft = rest.trim_start().to_string();
+                    }
+                    None => list.draft = value,
+                }
+            }
+            Message::ListSubmit(index) => {
+                let tags = self.is_tag_field(index);
+                let Some(Input::List(list)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                self.focus = Some(index);
+                let draft = std::mem::take(&mut list.draft);
+                let item = if tags {
+                    draft.trim().trim_start_matches('#')
+                } else {
+                    note::unlink(&draft)
+                };
+                return list.add(item);
+            }
+            Message::ListAdd(index, item) => {
+                let Some(Input::List(list)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                self.focus = Some(index);
+                list.draft.clear();
+                return list.add(&item);
+            }
+            Message::ListRemove(index, item) => {
+                let Some(Input::List(list)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                if item >= list.items.len() {
+                    return false;
+                }
+                list.items.remove(item);
+                self.focus = Some(index);
+            }
+            Message::FollowItem(..) | Message::FollowAll(_) => return false,
+            Message::Calendar(index) => {
+                if let Some(Input::Date(input)) = self.inputs.get_mut(index) {
+                    input.month = match input.month {
+                        Some(_) => None,
+                        None => Some(Month::of(
+                            date::parse(&input.text).unwrap_or_else(date::today),
+                        )),
+                    };
+                }
+                return false;
+            }
+            Message::CalendarMonth(index, count) => {
+                if let Some(Input::Date(DateInput {
+                    month: Some(month), ..
+                })) = self.inputs.get_mut(index)
+                {
+                    *month = month.add(count);
+                }
+                return false;
+            }
+            Message::PickDate(index, picked) => {
+                let Some(Input::Date(input)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                let text = date::format(picked);
+                input.month = None;
+                if input.text == text {
+                    return false;
+                }
+                input.text = text;
             }
             Message::Long(index, action) => {
                 let edited = action.is_edit();
@@ -812,6 +1036,9 @@ impl Form {
             (Input::Text(value), Kind::Link) if !value.trim().is_empty() => {
                 Some((value.clone(), true))
             }
+            (Input::List(list), Kind::Links) if !list.draft.trim().is_empty() => {
+                Some((list.draft.clone(), true))
+            }
             (Input::Steps(steps), _) => {
                 let text = steps.text(self.step);
                 open_link(text).map(|start| (text[start + 2..].to_string(), false))
@@ -855,7 +1082,9 @@ impl Form {
         let mut stops = Vec::new();
         for (index, input) in self.inputs.iter().enumerate() {
             match input {
-                Input::Text(_) | Input::Long(_) => stops.push((index, 0, field_id(index))),
+                Input::Text(_) | Input::Long(_) | Input::List(_) | Input::Date(_) => {
+                    stops.push((index, 0, field_id(index)))
+                }
                 Input::Steps(steps) => stops.extend(
                     (0..=steps.steps.len()).map(|step| (index, step, step_id(index, step))),
                 ),
@@ -886,16 +1115,52 @@ impl Form {
         }
     }
 
-    /// Link field `index` and the note name in it.
+    /// Link field `index` and the note name in it. For a links field, the name is the one
+    /// being typed in its box.
     pub fn link_field(&self, index: usize) -> Option<(&Field, &str)> {
+        let value = match (self.fields.get(index), self.inputs.get(index)) {
+            (Some(field), Some(Input::Text(value))) if field.kind == Kind::Link => value,
+            (Some(field), Some(Input::List(list))) if field.kind == Kind::Links => &list.draft,
+            _ => return None,
+        };
+        // `BBEG|Jerry` (a link to an alias, made in Obsidian) is a link to BBEG.
+        let target = note::unlink(value);
+        Some((
+            &self.fields[index],
+            target.split(['|', '#']).next().unwrap_or(target),
+        ))
+    }
+
+    /// List field `index` and its items: tags, or the notes it links to.
+    pub fn list_items(&self, index: usize) -> Option<(&Field, &[String])> {
         match (self.fields.get(index), self.inputs.get(index)) {
-            (Some(field), Some(Input::Text(value))) if field.kind == Kind::Link => {
-                // `BBEG|Jerry` (a link to an alias, made in Obsidian) is a link to BBEG.
-                let target = note::unlink(value);
-                Some((field, target.split(['|', '#']).next().unwrap_or(target)))
-            }
+            (Some(field), Some(Input::List(list))) => Some((field, &list.items)),
             _ => None,
         }
+    }
+
+    /// Whether field `index` is a tags field whose tags have notes: any tags field but the
+    /// note's other names.
+    pub fn is_tag_field(&self, index: usize) -> bool {
+        self.fields
+            .get(index)
+            .is_some_and(|field| field.kind == Kind::Tags && field.key != ALIASES_KEY)
+    }
+
+    /// The front matter keys whose tags have tag notes, each with the folder they are in:
+    /// the type's tags fields, and `tags` (which Obsidian reads as tags) in any note.
+    pub fn tag_fields(&self) -> Vec<(String, String)> {
+        let mut fields: Vec<(String, String)> = self
+            .ty
+            .fields
+            .iter()
+            .filter(|field| field.kind == Kind::Tags && field.key != ALIASES_KEY)
+            .map(|field| (field.key.clone(), field.tag_folder()))
+            .collect();
+        if fields.iter().all(|(key, _)| key != "tags") {
+            fields.push(("tags".into(), types::TAG_FOLDER.into()));
+        }
+        fields
     }
 
     /// The link field last typed in, if the focus is on one.
@@ -928,6 +1193,11 @@ impl Form {
                 text.truncate(start);
                 text.push_str(&format!("[[{link}]]"));
                 true
+            }
+            // The box is ready for the next note to link to.
+            Input::List(list) if self.fields[index].kind == Kind::Links => {
+                list.draft.clear();
+                list.add(link.split('|').next().unwrap_or(link))
             }
             _ => false,
         }
@@ -993,6 +1263,8 @@ impl Form {
             Input::Check(checked) => FieldValue::Check(*checked),
             Input::Choice(choice) => FieldValue::Choice(choice.as_deref()),
             Input::Dice(_) => FieldValue::Dice,
+            Input::List(_) => FieldValue::List,
+            Input::Date(_) => FieldValue::Date,
             Input::Long(_) | Input::Steps(_) => return None,
         };
         Some((index, &self.fields[index], value))
@@ -1031,6 +1303,31 @@ impl Form {
                     .then_some(Value::Bool(*checked))
             }
             Input::Choice(choice) => choice.clone().map(Value::String),
+            Input::List(list) => {
+                let items = list.all();
+                if items.is_empty() {
+                    keep_empty.then_some(Value::Null)
+                } else if field.kind == Kind::Links {
+                    Some(Value::Sequence(
+                        items
+                            .iter()
+                            .map(|item| Value::String(format!("[[{item}]]")))
+                            .collect(),
+                    ))
+                } else {
+                    Some(Value::Sequence(
+                        items.into_iter().map(Value::from).collect(),
+                    ))
+                }
+            }
+            Input::Date(input) => {
+                let text = input.text.trim();
+                if text.is_empty() {
+                    keep_empty.then_some(Value::Null)
+                } else {
+                    Some(Value::String(text.to_string()))
+                }
+            }
             Input::Dice(dice) => {
                 let text = dice
                     .text()
@@ -1049,13 +1346,6 @@ impl Form {
                     Some(match field.kind {
                         Kind::Number => parse_number(text)
                             .ok_or_else(|| format!("{} must be a number", field.label()))?,
-                        Kind::Tags => Value::Sequence(
-                            text.split(',')
-                                .map(str::trim)
-                                .filter(|tag| !tag.is_empty())
-                                .map(Value::from)
-                                .collect(),
-                        ),
                         Kind::Link => Value::String(format!("[[{}]]", note::unlink(text))),
                         _ => Value::String(text.to_string()),
                     })
@@ -1127,7 +1417,8 @@ impl Form {
     }
 
     /// Shows the form. Long text fields color `[[links]]` with `link_colors`, and Tab
-    /// (or Enter in a link field) sends `accept` to finish the link being typed.
+    /// (or Enter in a link field) sends `accept` to finish the link being typed. Tags
+    /// fields offer the tags in `known_tags`, by the folder their notes are in.
     #[allow(clippy::too_many_arguments)]
     pub fn view<'a, M: Clone + 'a>(
         &'a self,
@@ -1138,6 +1429,7 @@ impl Form {
         accept: Option<M>,
         on_menu: fn(Point) -> M,
         roll_icon: &'a svg::Handle,
+        known_tags: &'a KnownTags,
     ) -> Element<'a, M> {
         // Every editor sees every key press, so only the focused one handles shortcuts.
         let accept_tab = accept.clone();
@@ -1270,6 +1562,17 @@ impl Form {
                         ]
                         .spacing(6)
                         .into(),
+                        Input::List(_) => column![
+                            label(index, field.label()),
+                            self.list_view(c, map, index, accept.clone(), known_tags),
+                        ]
+                        .spacing(6)
+                        .into(),
+                        Input::Date(_) => {
+                            column![label(index, field.label()), self.date_view(c, map, index),]
+                                .spacing(6)
+                                .into()
+                        }
                         Input::Steps(steps) => column![
                             label(index, field.label()),
                             self.steps_view(c, map, index, steps, &accept),
@@ -1453,6 +1756,266 @@ impl Form {
             .spacing(4)
             .into(),
         }
+    }
+
+    /// The input of list field `index`: a box to type a tag or a note to link to in, then
+    /// its items, each a button that opens its note. A tags field offers the tags in
+    /// `known_tags` it doesn't have yet, so they don't have to be typed (or misspelled);
+    /// in a links field, Enter sends `accept` to pick the first note suggested.
+    pub fn list_view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        map: fn(Message) -> M,
+        index: usize,
+        accept: Option<M>,
+        known_tags: &'a KnownTags,
+    ) -> Element<'a, M> {
+        let (Some(field), Some(Input::List(list))) =
+            (self.fields.get(index), self.inputs.get(index))
+        else {
+            return space().into();
+        };
+        let tags = self.is_tag_field(index);
+        let links = field.kind == Kind::Links;
+        let draft = list.draft.trim();
+
+        // The tags there are that this note doesn't have, matching what is typed.
+        let known: &[String] = if tags {
+            known_tags
+                .get(&field.tag_folder())
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        } else {
+            &[]
+        };
+        let lower = draft.to_lowercase();
+        let offered: Vec<&String> = known
+            .iter()
+            .filter(|tag| !list.items.iter().any(|item| item.eq_ignore_ascii_case(tag)))
+            .filter(|tag| tag.to_lowercase().contains(&lower))
+            .take(24)
+            .collect();
+        let exact = known.iter().find(|tag| tag.eq_ignore_ascii_case(draft));
+
+        // Enter picks the note suggested, or the tag there is with the name typed (in its
+        // spelling), or else adds what is typed.
+        let submit = match (accept, exact) {
+            (Some(accept), _) if links && self.focus == Some(index) => accept,
+            (_, Some(tag)) => map(Message::ListAdd(index, tag.clone())),
+            _ => map(Message::ListSubmit(index)),
+        };
+        let placeholder = match (links, tags) {
+            (true, _) => "Add a note to link to",
+            (false, true) => "Add a tag",
+            (false, false) => "Add a name",
+        };
+        let input = text_input(placeholder, &list.draft)
+            .id(field_id(index))
+            .on_input(move |value| map(Message::ListText(index, value)))
+            .on_submit(submit.clone())
+            .size(14)
+            .padding(8)
+            .style(style::input(c));
+        let mut top = row![
+            input,
+            button(text("Add").size(13))
+                .padding([8, 10])
+                .style(style::secondary(c))
+                .on_press_maybe((!draft.is_empty()).then_some(submit)),
+        ]
+        .spacing(6)
+        .align_y(Center);
+        if links && list.items.len() > 1 {
+            top = top.push(
+                button(text("Open all").size(13))
+                    .padding([8, 10])
+                    .style(style::secondary(c))
+                    .on_press(map(Message::FollowAll(index))),
+            );
+        }
+
+        // The items: a button opening each one's note (none for other names), and one to
+        // remove it.
+        let items = list.items.iter().enumerate().map(|(item, value)| {
+            let name = button(text(value.clone()).size(13))
+                .padding([3, 8])
+                .style(style::secondary(c))
+                .on_press_maybe((tags || links).then(|| map(Message::FollowItem(index, item))));
+            row![
+                name,
+                button(text("×").size(13))
+                    .padding([3, 6])
+                    .style(style::flat(c, false))
+                    .on_press(map(Message::ListRemove(index, item))),
+            ]
+            .spacing(0)
+            .align_y(Center)
+            .into()
+        });
+        let mut view = column![top].spacing(6);
+        if !list.items.is_empty() {
+            view = view.push(row(items).spacing(8).wrap().vertical_spacing(6));
+        }
+
+        if tags && !offered.is_empty() {
+            let chips = offered.into_iter().map(|tag| {
+                button(text(tag.clone()).size(12))
+                    .padding([2, 8])
+                    .style(style::flat(c, false))
+                    .on_press(map(Message::ListAdd(index, tag.clone())))
+                    .into()
+            });
+            view = view.push(
+                row![text("Tags:").size(12).color(c.text_muted)]
+                    .extend(chips)
+                    .spacing(4)
+                    .align_y(Center)
+                    .wrap()
+                    .vertical_spacing(4),
+            );
+        }
+        if tags && !draft.is_empty() && exact.is_none() {
+            view = view.push(
+                text(format!(
+                    "Enter adds the new tag {draft}. Its note is made in {}/ when this note is saved",
+                    field.tag_folder()
+                ))
+                .size(12)
+                .color(c.text_muted),
+            );
+        }
+        view.into()
+    }
+
+    /// The input of date field `index`: with its calendar on, a box for the date with
+    /// buttons to pick one from a calendar or today's; with it off, a line of text for
+    /// a date in the campaign's world, like a Stardate.
+    pub fn date_view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        map: fn(Message) -> M,
+        index: usize,
+    ) -> Element<'a, M> {
+        let (Some(field), Some(Input::Date(input))) =
+            (self.fields.get(index), self.inputs.get(index))
+        else {
+            return space().into();
+        };
+        let calendar = field.calendar();
+        let placeholder = if calendar {
+            "Year-month-day, like 2026-10-28"
+        } else {
+            "Any date, like Stardate 41153.7 or the 3rd of Frostfall"
+        };
+        let text_box = text_input(placeholder, &input.text)
+            .id(field_id(index))
+            .on_input(move |value| map(Message::Text(index, value)))
+            .size(14)
+            .padding(8)
+            .style(style::input(c));
+        if !calendar {
+            return text_box.into();
+        }
+
+        // The box stays first in the row, so the buttons can't make iced build it again.
+        let today = date::today();
+        let picked = date::parse(&input.text);
+        let mut view = column![
+            row![
+                text_box,
+                button(
+                    text(if input.month.is_some() {
+                        "Close"
+                    } else {
+                        "Calendar"
+                    })
+                    .size(13)
+                )
+                .padding([8, 10])
+                .style(style::secondary(c))
+                .on_press(map(Message::Calendar(index))),
+                button(text("Today").size(13))
+                    .padding([8, 10])
+                    .style(style::secondary(c))
+                    .on_press(map(Message::PickDate(index, today))),
+            ]
+            .spacing(6)
+            .align_y(Center)
+        ]
+        .spacing(6);
+
+        match picked {
+            Some(day) => {
+                view = view.push(text(date::long(day)).size(12).color(c.text_muted));
+            }
+            None if !input.text.trim().is_empty() => {
+                view = view.push(
+                    text("Not a date on the calendar, so it's kept as written")
+                        .size(12)
+                        .color(c.text_muted),
+                );
+            }
+            None => {}
+        }
+
+        if let Some(month) = input.month {
+            const DAY: f32 = 36.0;
+            let header = row![
+                button(text("‹").size(14))
+                    .padding([2, 10])
+                    .style(style::flat(c, false))
+                    .on_press(map(Message::CalendarMonth(index, -1))),
+                text(month.title())
+                    .size(14)
+                    .color(c.text)
+                    .width(Fill)
+                    .align_x(Center),
+                button(text("›").size(14))
+                    .padding([2, 10])
+                    .style(style::flat(c, false))
+                    .on_press(map(Message::CalendarMonth(index, 1))),
+            ]
+            .align_y(Center)
+            .width(DAY * 7.0);
+            let names = row(date::WEEKDAYS.iter().map(|name| {
+                text(*name)
+                    .size(12)
+                    .color(c.text_muted)
+                    .width(DAY)
+                    .align_x(Center)
+                    .into()
+            }));
+            let weeks = month.weeks().into_iter().map(|week| {
+                row(week.into_iter().map(|day| match day {
+                    Some(day) => {
+                        use chrono::Datelike;
+                        let label = text(day.day().to_string())
+                            .size(13)
+                            .width(Fill)
+                            .align_x(Center);
+                        let label = if day == today {
+                            label.color(c.accent)
+                        } else {
+                            label
+                        };
+                        button(label)
+                            .padding([4, 0])
+                            .width(DAY)
+                            .style(style::flat(c, Some(day) == picked))
+                            .on_press(map(Message::PickDate(index, day)))
+                            .into()
+                    }
+                    None => space().width(DAY).into(),
+                }))
+                .into()
+            });
+            view = view.push(
+                container(column![header, names].extend(weeks).spacing(2))
+                    .padding(8)
+                    .style(style::dropdown(c)),
+            );
+        }
+        view.into()
     }
 
     /// The steps of steps field `index`, each with a box to tick it, then a box to type a
@@ -1662,6 +2225,14 @@ pub fn kind_of(value: &Value) -> Option<Kind> {
         }
         Value::String(_) => Some(Kind::Text),
         Value::Sequence(items)
+            if !items.is_empty()
+                && items.iter().all(|item| {
+                    matches!(item, Value::String(text) if text.trim().starts_with("[[") && text.trim().ends_with("]]"))
+                }) =>
+        {
+            Some(Kind::Links)
+        }
+        Value::Sequence(items)
             if items
                 .iter()
                 .all(|item| matches!(item, Value::String(_) | Value::Number(_))) =>
@@ -1671,6 +2242,9 @@ pub fn kind_of(value: &Value) -> Option<Kind> {
         Value::Sequence(_) | Value::Mapping(_) | Value::Tagged(_) => None,
     }
 }
+
+/// The tags that have notes, by the folder (inside the campaign) their notes are in.
+pub type KnownTags = std::collections::HashMap<String, Vec<String>>;
 
 fn pair<'a, M: 'a>(left: Element<'a, M>, right: Element<'a, M>) -> Element<'a, M> {
     row![container(left).width(Fill), container(right).width(Fill)]
@@ -2066,10 +2640,148 @@ attack: 1d8+1d6
         assert!(form.to_markdown().is_err());
 
         form.update(Message::Text(0, "3".into()));
-        form.update(Message::Text(1, "wizard, elf ,".into()));
+        form.update(Message::ListText(1, "wizard, elf ,".into()));
         assert_eq!(
             form.to_markdown().unwrap(),
             "---\ntype: pc\nlevel: 3\ntags:\n- wizard\n- elf\n---\n"
         );
+    }
+
+    fn list(form: &Form, index: usize) -> (Vec<String>, String) {
+        match &form.inputs[index] {
+            Input::List(list) => (list.items.clone(), list.draft.clone()),
+            _ => panic!("field {index} isn't a list field"),
+        }
+    }
+
+    #[test]
+    fn picks_tags_one_by_one() {
+        let lore = types::STARTER_TYPES
+            .iter()
+            .find(|(folder, _)| *folder == "lore")
+            .unwrap();
+        let text = "---\ntype: lore\nname: Ley Lines\ntags: [magic, '#old']\n---\n";
+        let mut form = Form::from_note(types::parse(lore.1).unwrap(), note::parse(text).unwrap());
+        let tags = form.fields.iter().position(|f| f.key == "tags").unwrap();
+        assert!(form.is_tag_field(tags));
+        assert_eq!(list(&form, tags).0, ["magic", "old"]);
+
+        // A comma finishes a tag; the same tag twice is one.
+        form.update(Message::ListText(tags, "Magic, arcane".into()));
+        assert_eq!(
+            list(&form, tags),
+            (vec!["magic".into(), "old".into()], "arcane".into())
+        );
+        // Enter adds the tag typed; a tag picked from the ones there are is added as it is.
+        assert!(form.update(Message::ListSubmit(tags)));
+        assert!(form.update(Message::ListAdd(tags, "Ancient History".into())));
+        assert!(!form.update(Message::ListAdd(tags, "ancient history".into())));
+        form.update(Message::ListRemove(tags, 1));
+        assert_eq!(form.focused_id(), Some(field_id(tags)));
+        assert_eq!(
+            written(&form, "tags"),
+            Some(Value::Sequence(vec![
+                "magic".into(),
+                "arcane".into(),
+                "Ancient History".into()
+            ]))
+        );
+        assert_eq!(
+            form.tag_fields(),
+            [("tags".to_string(), "tags".to_string())]
+        );
+
+        // Other names are a list too, but have no tag notes.
+        form.add_field("aliases", Kind::Text).unwrap();
+        assert!(!form.is_tag_field(form.fields.len() - 1));
+    }
+
+    #[test]
+    fn links_to_many_notes() {
+        let lore = types::STARTER_TYPES
+            .iter()
+            .find(|(folder, _)| *folder == "lore")
+            .unwrap();
+        let text =
+            "---\ntype: lore\nname: Blood Magic\nrelated:\n- '[[Mira]]'\n- '[[BBEG|Jerry]]'\n---\n";
+        let mut form = Form::from_note(types::parse(lore.1).unwrap(), note::parse(text).unwrap());
+        let related = form.fields.iter().position(|f| f.key == "related").unwrap();
+        assert_eq!(form.fields[related].kind, Kind::Links);
+        assert_eq!(list(&form, related).0, ["Mira", "BBEG|Jerry"]);
+
+        // What is typed is looked up like a link field's, and a pick goes on the list.
+        form.update(Message::ListText(related, "Old M".into()));
+        assert_eq!(form.link_query(), Some(("Old M".into(), true)));
+        assert_eq!(
+            form.link_field(related).map(|(_, name)| name),
+            Some("Old M")
+        );
+        assert!(form.complete_link("Old Mill|The Mill"));
+        assert_eq!(form.link_query(), None);
+        assert_eq!(list(&form, related).0, ["Mira", "BBEG|Jerry", "Old Mill"]);
+
+        // Commas can be in a note's name.
+        form.update(Message::ListText(related, "Smith, the".into()));
+        form.update(Message::ListSubmit(related));
+        assert_eq!(
+            written(&form, "related"),
+            Some(Value::Sequence(vec![
+                "[[Mira]]".into(),
+                "[[BBEG|Jerry]]".into(),
+                "[[Old Mill]]".into(),
+                "[[Smith, the]]".into()
+            ]))
+        );
+
+        // A note's own list of links is read back as links.
+        let own = note::parse("---\nallies: ['[[A]]', '[[B]]']\nmoods: [calm]\n---\n").unwrap();
+        assert_eq!(kind_of(&own.front["allies"]), Some(Kind::Links));
+        assert_eq!(kind_of(&own.front["moods"]), Some(Kind::Tags));
+    }
+
+    fn journal_type() -> ContentType {
+        let journal = types::STARTER_TYPES
+            .iter()
+            .find(|(folder, _)| *folder == "journal")
+            .unwrap();
+        types::parse(journal.1).unwrap()
+    }
+
+    #[test]
+    fn dates_from_a_calendar_or_as_text() {
+        let mut form = Form::blank(journal_type());
+        let date = form.fields.iter().position(|f| f.key == "date").unwrap();
+        assert!(form.fields[date].calendar());
+        // A new entry is dated today.
+        let today = date::format(date::today());
+        assert_eq!(written(&form, "date"), Some(Value::from(today.as_str())));
+
+        // The calendar opens on the field's month, and picking a day closes it.
+        form.update(Message::Text(date, "2026-02-14".into()));
+        form.update(Message::Calendar(date));
+        form.update(Message::CalendarMonth(date, -1));
+        let Input::Date(input) = &form.inputs[date] else {
+            panic!("date should be a date field");
+        };
+        assert_eq!(
+            input.month.map(Month::title).as_deref(),
+            Some("January 2026")
+        );
+        let picked = NaiveDate::from_ymd_opt(2026, 1, 9).unwrap();
+        assert!(form.update(Message::PickDate(date, picked)));
+        assert_eq!(written(&form, "date"), Some(Value::from("2026-01-09")));
+
+        // Dates that aren't on a calendar are kept as written.
+        form.update(Message::Text(date, "Stardate 41153.7".into()));
+        assert_eq!(
+            written(&form, "date"),
+            Some(Value::from("Stardate 41153.7"))
+        );
+
+        // With the calendar off, a new entry's date starts empty.
+        let mut ty = journal_type();
+        ty.fields[date].calendar = Some(false);
+        assert!(!ty.fields[date].calendar());
+        assert_eq!(written(&Form::blank(ty), "date"), None);
     }
 }

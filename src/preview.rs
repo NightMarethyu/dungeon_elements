@@ -736,7 +736,12 @@ fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String,
         if field.key == "name" || field.kind.is_section() || removed.contains(&field.key.as_str()) {
             continue;
         }
-        let value = front.get(field.key.as_str()).and_then(value_markdown);
+        let value = front.get(field.key.as_str());
+        let value = if field.kind == Kind::Tags && field.key != crate::form::ALIASES_KEY {
+            value.and_then(|value| tag_markdown(value, &field.tag_folder()))
+        } else {
+            value.and_then(value_markdown)
+        };
         shown.push((field.key.clone(), field.label(), value));
     }
 
@@ -750,7 +755,12 @@ fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String,
         {
             continue;
         }
-        if let Some(value) = value_markdown(value) {
+        let value = if key == "tags" {
+            tag_markdown(value, crate::types::TAG_FOLDER)
+        } else {
+            value_markdown(value)
+        };
+        if let Some(value) = value {
             let label = if key.chars().any(char::is_uppercase) || key.contains(' ') {
                 key.clone()
             } else {
@@ -770,6 +780,10 @@ fn rolls(front: &Mapping, key: &str, ty: Option<&ContentType>) -> Vec<String> {
         .and_then(|ty| ty.fields.iter().find(|field| field.key == key))
         .map(|field| field.kind);
     let link_field = kind == Some(Kind::Link);
+    // Dates, tags and links to notes are never rolls, even `2026-10-28`.
+    if matches!(kind, Some(Kind::Date | Kind::Tags | Kind::Links)) {
+        return Vec::new();
+    }
     if kind == Some(Kind::Dice)
         && let Some(dice) = front
             .get(key)
@@ -794,6 +808,24 @@ fn rolls(front: &Mapping, key: &str, ty: Option<&ContentType>) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Tags as one line of Markdown, each a link to its note in `folder`, or `None` if there
+/// are none.
+fn tag_markdown(value: &Value, folder: &str) -> Option<String> {
+    let tags = crate::tags::items(value);
+    if tags.is_empty() {
+        return None;
+    }
+    let links: Vec<String> = tags
+        .iter()
+        .map(|tag| {
+            let file = crate::campaign::note_file_name(tag);
+            let shown = tag.replace(['|', '[', ']'], " ");
+            rewrite_links(&format!("[[{folder}/{file}|{}]]", shown.trim()), false)
+        })
+        .collect();
+    Some(links.join(", "))
 }
 
 /// A front matter value as one line of Markdown, or `None` if it is empty.
