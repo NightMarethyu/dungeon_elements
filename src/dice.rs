@@ -287,6 +287,176 @@ impl fmt::Display for Expression {
     }
 }
 
+/// What a dice field holds: some dice of one kind, a modifier, and a special rule, like
+/// `2d6+3`, `1d20+5 advantage` or `4d6kh3`. It is saved as that text, so other apps (like
+/// Obsidian) show it as it reads, and the form shows each part as an input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Dice {
+    pub count: u32,
+    pub sides: u32,
+    /// Added to the dice, or taken away when negative.
+    pub modifier: i64,
+    pub special: Special,
+    /// How many dice count, for [`Special::KeepHighest`] and [`Special::KeepLowest`].
+    pub keep: u32,
+}
+
+/// A special rule for rolling a dice field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Special {
+    #[default]
+    None,
+    /// Roll one more die and keep the best: a d20 rolled twice, keeping the higher.
+    Advantage,
+    /// Roll one more die and keep the worst.
+    Disadvantage,
+    KeepHighest,
+    KeepLowest,
+}
+
+impl Special {
+    pub const ALL: [Special; 5] = [
+        Special::None,
+        Special::Advantage,
+        Special::Disadvantage,
+        Special::KeepHighest,
+        Special::KeepLowest,
+    ];
+
+    /// Whether it keeps some of the dice, so it needs to say how many.
+    pub fn keeps(self) -> bool {
+        matches!(self, Special::KeepHighest | Special::KeepLowest)
+    }
+}
+
+impl fmt::Display for Special {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Special::None => "Nothing special",
+            Special::Advantage => "Advantage",
+            Special::Disadvantage => "Disadvantage",
+            Special::KeepHighest => "Keep highest",
+            Special::KeepLowest => "Keep lowest",
+        })
+    }
+}
+
+impl Dice {
+    /// Reads a dice field's text, like `2d6+3`, `1d20-1 advantage`, `2d20 adv` or `4d6kh3`.
+    /// `None` when it isn't dice of one kind with one modifier, like `1d8+1d6`.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        let lower = text.to_lowercase();
+        // "disadvantage" ends with "advantage", so it is looked for first.
+        let words = [
+            ("with disadvantage", Special::Disadvantage),
+            ("disadvantage", Special::Disadvantage),
+            ("disadv", Special::Disadvantage),
+            ("dis", Special::Disadvantage),
+            ("with advantage", Special::Advantage),
+            ("advantage", Special::Advantage),
+            ("adv", Special::Advantage),
+        ];
+        let (rest, mode) = words
+            .iter()
+            .find_map(|(word, special)| {
+                let rest = lower.strip_suffix(word)?;
+                rest.ends_with([' ', '\t'])
+                    .then(|| (&text[..rest.len()], *special))
+            })
+            .unwrap_or((text, Special::None));
+
+        let expression = Expression::parse(rest).ok()?;
+        let (first, others) = expression.terms.split_first()?;
+        let Term::Dice {
+            negative: false,
+            count,
+            sides,
+            keep,
+        } = *first
+        else {
+            return None;
+        };
+        let mut modifier = 0;
+        for term in others {
+            match term {
+                Term::Number(number) => modifier += number,
+                Term::Dice { .. } => return None,
+            }
+        }
+        let (special, keep) = match (mode, keep) {
+            (mode, None) => (mode, 0),
+            (Special::None, Some(Keep::Highest(keep))) => (Special::KeepHighest, keep),
+            (Special::None, Some(Keep::Lowest(keep))) => (Special::KeepLowest, keep),
+            // `4d6kh3 advantage` can't be shown in one place.
+            _ => return None,
+        };
+        Some(Dice {
+            count,
+            sides,
+            modifier,
+            special,
+            keep,
+        })
+    }
+
+    /// The dice as an expression, with what they keep but without advantage or
+    /// disadvantage, which [`Self::mode`] gives.
+    pub fn expression(&self) -> Expression {
+        let keep = match self.special {
+            Special::KeepHighest => Some(Keep::Highest(self.keep)),
+            Special::KeepLowest => Some(Keep::Lowest(self.keep)),
+            _ => None,
+        };
+        let mut terms = vec![Term::Dice {
+            negative: false,
+            count: self.count,
+            sides: self.sides,
+            keep,
+        }];
+        if self.modifier != 0 {
+            terms.push(Term::Number(self.modifier));
+        }
+        Expression { terms }
+    }
+
+    /// Advantage or disadvantage, if the field asks for one.
+    pub fn mode(&self) -> Mode {
+        match self.special {
+            Special::Advantage => Mode::Advantage,
+            Special::Disadvantage => Mode::Disadvantage,
+            _ => Mode::Normal,
+        }
+    }
+
+    /// Says why the dice can't be rolled, if they can't: no dice, too many, or keeping
+    /// more than are rolled.
+    pub fn check(&self) -> Result<(), String> {
+        if self.modifier.unsigned_abs() > MAX_NUMBER {
+            return Err(format!("The modifier can be at most {MAX_NUMBER}."));
+        }
+        // Advantage rolls one more of each die.
+        let extra = u32::from(self.mode() != Mode::Normal);
+        let mut expression = self.expression();
+        if let Some(Term::Dice { count, .. }) = expression.terms.first_mut() {
+            *count = count.saturating_add(extra);
+        }
+        check(expression).map(|_| ())
+    }
+}
+
+/// Writes `2d6+3`, `4d6kh3-1` or `1d20+5 advantage`.
+impl fmt::Display for Dice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.expression())?;
+        match self.special {
+            Special::Advantage => write!(f, " advantage"),
+            Special::Disadvantage => write!(f, " disadvantage"),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Reads the longest expression at the start of `text`, and where it ends: an expression,
 /// or why the dice in it can't be rolled (too many, or a die with no sides). `None` when
 /// `text` doesn't start with one.
@@ -667,18 +837,36 @@ impl Roller {
             .clamp(1, MAX_COUNT)
     }
 
-    /// Rolls an expression from a note's field, named after the field.
+    /// Rolls an expression from a note's field, named after the field. A dice field that
+    /// asks for advantage or disadvantage, like `2d6 advantage`, has it on whatever die it
+    /// rolls, whatever the roller is set to.
     pub fn roll_field(&mut self, label: &str, expression: &str) {
-        if let Ok(expression) = Expression::parse(expression) {
-            self.roll(Some(label.to_string()), &expression);
+        let label = Some(label.to_string());
+        if let Some(dice) = Dice::parse(expression)
+            && dice.mode() != Mode::Normal
+        {
+            self.roll_with(label, &dice.expression(), dice.mode(), true);
+        } else if let Ok(expression) = Expression::parse(expression) {
+            self.roll(label, &expression);
         }
     }
 
     /// Rolls `expression`, with advantage or disadvantage if it has dice they change, and
     /// shows it as the latest roll.
     fn roll(&mut self, label: Option<String>, expression: &Expression) -> &Roll {
-        let (rolled, mode) = match expression.with_mode(self.mode, self.any_die) {
-            Some(changed) => (changed, self.mode),
+        self.roll_with(label, expression, self.mode, self.any_die)
+    }
+
+    /// Rolls `expression` with `mode`, which changes only single d20s unless `any_die`.
+    fn roll_with(
+        &mut self,
+        label: Option<String>,
+        expression: &Expression,
+        mode: Mode,
+        any_die: bool,
+    ) -> &Roll {
+        let (rolled, mode) = match expression.with_mode(mode, any_die) {
+            Some(changed) => (changed, mode),
             None => (expression.clone(), Mode::Normal),
         };
 
@@ -933,7 +1121,7 @@ fn tip<'a>(
 pub fn field_button<'a, M: Clone + 'a>(
     c: Colors,
     icon: &svg::Handle,
-    expression: &Expression,
+    expression: &impl fmt::Display,
     on_roll: impl Fn(String) -> M,
 ) -> Element<'a, M> {
     let expression = expression.to_string();
@@ -1175,5 +1363,79 @@ mod tests {
 
         roller.roll_field("Damage", "1d8+3");
         assert_eq!(roller.rolls[0].name(), "Damage: 1d8+3");
+    }
+
+    #[test]
+    fn reads_and_writes_dice_fields() {
+        let read = |text: &str| Dice::parse(text).map(|dice| dice.to_string());
+        assert_eq!(read("2d6+3").as_deref(), Some("2d6+3"));
+        assert_eq!(read(" 2D6 + 1 + 2 ").as_deref(), Some("2d6+3"));
+        assert_eq!(read("d20-1").as_deref(), Some("1d20-1"));
+        assert_eq!(read("4d6kh3").as_deref(), Some("4d6kh3"));
+        assert_eq!(read("2d20kl1+4").as_deref(), Some("2d20kl1+4"));
+        assert_eq!(read("+5").as_deref(), Some("1d20+5"));
+        assert_eq!(
+            read("1d20+5 advantage").as_deref(),
+            Some("1d20+5 advantage")
+        );
+        assert_eq!(read("1d20 Adv").as_deref(), Some("1d20 advantage"));
+        assert_eq!(
+            read("2d6 with disadvantage").as_deref(),
+            Some("2d6 disadvantage")
+        );
+        assert_eq!(read("1d20 dis").as_deref(), Some("1d20 disadvantage"));
+
+        let dice = Dice::parse("4d6kh3-1").unwrap();
+        assert_eq!((dice.count, dice.sides, dice.modifier), (4, 6, -1));
+        assert_eq!((dice.special, dice.keep), (Special::KeepHighest, 3));
+        let dice = Dice::parse("1d20 disadvantage").unwrap();
+        assert_eq!(
+            (dice.special, dice.mode()),
+            (Special::Disadvantage, Mode::Disadvantage)
+        );
+
+        // More than one kind of die, or two special rules, can't be split into parts.
+        for other in [
+            "1d8+1d6",
+            "-1d6",
+            "4d6kh3 advantage",
+            "2d6 fire",
+            "advantage",
+            "3",
+        ] {
+            assert_eq!(Dice::parse(other), None, "{other:?} should not be read");
+        }
+    }
+
+    #[test]
+    fn checks_dice_fields() {
+        let dice = |count, special, keep| Dice {
+            count,
+            sides: 6,
+            modifier: 0,
+            special,
+            keep,
+        };
+        assert!(dice(4, Special::KeepHighest, 3).check().is_ok());
+        assert!(dice(4, Special::KeepHighest, 5).check().is_err());
+        assert!(dice(0, Special::None, 0).check().is_err());
+        assert!(dice(100, Special::None, 0).check().is_ok());
+        // Advantage rolls one more.
+        assert!(dice(100, Special::Advantage, 0).check().is_err());
+    }
+
+    #[test]
+    fn dice_fields_roll_with_their_own_advantage() {
+        let mut roller = Roller::default();
+        roller.update(Message::Mode(Mode::Disadvantage));
+        roller.roll_field("Damage", "2d6+3 advantage");
+        let roll = &roller.rolls[0];
+        assert_eq!(roll.name(), "Damage: 2d6+3 with advantage");
+        assert_eq!(roll.dice().count(), 3);
+        assert_eq!(roll.dice().filter(|die| die.kept).count(), 2);
+
+        // A field without advantage uses the roller's setting, as other fields do.
+        roller.roll_field("Attack", "1d20+5");
+        assert_eq!(roller.rolls[0].name(), "Attack: 1d20+5 with disadvantage");
     }
 }

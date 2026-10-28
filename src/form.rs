@@ -16,7 +16,7 @@ use iced::{Center, Element, Fill, Point, Rectangle, Vector};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::context_menu;
-use crate::dice::{self, Expression};
+use crate::dice::{self, Dice, Expression, Special};
 use crate::links;
 use crate::note::{self, Note, Section};
 use crate::style;
@@ -35,6 +35,16 @@ pub fn field_id(index: usize) -> String {
 /// the box a new step is typed in.
 pub fn step_id(index: usize, step: usize) -> String {
     format!("form-field-{index}-step-{step}")
+}
+
+/// The widget id of part `part` of dice field `index`: 0 is the number of dice (the
+/// field's own id), 1 the modifier and 2 how many dice to keep.
+pub fn dice_id(index: usize, part: usize) -> String {
+    match part {
+        0 => field_id(index),
+        1 => format!("form-field-{index}-modifier"),
+        _ => format!("form-field-{index}-keep"),
+    }
 }
 
 /// The widget id of the form's scrollable, so Tab can scroll to the field it moves to.
@@ -73,6 +83,176 @@ pub enum Message {
     StepRemove(usize, usize),
     /// Opens the note a step links to, making it if there is none.
     FollowStep(usize, usize),
+    /// Changes one part of dice field `.0`.
+    Dice(usize, DicePart),
+}
+
+/// A part of a dice field, changed in the form.
+#[derive(Debug, Clone)]
+pub enum DicePart {
+    /// What is typed in the box for how many dice to roll.
+    Count(String),
+    Die(Sides),
+    /// What is typed in the modifier box, like `+2`.
+    Modifier(String),
+    Special(Special),
+    /// What is typed in the box for how many dice to keep.
+    Keep(String),
+    /// The text of a dice field that can't be split into parts.
+    Text(String),
+}
+
+/// A die in a dice field's list of dice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sides(pub u32);
+
+impl Sides {
+    /// The dice offered, from the systems people play most.
+    const COMMON: [u32; 9] = [2, 3, 4, 6, 8, 10, 12, 20, 100];
+}
+
+impl std::fmt::Display for Sides {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "d{}", self.0)
+    }
+}
+
+/// What a dice field holds, as the parts its inputs show.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct DiceInput {
+    count: String,
+    die: Option<u32>,
+    modifier: String,
+    special: Special,
+    keep: String,
+    /// The field's text, when it can't be split into parts (like `1d8+1d6`), so it is
+    /// edited as text and kept as written.
+    raw: Option<String>,
+}
+
+impl DiceInput {
+    fn parse(text: &str) -> Self {
+        let text = text.trim();
+        if text.is_empty() {
+            return Self::default();
+        }
+        let Some(dice) = Dice::parse(text) else {
+            return DiceInput {
+                raw: Some(text.to_string()),
+                ..Self::default()
+            };
+        };
+        DiceInput {
+            count: dice.count.to_string(),
+            die: Some(dice.sides),
+            modifier: match dice.modifier {
+                0 => String::new(),
+                modifier if modifier > 0 => format!("+{modifier}"),
+                modifier => modifier.to_string(),
+            },
+            special: dice.special,
+            keep: if dice.special.keeps() {
+                dice.keep.to_string()
+            } else {
+                String::new()
+            },
+            raw: None,
+        }
+    }
+
+    /// The dice the parts make, `None` when nothing is filled in, or why they can't be rolled.
+    fn dice(&self) -> Result<Option<Dice>, String> {
+        let number = |text: &str| text.trim_start_matches('+').parse::<i64>().ok();
+        let modifier = match self.modifier.as_str() {
+            "" | "+" | "-" => 0,
+            text => number(text).ok_or("The modifier must be a number, like +2")?,
+        };
+        let Some(sides) = self.die else {
+            if self.count.is_empty() && modifier == 0 && self.special == Special::None {
+                return Ok(None);
+            }
+            return Err("Pick a die".into());
+        };
+        let count = self.count.parse().unwrap_or(1);
+        let dice = Dice {
+            count,
+            sides,
+            modifier,
+            special: self.special,
+            keep: if self.special.keeps() {
+                self.keep.parse().unwrap_or(1)
+            } else {
+                0
+            },
+        };
+        dice.check()?;
+        Ok(Some(dice))
+    }
+
+    /// The field's text, like `2d6+3`, or why it can't be saved.
+    fn text(&self) -> Result<String, String> {
+        if let Some(raw) = &self.raw {
+            return Ok(raw.trim().to_string());
+        }
+        Ok(self
+            .dice()?
+            .map(|dice| dice.to_string())
+            .unwrap_or_default())
+    }
+
+    fn update(&mut self, part: DicePart) {
+        // Only digits fit in the boxes for numbers of dice; anything else typed is dropped.
+        let digits = |text: String| -> String {
+            text.chars().filter(char::is_ascii_digit).take(3).collect()
+        };
+        match part {
+            DicePart::Count(count) => self.count = digits(count),
+            DicePart::Die(sides) => self.die = Some(sides.0),
+            DicePart::Modifier(modifier) => {
+                let sign = modifier
+                    .trim_start()
+                    .chars()
+                    .next()
+                    .filter(|c| matches!(c, '+' | '-'));
+                let digits: String = modifier
+                    .chars()
+                    .filter(char::is_ascii_digit)
+                    .take(6)
+                    .collect();
+                self.modifier = sign.map(String::from).unwrap_or_default() + &digits;
+            }
+            DicePart::Special(special) => {
+                // Keeping starts at one die fewer than are rolled, like 4d6 keep 3.
+                if special.keeps() && self.keep.is_empty() {
+                    let count = self.count.parse::<u32>().unwrap_or(1);
+                    self.keep = count.saturating_sub(1).max(1).to_string();
+                }
+                self.special = special;
+            }
+            DicePart::Keep(keep) => self.keep = digits(keep),
+            DicePart::Text(text) => {
+                // Emptied, the field can be filled in part by part.
+                *self = if text.trim().is_empty() {
+                    Self::default()
+                } else {
+                    DiceInput {
+                        raw: Some(text),
+                        ..Self::default()
+                    }
+                };
+            }
+        }
+    }
+
+    /// The dice offered: the common ones, and the field's own if it is another.
+    fn dice_list(&self) -> Vec<Sides> {
+        let mut list: Vec<u32> = Sides::COMMON.to_vec();
+        if let Some(die) = self.die.filter(|die| !list.contains(die)) {
+            list.push(die);
+            list.sort();
+        }
+        list.into_iter().map(Sides).collect()
+    }
 }
 
 impl Message {
@@ -232,6 +412,8 @@ pub enum FieldValue<'a> {
     Text(&'a str),
     Check(bool),
     Choice(Option<&'a str>),
+    /// A dice field, edited with [`Form::dice_view`].
+    Dice,
 }
 
 /// What the user typed into one field.
@@ -241,6 +423,7 @@ enum Input {
     Check(bool),
     Choice(Option<String>),
     Steps(Steps),
+    Dice(DiceInput),
 }
 
 impl Input {
@@ -250,6 +433,7 @@ impl Input {
             Kind::Steps => Input::Steps(Steps::default()),
             Kind::Checkbox => Input::Check(false),
             Kind::Choice => Input::Choice(None),
+            Kind::Dice => Input::Dice(DiceInput::default()),
             Kind::Text | Kind::Number | Kind::Tags | Kind::Link => Input::Text(String::new()),
         }
     }
@@ -351,6 +535,7 @@ impl Form {
                     }),
                     Kind::Choice => Input::Choice((!text.is_empty()).then_some(text)),
                     Kind::Link => Input::Text(note::unlink(&text).to_string()),
+                    Kind::Dice => Input::Dice(DiceInput::parse(&text)),
                     Kind::Text | Kind::Number | Kind::Tags => Input::Text(text),
                 }
             })
@@ -475,6 +660,21 @@ impl Form {
                 // The focus goes to the step that took its place.
                 self.focus = Some(index);
                 self.step = step;
+            }
+            Message::Dice(index, part) => {
+                let Some(Input::Dice(dice)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                self.focus = Some(index);
+                self.step = match part {
+                    DicePart::Modifier(_) => 1,
+                    DicePart::Keep(_) => 2,
+                    DicePart::Count(_) | DicePart::Text(_) => 0,
+                    DicePart::Die(_) | DicePart::Special(_) => self.step,
+                };
+                let before = dice.clone();
+                dice.update(part);
+                return *dice != before;
             }
             Message::Check(index, value) => {
                 if let Some(Input::Check(checked)) = self.inputs.get_mut(index) {
@@ -644,6 +844,7 @@ impl Form {
         let index = self.focus?;
         Some(match self.inputs[index] {
             Input::Steps(_) => step_id(index, self.step),
+            Input::Dice(_) => dice_id(index, self.step),
             _ => field_id(index),
         })
     }
@@ -658,6 +859,14 @@ impl Form {
                 Input::Steps(steps) => stops.extend(
                     (0..=steps.steps.len()).map(|step| (index, step, step_id(index, step))),
                 ),
+                Input::Dice(dice) => {
+                    let parts = match (&dice.raw, dice.special.keeps()) {
+                        (Some(_), _) => 1,
+                        (None, false) => 2,
+                        (None, true) => 3,
+                    };
+                    stops.extend((0..parts).map(|part| (index, part, dice_id(index, part))));
+                }
                 Input::Check(_) | Input::Choice(_) => {}
             }
         }
@@ -783,6 +992,7 @@ impl Form {
             Input::Text(text) => FieldValue::Text(text),
             Input::Check(checked) => FieldValue::Check(*checked),
             Input::Choice(choice) => FieldValue::Choice(choice.as_deref()),
+            Input::Dice(_) => FieldValue::Dice,
             Input::Long(_) | Input::Steps(_) => return None,
         };
         Some((index, &self.fields[index], value))
@@ -821,6 +1031,16 @@ impl Form {
                     .then_some(Value::Bool(*checked))
             }
             Input::Choice(choice) => choice.clone().map(Value::String),
+            Input::Dice(dice) => {
+                let text = dice
+                    .text()
+                    .map_err(|error| format!("{}: {error}", field.label()))?;
+                if text.is_empty() {
+                    keep_empty.then_some(Value::Null)
+                } else {
+                    Some(Value::String(text))
+                }
+            }
             Input::Text(text) => {
                 let text = text.trim();
                 if text.is_empty() {
@@ -1044,6 +1264,12 @@ impl Form {
                             let header = label(index, String::new());
                             column![header, check].spacing(6).into()
                         }
+                        Input::Dice(_) => column![
+                            label(index, field.label()),
+                            self.dice_view(c, map, index, Some(roll_icon)),
+                        ]
+                        .spacing(6)
+                        .into(),
                         Input::Steps(steps) => column![
                             label(index, field.label()),
                             self.steps_view(c, map, index, steps, &accept),
@@ -1135,6 +1361,98 @@ impl Form {
             .id(SCROLL)
             .height(Fill)
             .into()
+    }
+
+    /// The inputs of dice field `index`: how many dice, which die, the modifier, and a
+    /// special rule (with how many dice to keep), then a button to roll them if
+    /// `roll_icon` is given. Shows why the dice can't be rolled, if they can't.
+    pub fn dice_view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        map: fn(Message) -> M,
+        index: usize,
+        roll_icon: Option<&'a svg::Handle>,
+    ) -> Element<'a, M> {
+        let Some(Input::Dice(dice)) = self.inputs.get(index) else {
+            return space().into();
+        };
+        let part =
+            move |part: fn(String) -> DicePart| move |value| map(Message::Dice(index, part(value)));
+        let number = |id: String, placeholder: &'a str, value: &'a str| {
+            text_input(placeholder, value)
+                .id(id)
+                .size(14)
+                .padding(8)
+                .width(52)
+                .style(style::input(c))
+        };
+        let roll = |expression: &dyn std::fmt::Display| {
+            roll_icon.map(|icon| {
+                dice::field_button(c, icon, &expression.to_string(), move |dice| {
+                    map(Message::Roll(index, dice))
+                })
+            })
+        };
+
+        if let Some(raw) = &dice.raw {
+            let input = text_input("Dice, like 2d6+3", raw)
+                .id(field_id(index))
+                .on_input(part(DicePart::Text))
+                .size(14)
+                .padding(8)
+                .style(style::input(c));
+            let rolls = row(Expression::find(raw)
+                .into_iter()
+                .filter_map(|expression| roll(&expression)))
+            .spacing(6);
+            return column![
+                row![input, rolls].spacing(6).align_y(Center),
+                text("These dice can't be split into parts, so they're kept as written. Empty the box to pick the dice instead.")
+                    .size(12)
+                    .color(c.text_muted),
+            ]
+            .spacing(4)
+            .into();
+        }
+
+        // The inputs keep their places in the row, so the keep box and roll button
+        // showing up don't make iced build new inputs, which would lose the focus.
+        let mut parts = row![
+            number(dice_id(index, 0), "1", &dice.count).on_input(part(DicePart::Count)),
+            pick_list(dice.dice_list(), dice.die.map(Sides), move |sides| {
+                map(Message::Dice(index, DicePart::Die(sides)))
+            })
+            .placeholder("Die")
+            .text_size(14)
+            .padding(8)
+            .style(style::choice(c))
+            .menu_style(style::choice_menu(c)),
+            number(dice_id(index, 1), "+0", &dice.modifier).on_input(part(DicePart::Modifier)),
+            pick_list(Special::ALL, Some(dice.special), move |special| {
+                map(Message::Dice(index, DicePart::Special(special)))
+            })
+            .text_size(14)
+            .padding(8)
+            .style(style::choice(c))
+            .menu_style(style::choice_menu(c)),
+        ]
+        .spacing(6)
+        .align_y(Center);
+        if dice.special.keeps() {
+            parts = parts
+                .push(number(dice_id(index, 2), "1", &dice.keep).on_input(part(DicePart::Keep)));
+        }
+
+        match dice.dice() {
+            Ok(Some(dice)) => parts.push(roll(&dice)).wrap().vertical_spacing(6).into(),
+            Ok(None) => parts.wrap().vertical_spacing(6).into(),
+            Err(error) => column![
+                parts.wrap().vertical_spacing(6),
+                text(error).size(12).color(c.danger),
+            ]
+            .spacing(4)
+            .into(),
+        }
     }
 
     /// The steps of steps field `index`, each with a box to tick it, then a box to type a
@@ -1489,6 +1807,120 @@ mod tests {
             again.to_markdown().unwrap(),
             "---\ntype: item\nremoved_fields:\n- stats\n---\n"
         );
+    }
+
+    /// An Item type with a Damage dice field and an Attack one.
+    fn weapon_type() -> ContentType {
+        let mut ty = item_type();
+        for key in ["damage", "attack"] {
+            ty.fields.push(Field {
+                label: None,
+                ..Field::for_note(key, Kind::Dice)
+            });
+        }
+        ty
+    }
+
+    fn written(form: &Form, key: &str) -> Option<Value> {
+        let written = note::parse(&form.to_markdown().unwrap()).unwrap();
+        written.front.get(key).cloned()
+    }
+
+    #[test]
+    fn picks_dice_part_by_part() {
+        let mut form = Form::blank(weapon_type());
+        let damage = form.fields.iter().position(|f| f.key == "damage").unwrap();
+        let attack = damage + 1;
+        assert_eq!(written(&form, "damage"), None);
+
+        let part = |form: &mut Form, part| form.update(Message::Dice(damage, part));
+        part(&mut form, DicePart::Count("2".into()));
+        // Dice need a die before they can be saved.
+        assert!(form.to_markdown().unwrap_err().contains("Pick a die"));
+        part(&mut form, DicePart::Die(Sides(6)));
+        part(&mut form, DicePart::Modifier("+x3".into()));
+        assert_eq!(written(&form, "damage"), Some(Value::from("2d6+3")));
+
+        part(&mut form, DicePart::Modifier("-1".into()));
+        part(&mut form, DicePart::Special(Special::Advantage));
+        assert_eq!(
+            written(&form, "damage"),
+            Some(Value::from("2d6-1 advantage"))
+        );
+
+        // Keeping starts one die short of the dice rolled.
+        part(&mut form, DicePart::Count("4".into()));
+        part(&mut form, DicePart::Modifier(String::new()));
+        part(&mut form, DicePart::Special(Special::KeepHighest));
+        assert_eq!(written(&form, "damage"), Some(Value::from("4d6kh3")));
+        part(&mut form, DicePart::Keep("5".into()));
+        assert!(
+            form.to_markdown()
+                .unwrap_err()
+                .contains("Can't keep 5 of 4")
+        );
+        part(&mut form, DicePart::Keep("3".into()));
+
+        // A modifier on its own is a d20 roll, read back into its parts.
+        form.update(Message::Dice(attack, DicePart::Die(Sides(20))));
+        form.update(Message::Dice(attack, DicePart::Modifier("+5".into())));
+        assert_eq!(written(&form, "attack"), Some(Value::from("1d20+5")));
+    }
+
+    #[test]
+    fn reads_dice_fields_and_keeps_others_as_written() {
+        let text = "---
+type: item
+damage: 1d20 + 2 adv
+attack: 1d8+1d6
+---
+";
+        let mut form = Form::from_note(weapon_type(), note::parse(text).unwrap());
+        let damage = form.fields.iter().position(|f| f.key == "damage").unwrap();
+        let Input::Dice(dice) = &form.inputs[damage] else {
+            panic!("damage should be dice");
+        };
+        assert_eq!(
+            (
+                dice.count.as_str(),
+                dice.die,
+                dice.modifier.as_str(),
+                dice.special
+            ),
+            ("1", Some(20), "+2", Special::Advantage)
+        );
+        let Input::Dice(attack) = &form.inputs[damage + 1] else {
+            panic!("attack should be dice");
+        };
+        assert_eq!(attack.raw.as_deref(), Some("1d8+1d6"));
+        assert_eq!(
+            written(&form, "damage"),
+            Some(Value::from("1d20+2 advantage"))
+        );
+        assert_eq!(written(&form, "attack"), Some(Value::from("1d8+1d6")));
+
+        // Emptied, it can be picked part by part.
+        form.update(Message::Dice(damage + 1, DicePart::Text(String::new())));
+        form.update(Message::Dice(damage + 1, DicePart::Die(Sides(8))));
+        assert_eq!(written(&form, "attack"), Some(Value::from("1d8")));
+    }
+
+    #[test]
+    fn tab_goes_through_the_dice_parts() {
+        let mut form = Form::blank(weapon_type());
+        let damage = form.fields.iter().position(|f| f.key == "damage").unwrap();
+        let ids = form.tab_ids();
+        let at = ids.iter().position(|id| *id == field_id(damage)).unwrap();
+        assert_eq!(ids[at + 1], dice_id(damage, 1));
+        assert_eq!(ids[at + 2], field_id(damage + 1));
+
+        form.update(Message::Dice(
+            damage,
+            DicePart::Special(Special::KeepLowest),
+        ));
+        assert_eq!(form.tab_ids()[at + 2], dice_id(damage, 2));
+        form.update(Message::Dice(damage, DicePart::Keep("1".into())));
+        assert_eq!(form.focused_id(), Some(dice_id(damage, 2)));
     }
 
     fn quest_type() -> ContentType {

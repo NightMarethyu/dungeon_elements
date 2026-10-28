@@ -133,14 +133,18 @@ pub enum Kind {
     /// An ordered checklist, stored as a `## Label` section of `- [ ]` task items. A step
     /// can be a `[[link]]` to another note, so a quest can be made of smaller quests.
     Steps,
+    /// Dice to roll, like `2d6+3` or `1d20+5 advantage`: picked as a number of dice, a die,
+    /// a modifier and a special rule, and stored as that text.
+    Dice,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 8] = [
+    pub const ALL: [Kind; 9] = [
         Kind::Text,
         Kind::Longtext,
         Kind::Steps,
         Kind::Number,
+        Kind::Dice,
         Kind::Choice,
         Kind::Tags,
         Kind::Link,
@@ -150,11 +154,12 @@ impl Kind {
     /// The kinds a field added to a single note can have.
     ///
     /// A choice needs its options listed in the type, so it isn't one of them.
-    pub const FOR_NOTE: [Kind; 7] = [
+    pub const FOR_NOTE: [Kind; 8] = [
         Kind::Text,
         Kind::Longtext,
         Kind::Steps,
         Kind::Number,
+        Kind::Dice,
         Kind::Tags,
         Kind::Link,
         Kind::Checkbox,
@@ -182,6 +187,7 @@ impl std::fmt::Display for Kind {
             Kind::Checkbox => "Checkbox",
             Kind::Longtext => "Long text",
             Kind::Steps => "Steps",
+            Kind::Dice => "Dice",
         })
     }
 }
