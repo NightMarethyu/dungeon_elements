@@ -522,6 +522,10 @@ enum Message {
     MouseReleased,
     /// Finishes the link being typed with this link text.
     CompleteLink(String),
+    /// Tab (or Shift+Tab, true) in the form: moves to the next (or the one before) field.
+    TabField(bool),
+    /// Tab moved the focus to this input of the form's [`form::Form::tab_ids`].
+    FieldTabbed(usize),
     /// Opens the note a link points to, creating it if there is none.
     FollowLink(String),
     InsertLink,
@@ -743,7 +747,8 @@ impl App {
             Screen::Workspace(_) => keyboard::listen().filter_map(|event| match event {
                 keyboard::Event::KeyPressed { key, modifiers, .. } => escape(&key)
                     .or_else(|| help_key(&key, modifiers))
-                    .or_else(|| shortcut(&key, modifiers)),
+                    .or_else(|| shortcut(&key, modifiers))
+                    .or_else(|| tab_key(&key, modifiers)),
                 keyboard::Event::ModifiersChanged(modifiers) => Some(Message::Modifiers(modifiers)),
                 _ => None,
             }),
@@ -833,6 +838,8 @@ impl App {
             }
             // Escape closes an open menu, and only that.
             Message::Escape if closed => return Task::none(),
+            // Tab moves between the form's fields, not under the Help or About window.
+            Message::TabField(_) if self.help.is_some() || self.about => return Task::none(),
             Message::Escape if self.help.is_some() => {
                 self.help = None;
                 return Task::none();
@@ -3150,6 +3157,48 @@ impl Workspace {
                 Task::none()
             }
             Message::Form(form::Message::FollowLink(index)) => self.follow_link_field(index),
+            Message::Form(form::Message::FollowStep(index, step)) => {
+                let Some((field, target)) = self
+                    .active_tab()
+                    .and_then(|tab| tab.form.as_ref())
+                    .and_then(|form| form.step_link(index, step))
+                else {
+                    return Task::none();
+                };
+                let folder = self.link_folder(field);
+                self.follow_link_into(&target, folder)
+            }
+            Message::TabField(back) => {
+                if self.dialog.is_some() || self.context.is_some() {
+                    return Task::none();
+                }
+                // In a link field or step, Tab finishes the link being typed, as in text.
+                if let Some((link, _)) = self.link_suggestions().notes.first()
+                    && self
+                        .active_tab()
+                        .and_then(|tab| tab.form.as_ref())
+                        .and_then(form::Form::focused_linking_field)
+                        .is_some()
+                {
+                    let link = link.clone();
+                    return self.update(Message::CompleteLink(link));
+                }
+                let Some(form) = self
+                    .active_tab()
+                    .filter(|tab| tab.shows_form() && tab.edit.is_none() && !tab.reading())
+                    .and_then(|tab| tab.form.as_ref())
+                else {
+                    return Task::none();
+                };
+                iced::advanced::widget::operate(form::tab(form.tab_ids(), back))
+                    .map(Message::FieldTabbed)
+            }
+            Message::FieldTabbed(position) => {
+                if let Some(form) = self.active_tab_mut().and_then(|tab| tab.form.as_mut()) {
+                    form.tabbed_to(position);
+                }
+                Task::none()
+            }
             Message::Form(form::Message::Roll(index, expression)) => {
                 let label = self
                     .active_tab()
@@ -3173,6 +3222,7 @@ impl Workspace {
                     message,
                     form::Message::Long(_, text_editor::Action::Click(_))
                 );
+                let moves_focus = message.moves_focus();
                 let ctrl = self.ctrl;
                 if let Some(tab) = self.active_tab_mut()
                     && let Some(form) = &mut tab.form
@@ -3183,6 +3233,11 @@ impl Workspace {
                         && let Some(target) = form.link_under_cursor()
                     {
                         return self.follow_link(&target);
+                    }
+                    if moves_focus && let Some(id) = form.focused_id() {
+                        // Focus the step, scrolling to it if it moved out of sight.
+                        return iced::advanced::widget::operate(form::tab(vec![id], false))
+                            .discard();
                     }
                 }
                 Task::none()
@@ -3247,10 +3302,10 @@ impl Workspace {
                     let Some(form) = &mut tab.form else {
                         return Task::none();
                     };
-                    let focus = form.focus();
+                    let focus = form.focused_id();
                     tab.modified |= form.complete_link(&link);
                     match focus {
-                        Some(index) => iced::widget::operation::focus(form::field_id(index)),
+                        Some(id) => iced::widget::operation::focus(id),
                         None => Task::none(),
                     }
                 } else {
@@ -4474,12 +4529,14 @@ impl Workspace {
             return none;
         };
 
-        // A link field lists the notes of the folder it links to first.
+        // A link or steps field lists the notes of the folder it links to first.
         let field = form.and_then(|form| {
             let index = form.focused_link_field()?;
             Some((index, form.link_field(index)?.0))
         });
-        let folder = field.and_then(|(_, field)| self.link_folder(field));
+        let folder = form
+            .and_then(form::Form::focused_linking_field)
+            .and_then(|field| self.link_folder(field));
 
         let notes = self
             .index
@@ -5736,6 +5793,12 @@ fn help_key(key: &Key, modifiers: Modifiers) -> Option<Message> {
 }
 
 /// Maps the workspace keyboard shortcuts to their messages.
+/// Tab or Shift+Tab, which move between the fields of the form.
+fn tab_key(key: &Key, modifiers: Modifiers) -> Option<Message> {
+    let tab = matches!(key, Key::Named(keyboard::key::Named::Tab));
+    (tab && !modifiers.command() && !modifiers.alt()).then(|| Message::TabField(modifiers.shift()))
+}
+
 fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     if !modifiers.command() {
         return None;

@@ -216,7 +216,7 @@ pub fn note(
             let label = field.label();
             let value = note.front.get(field.key.as_str());
 
-            if field.kind == Kind::Longtext {
+            if field.kind.is_section() {
                 if value.is_some() {
                     problems.push((
                         format!(
@@ -239,6 +239,20 @@ pub fn note(
                     problems.push((
                         format!(
                             "It has {sections} `## {label}` sections; the form shows the first as {label} and the others as separate fields"
+                        ),
+                        Issue::Other,
+                    ));
+                }
+                if field.kind == Kind::Steps
+                    && let Some(section) = note.sections.iter().find(|section| {
+                        section.heading.eq_ignore_ascii_case(&label)
+                            || section.heading.eq_ignore_ascii_case(&field.key)
+                    })
+                    && !form::is_step_list(&section.body)
+                {
+                    problems.push((
+                        format!(
+                            "{label} has text that isn't a list of steps; the form shows each line as a step, and saving makes them `- [ ]` items"
                         ),
                         Issue::Other,
                     ));

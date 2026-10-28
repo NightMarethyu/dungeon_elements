@@ -90,7 +90,7 @@ pub struct Field {
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "Width::is_half")]
     pub width: Width,
-    /// For `link` fields: the folder (inside the campaign, like `locations`) whose notes
+    /// For `link` and `steps` fields: the folder (inside the campaign, like `locations`) whose notes
     /// are suggested first, and where a note the link names is made if there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
@@ -130,12 +130,16 @@ pub enum Kind {
     Checkbox,
     /// Markdown text, stored as a `## Label` section in the note's body.
     Longtext,
+    /// An ordered checklist, stored as a `## Label` section of `- [ ]` task items. A step
+    /// can be a `[[link]]` to another note, so a quest can be made of smaller quests.
+    Steps,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 7] = [
+    pub const ALL: [Kind; 8] = [
         Kind::Text,
         Kind::Longtext,
+        Kind::Steps,
         Kind::Number,
         Kind::Choice,
         Kind::Tags,
@@ -146,14 +150,25 @@ impl Kind {
     /// The kinds a field added to a single note can have.
     ///
     /// A choice needs its options listed in the type, so it isn't one of them.
-    pub const FOR_NOTE: [Kind; 6] = [
+    pub const FOR_NOTE: [Kind; 7] = [
         Kind::Text,
         Kind::Longtext,
+        Kind::Steps,
         Kind::Number,
         Kind::Tags,
         Kind::Link,
         Kind::Checkbox,
     ];
+
+    /// Whether fields of this kind are `## Label` sections of the body, not front matter.
+    pub fn is_section(self) -> bool {
+        matches!(self, Kind::Longtext | Kind::Steps)
+    }
+
+    /// Whether fields of this kind can link to notes, and so have a folder they link to.
+    pub fn links(self) -> bool {
+        matches!(self, Kind::Link | Kind::Steps)
+    }
 }
 
 impl std::fmt::Display for Kind {
@@ -166,6 +181,7 @@ impl std::fmt::Display for Kind {
             Kind::Link => "Link to a note",
             Kind::Checkbox => "Checkbox",
             Kind::Longtext => "Long text",
+            Kind::Steps => "Steps",
         })
     }
 }

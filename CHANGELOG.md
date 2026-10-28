@@ -4,6 +4,16 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Steps
+
+- A new kind of field, **Steps**: a checklist where each step is text, a `[[link]]` to another note, or both. A quest's Objectives are steps, so a step can be another quest, building quest lines out of smaller quests.
+- Type a step and press Enter to add it, tick it when it's done, move it up or down, or remove it. Typing `[[` in a step suggests quests first, and a step's **Open** button opens the note it links to, making a new quest if there isn't one yet.
+- Steps are saved as a Markdown task list under their heading, so they show as a checklist in Obsidian and can be ticked in the reading view.
+
+### Forms
+
+- **Tab** and **Shift+Tab** move between the fields of a form, scrolling to the field. In a link field, Tab inserts the suggested note.
+
 ### Subfolders
 
 - Subfolders work like child classes: a subfolder of a folder with fields can be **a kind of** its type. Weapons in Items has every Item field (Value, Rarity...) and fields of its own (Damage); Enemies in NPCs starts out like any NPC and adds a Challenge Rating. Changes to the parent's fields show up in its subfolders, and subfolders can have subfolders of their own.

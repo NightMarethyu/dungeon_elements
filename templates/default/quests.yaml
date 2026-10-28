@@ -18,4 +18,6 @@ fields:
     kind: longtext
   - key: objectives
     label: Objectives
-    kind: longtext
+    kind: steps
+    width: full
+    folder: quests
