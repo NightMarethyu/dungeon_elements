@@ -8,6 +8,7 @@ mod campaign;
 mod check;
 mod code;
 mod context_menu;
+mod date;
 mod dice;
 mod fix;
 mod form;
@@ -21,6 +22,7 @@ mod note;
 mod preview;
 mod settings;
 mod style;
+mod tags;
 mod theme;
 mod types;
 mod types_editor;
@@ -190,6 +192,11 @@ struct Workspace {
     context: Option<(Target, Point)>,
     /// How a File > Save All is going, until every note in it is saved or not.
     save_all: Option<SaveAll>,
+    /// The tags that have notes, offered in tags fields.
+    tags: form::KnownTags,
+    /// The tags fields of notes being saved in the background, and what the notes said
+    /// before, by tab, to bring their tags' notes up to date once they are saved.
+    tag_saves: HashMap<u64, (Vec<(String, String)>, String)>,
 }
 
 /// A fix for one of the active note's problems, from the dialog [`Message::FixProblems`] opens.
@@ -286,6 +293,18 @@ enum Dialog {
         folder: Option<FolderChoice>,
         error: Option<String>,
     },
+    /// Offers to bring the tag notes up to date with tags changed in another app.
+    Tags(Vec<TagChange>),
+}
+
+/// How a note's tags differ from its tag notes, after its tags were changed in another app.
+#[derive(Debug, Clone)]
+struct TagChange {
+    note: PathBuf,
+    /// The tags (with their tag folders) whose notes don't list it yet.
+    add: Vec<(String, String)>,
+    /// The tag notes that list it, though it no longer has the tag.
+    remove: Vec<(String, String)>,
 }
 
 /// What the link bar offers while a link is being typed.
@@ -547,6 +566,9 @@ enum Message {
     NewFolderTemplate(Template),
     CreateFolder,
     CloseDialog,
+    /// Brings the tag notes up to date with the tags changed in another app, as the
+    /// dialog offering it lists them.
+    UpdateTagNotes,
     ShowTypes,
     Types(types_editor::Message),
     ShowProblems,
@@ -1247,6 +1269,7 @@ impl Workspace {
         let backlinks = backlinks::Backlinks::new(scan.mentions, &index);
         let problems = check::campaign(&root, &tree, &types, &index, &check::Gone::new());
         let (fingerprints, titles) = (scan.hashes, scan.titles);
+        let tags = known_tags(&root, &types);
         let status = match problems_summary(&problems) {
             Some(summary) => format!("Opened {}. {summary}", root.display()),
             None => format!("Opened {}", root.display()),
@@ -1277,6 +1300,8 @@ impl Workspace {
             web: web::Pictures::new(),
             context: None,
             save_all: None,
+            tags,
+            tag_saves: HashMap::new(),
         }
     }
 
@@ -1299,6 +1324,126 @@ impl Workspace {
         self.tabs.iter().find(|tab| Some(tab.id) == self.active)
     }
 
+    /// Brings the tag notes up to date with the note at `path`, just saved as `after`
+    /// (and `before` before; empty for a new note), reading its tags from the front matter
+    /// keys of `fields`: the note of each tag it has lists a link to it (and is made if
+    /// there is none), and the notes of tags taken off it don't.
+    fn sync_tags(&mut self, path: &Path, fields: &[(String, String)], before: &str, after: &str) {
+        let now = tags::in_note(after, fields);
+        let gone: Vec<(String, String)> = tags::in_note(before, fields)
+            .into_iter()
+            .filter(|tag| !now.contains(tag))
+            .collect();
+        self.update_tag_notes(path, &now, &gone);
+    }
+
+    /// Adds a link to the note at `path` to the notes of the tags in `add` (making the
+    /// ones there aren't yet), and takes it out of the notes of the tags in `remove`.
+    fn update_tag_notes(
+        &mut self,
+        path: &Path,
+        add: &[(String, String)],
+        remove: &[(String, String)],
+    ) {
+        let (now, gone) = (add, remove);
+        if now.is_empty() && gone.is_empty() {
+            return;
+        }
+        let Some(name) = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+
+        let mut changed = Vec::new();
+        let mut problems = Vec::new();
+        for ((folder, tag), add) in now
+            .iter()
+            .map(|tag| (tag, true))
+            .chain(gone.iter().map(|tag| (tag, false)))
+        {
+            let file = tags::path(&self.root, folder, tag);
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            // A link in the tag's note is to this note if it finds it, or names it (as
+            // a link in a note not made yet would).
+            let links_to = |target: &str| {
+                self.index.resolve(target, &file) == Some(path)
+                    || links::normalize(target) == links::normalize(&name)
+            };
+            let new = if add {
+                tags::add(&text, &name, &links_to)
+            } else {
+                tags::remove(&text, &links_to)
+            };
+            let Some(new) = new else {
+                continue;
+            };
+            let written = file
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&file, new));
+            match written {
+                Ok(()) => changed.push(file),
+                Err(_) => problems.push(self.relative(&file)),
+            }
+        }
+
+        // Open tag notes show the change, unless they have changes of their own.
+        for file in &changed {
+            if let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| tab.path.as_ref() == Some(file))
+            {
+                if self.tabs[index].modified {
+                    self.tabs[index].changed_outside = true;
+                } else {
+                    let _ = self.reload_tab(index);
+                }
+            }
+        }
+        if !changed.is_empty() {
+            self.rescan();
+        }
+        if !problems.is_empty() {
+            self.status.push_str(&format!(
+                ". Could not update the tag notes {}",
+                problems.join(", ")
+            ));
+        }
+    }
+
+    /// The notes of typed folders in `paths` whose tags differ from their tag notes, as
+    /// they would after their tags were changed in another app, like Obsidian.
+    fn tag_changes(&self, paths: &[PathBuf]) -> Vec<TagChange> {
+        let mut changes = Vec::new();
+        for path in paths {
+            let Some(Ok(ty)) = path.parent().and_then(|folder| self.types.get(folder)) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let Some(name) = path.file_stem().map(|stem| stem.to_string_lossy()) else {
+                continue;
+            };
+            let links_to = |target: &str, file: &Path| {
+                self.index.resolve(target, file) == Some(path.as_path())
+                    || links::normalize(target) == links::normalize(&name)
+            };
+            let (add, remove) = tags::differences(&self.root, &text, &ty.tag_fields(), &links_to);
+            if !add.is_empty() || !remove.is_empty() {
+                changes.push(TagChange {
+                    note: path.clone(),
+                    add,
+                    remove,
+                });
+            }
+        }
+        changes
+    }
+
     fn active_tab_mut(&mut self) -> Option<&mut Tab> {
         self.tabs.iter_mut().find(|tab| Some(tab.id) == self.active)
     }
@@ -1307,6 +1452,7 @@ impl Workspace {
     fn rescan(&mut self) {
         self.tree = campaign::scan(&self.root);
         (self.own_types, self.types) = load_types(&self.root, &self.tree);
+        self.tags = known_tags(&self.root, &self.types);
         let scan = scan_notes(&self.tree);
         self.index =
             links::Index::new(&self.root, markdown_files(&self.tree)).with_aliases(&scan.aliases);
@@ -1498,6 +1644,18 @@ impl Workspace {
             self.rescan();
         } else if new_gone {
             self.rescan();
+        }
+
+        // Tags changed in another app, like Obsidian, can update the tag notes too.
+        let changed: Vec<PathBuf> = self
+            .fingerprints
+            .iter()
+            .filter(|(path, hash)| before.get(*path) != Some(*hash))
+            .map(|(path, _)| path.clone())
+            .collect();
+        let tag_changes = self.tag_changes(&changed);
+        if !tag_changes.is_empty() && self.dialog.is_none() {
+            self.dialog = Some(Dialog::Tags(tag_changes));
         }
 
         self.status.clear();
@@ -1980,11 +2138,17 @@ impl Workspace {
                 Some(name) => with_alias(&text, &name, old_name.as_deref()),
                 None => text.clone(),
             };
+            let tag_fields = form.tag_fields();
+            let before = old
+                .as_deref()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .unwrap_or_default();
             let result = save_named(tab, &written, &form.ty.label());
             let renamed = match (old, &result) {
                 (Some(old), Ok(new)) if old != *new => Some((old, new.clone())),
                 _ => None,
             };
+            let saved = result.as_ref().ok().cloned();
             let task = self.update(Message::Saved(id, result.map(Some)));
             // The alias it was given shows in the form.
             if written != text
@@ -2000,10 +2164,22 @@ impl Workspace {
                 );
                 self.relink(&[(old, new)], &done);
             }
+            // After the links to its old name are renamed, so its tags' notes don't
+            // list it twice.
+            if let Some(path) = saved {
+                self.sync_tags(&path, &tag_fields, &before, &written);
+            }
             return task;
         }
 
         let path = if save_as { None } else { tab.path.clone() };
+        if let Some(form) = &tab.form {
+            let before = path
+                .as_deref()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .unwrap_or_default();
+            self.tag_saves.insert(id, (form.tag_fields(), before));
+        }
         let folder = tab
             .path
             .as_ref()
@@ -2387,6 +2563,45 @@ impl Workspace {
                     "Move",
                     Message::Move,
                 ),
+                Dialog::Tags(changes) => {
+                    let tag_list = |tags: &[(String, String)]| {
+                        tags.iter()
+                            .map(|(_, tag)| tag.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    let lines = changes.iter().map(|change| {
+                        let mut parts = Vec::new();
+                        if !change.add.is_empty() {
+                            parts.push(format!("tagged {}", tag_list(&change.add)));
+                        }
+                        if !change.remove.is_empty() {
+                            parts.push(format!("no longer tagged {}", tag_list(&change.remove)));
+                        }
+                        text(format!(
+                            "{}: {}",
+                            self.tree_name(&change.note, false),
+                            parts.join("; ")
+                        ))
+                        .size(14)
+                        .color(c.text)
+                        .into()
+                    });
+                    (
+                        "Tags changed outside Dungeon Elements".to_string(),
+                        column![
+                            text("These notes' tags were changed in another app. Update the tag notes to match? Notes with new tags are added to their lists (new tags get a note), and taken off the lists of tags they no longer have.")
+                                .size(13)
+                                .color(c.text_muted),
+                            column(lines).spacing(6),
+                        ]
+                        .spacing(12)
+                        .into(),
+                        &None,
+                        "Update Tag Notes",
+                        Message::UpdateTagNotes,
+                    )
+                }
                 Dialog::Types(_) | Dialog::Problems | Dialog::Fix(_) => {
                     unreachable!("these dialogs have their own view")
                 }
@@ -2739,11 +2954,20 @@ impl Workspace {
         let ty = &tab.form.as_ref()?.ty;
         let note = note::parse(&tab.text().ok()?).ok()?;
         let field = ty.fields.iter().find(|field| {
-            field.kind == types::Kind::Link
-                && note.front.get(field.key.as_str()).is_some_and(|value| {
+            let Some(value) = note.front.get(field.key.as_str()) else {
+                return false;
+            };
+            match field.kind {
+                types::Kind::Link => {
                     links::normalize(note::unlink(&note::value_to_text(value)))
                         == links::normalize(target)
-                })
+                }
+                // Any of a links field's links.
+                types::Kind::Links => links::targets(&note::value_to_text(value))
+                    .iter()
+                    .any(|linked| links::normalize(linked) == links::normalize(target)),
+                _ => false,
+            }
         })?;
         self.link_folder(field)
     }
@@ -3116,6 +3340,19 @@ impl Workspace {
                 self.dialog = None;
                 Task::none()
             }
+            Message::UpdateTagNotes => {
+                let Some(Dialog::Tags(changes)) = self.dialog.take() else {
+                    return Task::none();
+                };
+                self.status = match changes.len() {
+                    1 => "Updated the tag notes of 1 note".into(),
+                    count => format!("Updated the tag notes of {count} notes"),
+                };
+                for change in changes {
+                    self.update_tag_notes(&change.note, &change.add, &change.remove);
+                }
+                Task::none()
+            }
             Message::ShowTypes => match self.active_tab() {
                 Some(tab) => self.update(Message::EditType(tab.folder.clone())),
                 None => self.update(Message::EditType(self.root.clone())),
@@ -3157,6 +3394,10 @@ impl Workspace {
                 Task::none()
             }
             Message::Form(form::Message::FollowLink(index)) => self.follow_link_field(index),
+            Message::Form(form::Message::FollowItem(index, item)) => {
+                self.follow_list_item(index, item)
+            }
+            Message::Form(form::Message::FollowAll(index)) => self.follow_all(index),
             Message::Form(form::Message::FollowStep(index, step)) => {
                 let Some((field, target)) = self
                     .active_tab()
@@ -3414,8 +3655,13 @@ impl Workspace {
                         tab.modified |= form.update(form::Message::Check(index, !checked));
                         Task::none()
                     }
-                    // A dice field's first box is how many dice.
-                    Some((index, _, form::FieldValue::Dice)) => {
+                    // A dice field's first box is how many dice; a list's and a date's
+                    // is the one to type in.
+                    Some((
+                        index,
+                        _,
+                        form::FieldValue::Dice | form::FieldValue::List | form::FieldValue::Date,
+                    )) => {
                         tab.edit = Some(ReadEdit::Field(key));
                         iced::widget::operation::focus(form::field_id(index))
                     }
@@ -3653,21 +3899,28 @@ impl Workspace {
                 if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
                     tab.folder = path.parent().unwrap_or(&self.root).to_path_buf();
                     tab.disk = check::modified_time(&path);
-                    tab.path = Some(path);
+                    tab.path = Some(path.clone());
                     tab.modified = false;
                     tab.changed_outside = false;
                 }
                 self.rescan();
+                if let Some((fields, before)) = self.tag_saves.remove(&id)
+                    && let Ok(after) = std::fs::read_to_string(&path)
+                {
+                    self.sync_tags(&path, &fields, &before, &after);
+                }
                 self.refresh_embeds(id);
                 self.saved_one(true);
                 Task::none()
             }
             // The save dialog was cancelled.
-            Message::Saved(_, Ok(None)) => {
+            Message::Saved(id, Ok(None)) => {
+                self.tag_saves.remove(&id);
                 self.saved_one(false);
                 Task::none()
             }
             Message::Saved(id, Err(error)) => {
+                self.tag_saves.remove(&id);
                 self.not_saved(id, format!("Could not save: {error}"));
                 Task::none()
             }
@@ -4661,9 +4914,104 @@ impl Workspace {
         .into())
     }
 
+    /// Opens the note item `item` of list field `index` of the active tab is about: the
+    /// note a links field links to (made in the folder it links to if there is none), or
+    /// a tag's note.
+    fn follow_list_item(&mut self, index: usize, item: usize) -> Task<Message> {
+        let Some((field, value)) = self
+            .active_tab()
+            .and_then(|tab| tab.form.as_ref())
+            .and_then(|form| {
+                let (field, items) = form.list_items(index)?;
+                Some((field.clone(), items.get(item)?.clone()))
+            })
+        else {
+            return Task::none();
+        };
+        if field.kind == types::Kind::Links {
+            let target = value.split(['|', '#']).next().unwrap_or(&value).trim();
+            let folder = self.link_folder(&field);
+            return self.follow_link_into(target, folder);
+        }
+
+        let path = tags::path(&self.root, &field.tag_folder(), &value);
+        if path.is_file() {
+            self.open_file(path);
+        } else {
+            self.status = format!(
+                "The note for the tag {value} is made in {}/ when this note is saved",
+                field.tag_folder()
+            );
+        }
+        Task::none()
+    }
+
+    /// Opens every note links field `index` of the active tab links to, each in its tab.
+    /// Notes that aren't there yet aren't made.
+    fn follow_all(&mut self, index: usize) -> Task<Message> {
+        let Some(tab) = self.active_tab() else {
+            return Task::none();
+        };
+        let (id, from) = (tab.id, tab.note_path());
+        let Some((_, items)) = tab.form.as_ref().and_then(|form| form.list_items(index)) else {
+            return Task::none();
+        };
+        let mut found = Vec::new();
+        let mut missing = Vec::new();
+        for item in items {
+            let target = item.split(['|', '#']).next().unwrap_or(item).trim();
+            match self.index.resolve(target, &from) {
+                Some(path) => found.push(path.to_path_buf()),
+                None => missing.push(target.to_string()),
+            }
+        }
+        let opened = found.len();
+        for path in found {
+            self.open_file(path);
+        }
+        // The note they were opened from stays in front.
+        self.active = Some(id);
+        self.status = match (opened, missing.is_empty()) {
+            (1, true) => "Opened 1 note".into(),
+            (count, true) => format!("Opened {count} notes"),
+            (count, false) => format!(
+                "Opened {count} of the notes; there is no note called {} yet",
+                missing.join(", ")
+            ),
+        };
+        Task::none()
+    }
+
     /// Opens the note link field `index` of the active tab points to. If there is none,
     /// makes it in the folder the field links to, with that folder's type.
     fn follow_link_field(&mut self, index: usize) -> Task<Message> {
+        // A links field's note goes on its list, then opens.
+        let typed = self
+            .active_tab()
+            .and_then(|tab| tab.form.as_ref())
+            .and_then(|form| {
+                let (field, target) = form.link_field(index)?;
+                (field.kind == types::Kind::Links && !target.trim().is_empty())
+                    .then(|| target.trim().to_string())
+            });
+        if let Some(target) = typed {
+            let Some(tab) = self.active_tab_mut() else {
+                return Task::none();
+            };
+            let Some(form) = &mut tab.form else {
+                return Task::none();
+            };
+            tab.modified |= form.update(form::Message::ListAdd(index, target.clone()));
+            let item = form.list_items(index).and_then(|(_, items)| {
+                items
+                    .iter()
+                    .position(|item| item.eq_ignore_ascii_case(&target))
+            });
+            return match item {
+                Some(item) => self.follow_list_item(index, item),
+                None => Task::none(),
+            };
+        }
         let Some(form) = self.active_tab().and_then(|tab| tab.form.as_ref()) else {
             return Task::none();
         };
@@ -5258,7 +5606,7 @@ impl Workspace {
                     editing.field = tab
                         .form
                         .as_ref()
-                        .and_then(|form| field_input(c, form, key, accept.clone()))
+                        .and_then(|form| field_input(c, form, key, accept.clone(), &self.tags))
                         .map(|input| (key.clone(), column![input, chips()].spacing(4).into()));
                 }
                 None => {}
@@ -5286,6 +5634,7 @@ impl Workspace {
                 accept,
                 editor_menu,
                 &dice.field,
+                &self.tags,
             ))
             .width(Fill)
             .height(Fill)
@@ -5610,6 +5959,26 @@ fn collect_folders(entries: &[Entry], folders: &mut Vec<PathBuf>) {
 
 /// Reads the `_type.yaml` of every folder in the campaign: what each says, and each
 /// folder's type with what it inherits.
+/// The tags that have notes in the campaign at `root`: those in the folder of each tags
+/// field of `types`, and in the `tags` folder.
+fn known_tags(root: &Path, types: &types::Types) -> form::KnownTags {
+    let mut folders = vec![types::TAG_FOLDER.to_string()];
+    for ty in types.values().flatten() {
+        for field in &ty.fields {
+            if field.kind == types::Kind::Tags && field.key != form::ALIASES_KEY {
+                folders.push(field.tag_folder());
+            }
+        }
+    }
+    folders
+        .into_iter()
+        .map(|folder| {
+            let tags = tags::known(root, &folder);
+            (folder, tags)
+        })
+        .collect()
+}
+
 fn load_types(root: &Path, tree: &[Entry]) -> (types::Types, types::Types) {
     fn visit(entries: &[Entry], types: &mut types::Types) {
         for entry in entries {
@@ -6418,9 +6787,10 @@ fn field_input<'a>(
     form: &'a Form,
     key: &str,
     accept: Option<Message>,
+    known_tags: &'a form::KnownTags,
 ) -> Option<Element<'a, Message>> {
     let (index, field, value) = form.short_field(key)?;
-    let accept = accept.filter(|_| field.kind == types::Kind::Link);
+    let accept = accept.filter(|_| field.kind.links());
     match value {
         form::FieldValue::Text(value) => Some(
             text_input(&field.label(), value)
@@ -6444,6 +6814,8 @@ fn field_input<'a>(
             .into(),
         ),
         form::FieldValue::Dice => Some(form.dice_view(c, Message::Form, index, None)),
+        form::FieldValue::List => Some(form.list_view(c, Message::Form, index, accept, known_tags)),
+        form::FieldValue::Date => Some(form.date_view(c, Message::Form, index)),
         form::FieldValue::Check(_) => None,
     }
 }

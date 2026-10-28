@@ -10,6 +10,9 @@ fields:
   - key: tags
     label: Tags
     kind: tags
+  - key: related
+    label: Related
+    kind: links
   - key: known_to_players
     label: Known to players
     kind: checkbox

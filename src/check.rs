@@ -324,7 +324,10 @@ fn value_problem(kind: Kind, options: &[String], value: &Value) -> Option<String
         Kind::Tags if form::kind_of(value).is_none() || matches!(value, Value::Bool(_)) => {
             Some("should be a list of words".into())
         }
-        Kind::Text | Kind::Link | Kind::Dice
+        Kind::Links if form::kind_of(value).is_none() || matches!(value, Value::Bool(_)) => {
+            Some("should be a list of [[links]] to notes".into())
+        }
+        Kind::Text | Kind::Link | Kind::Dice | Kind::Date
             if matches!(value, Value::Mapping(_) | Value::Tagged(_)) =>
         {
             Some("is nested YAML, but should be one line of text".into())

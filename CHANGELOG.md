@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Dates, tags and links to several notes
+
+- A new kind of field, **Date**: type a date, pick one from a calendar, or click **Today**. New notes start with today's date, so a journal entry knows when its session was played. It is saved as `2026-10-28`, which Obsidian reads as a date. Untick **Pick the date from a calendar** in **Edit > Types...** for dates that aren't on one, like a Stardate: the field becomes a line of text. The Journal's Date is a date field in new campaigns.
+- **Tags** are picked one at a time. The tags there are show under the field to click, so they aren't misspelled, and each tag has a note in the **tags** folder listing links to the notes tagged with it. Saving a note makes its new tags' notes and keeps their lists up to date. Tags are still saved as a list Obsidian reads as tags. When a note's tags are changed in another app, a dialog offers to update the tag notes to match.
+- A new kind of field, **Links to notes**: any number of `[[links]]` in one field, like everyone who knows a spell. Each opens with a click, and **Open all** opens them all. Lore notes have a Related field of this kind in new campaigns.
+
 ### Dice fields
 
 - A new kind of field, **Dice**: pick how many dice, which die, a modifier (`+2`), and something special (advantage, disadvantage, keep highest or keep lowest) instead of typing an expression. Add one to a folder in **Edit > Types...** or to one note with **+**.

@@ -5,6 +5,7 @@ fields:
     label: Title
   - key: date
     label: Date
+    kind: date
   - key: session
     label: Session
     kind: number

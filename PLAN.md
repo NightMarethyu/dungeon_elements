@@ -100,7 +100,8 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - [x] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note, saved as a `- [ ]` task list under its `## ` heading. Tab and Shift+Tab move between a form's fields
   - [x] A `dice` field kind: pick the die, how many, and modifiers (`+2`, advantage, disadvantage) instead of typing an expression, and roll it from the note (builds on Phase 1's dice expressions)
   - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
-  - [ ] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
+  - [x] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
+    - Date fields pick from a calendar (or are plain text with the calendar off), tags have tag notes listing links to the tagged notes, and a "links to notes" field holds many links
 - [ ] Player management
   - [ ] The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types
   - [ ] Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)
@@ -266,4 +267,5 @@ After 1.0 (a stretch goal once Phase 5 is done). Ammon has international ties, a
 - Focus mode for writers
   - Full screen app with just what looks like a piece of paper and a background of the user's choosing
 - Timer for specific sprints for writing or for in game timed things like Shadowdark's torch timer
+- Do a check for updated notes, tags, and other file changes and offer fixes
 - More to come as I have more ideas!

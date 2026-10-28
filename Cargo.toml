@@ -8,6 +8,8 @@ license = "MIT"
 repository = "https://github.com/NightMarethyu/dungeon_elements"
 
 [dependencies]
+# Today's date in the computer's time zone, and the calendar of date fields.
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 fastrand = "2"
 iced = { version = "0.14", features = ["advanced", "image-without-codecs", "markdown", "svg"] }
 # Watching the campaign folder for notes changed in other apps.
