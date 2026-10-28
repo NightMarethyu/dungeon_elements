@@ -626,7 +626,17 @@ impl Form {
             let listed = is_reserved(&key)
                 || ty.fields.iter().any(|field| field.key == key)
                 || fields.iter().any(|field| field.key == key);
-            if let (false, Some(kind)) = (listed, kind_of(value)) {
+            // A date field of the note's own is kept as a date, so it reopens as one:
+            // by its date, or by its name while it is empty.
+            let kind = match kind_of(value) {
+                Some(Kind::Text)
+                    if matches!(value, Value::Null) && key.to_lowercase().contains("date") =>
+                {
+                    Some(Kind::Date)
+                }
+                kind => kind,
+            };
+            if let (false, Some(kind)) = (listed, kind) {
                 // Shown like the type's fields: `category` as "Category".
                 fields.push(Field {
                     label: None,
@@ -2223,6 +2233,7 @@ pub fn kind_of(value: &Value) -> Option<Kind> {
         Value::String(text) if text.trim().starts_with("[[") && text.trim().ends_with("]]") => {
             Some(Kind::Link)
         }
+        Value::String(text) if date::parse(text).is_some() => Some(Kind::Date),
         Value::String(_) => Some(Kind::Text),
         Value::Sequence(items)
             if !items.is_empty()
@@ -2777,6 +2788,19 @@ attack: 1d8+1d6
             written(&form, "date"),
             Some(Value::from("Stardate 41153.7"))
         );
+
+        // A date field of the note's own reopens as one, empty or filled in.
+        let mut form = Form::blank(item_type());
+        form.add_field("Founding Date", Kind::Date).unwrap();
+        form.add_field("Last Seen", Kind::Date).unwrap();
+        let last_seen = form.fields.len() - 1;
+        form.update(Message::Text(last_seen, "2026-10-01".into()));
+        let again = Form::from_note(
+            item_type(),
+            note::parse(&form.to_markdown().unwrap()).unwrap(),
+        );
+        let kinds: Vec<_> = again.fields[again.own..].iter().map(|f| f.kind).collect();
+        assert_eq!(kinds, [Kind::Date, Kind::Date]);
 
         // With the calendar off, a new entry's date starts empty.
         let mut ty = journal_type();
