@@ -97,7 +97,7 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - Grows with the app: each new feature adds its shortcuts to the list and a guide (or a section of one) when it needs explaining
 - [ ] Content types grow up (see [Content types](#content-types))
   - [x] Subfolders inherit their parent's type, like child classes: a subfolder with its own `_type.yaml` is a kind of its parent's type (Weapons in Items, Enemies in NPCs), with the parent's fields and its own, and can change or remove inherited fields for itself. Right-click a folder for **New Subfolder...** and a new note of each kind; Edit > Types shows the inherited fields
-  - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
+  - [x] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note, saved as a `- [ ]` task list under its `## ` heading. Tab and Shift+Tab move between a form's fields
   - [ ] A `dice` field kind: pick the die, how many, and modifiers (`+2`, advantage, disadvantage) instead of typing an expression, and roll it from the note (builds on Phase 1's dice expressions)
   - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
   - [ ] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
@@ -108,7 +108,7 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - [ ] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
   - [ ] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
 - [ ] Quest tracker
-  - [ ] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
+  - [x] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
   - [ ] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
 - [ ] Generators
   - [ ] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
@@ -193,8 +193,8 @@ Phase 3. Customization is a big part of the app, so the window's layout should b
 ### Content types
 
 - Each folder can hold a `_type.yaml` that defines the fields every note in that folder has. One type per folder.
-- Field kinds: `text`, `number`, `choice` (with `options`), `tags`, `link` (an Obsidian `[[link]]`), `checkbox`, and `longtext`.
-- Short fields are stored in the note's YAML front matter. `longtext` fields are stored as `## Label` sections in the Markdown body, so notes stay readable in Obsidian.
+- Field kinds: `text`, `number`, `choice` (with `options`), `tags`, `link` (an Obsidian `[[link]]`), `checkbox`, `longtext`, and `steps` (a checklist whose steps can be `[[links]]`).
+- Short fields are stored in the note's YAML front matter. `longtext` and `steps` fields are stored as `## Label` sections in the Markdown body (steps as a `- [ ]` task list), so notes stay readable in Obsidian.
 - The note's front matter records `type:`, so a note moved to another folder still knows its type.
 - The `name` field is the filename (`The One Ring.md`). The tree shows names without `.md`, like Windows Explorer, unless View > Show File Extensions is on.
 - Front matter keys and `##` sections the type doesn't know about become fields of that note only (the main pane's + adds one; each has a Remove button). Values that can't be a field (nested lists or maps) and text before the first section are kept and shown in an "Other" area. Saving never drops data added in Obsidian or another editor.

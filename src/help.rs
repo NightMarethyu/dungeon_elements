@@ -74,6 +74,14 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Forms",
+        &[
+            ("Tab", "Go to the next field"),
+            ("Shift+Tab", "Go back to the field before"),
+            ("Enter", "In a steps field, add the step and start the next"),
+        ],
+    ),
+    (
         "Links",
         &[
             ("[[", "Start a link; notes are suggested as you type"),

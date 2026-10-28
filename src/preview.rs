@@ -732,10 +732,7 @@ fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String,
     let mut shown = Vec::new();
 
     for field in fields {
-        if field.key == "name"
-            || field.kind == Kind::Longtext
-            || removed.contains(&field.key.as_str())
-        {
+        if field.key == "name" || field.kind.is_section() || removed.contains(&field.key.as_str()) {
             continue;
         }
         let value = front.get(field.key.as_str()).and_then(value_markdown);

@@ -4,12 +4,15 @@
 //! matter keys and `## ` sections the type doesn't list (added with the main
 //! pane's + button, or in another app like Obsidian).
 
+use iced::advanced::widget::Id;
+use iced::advanced::widget::operation::scrollable::AbsoluteOffset;
+use iced::advanced::widget::operation::{Focusable, Operation, Outcome, Scrollable};
 use iced::keyboard::{Key, Modifiers};
 use iced::widget::{
     button, checkbox, column, container, pick_list, row, scrollable, space, svg, text, text_editor,
     text_input,
 };
-use iced::{Center, Element, Fill, Point};
+use iced::{Center, Element, Fill, Point, Rectangle, Vector};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::context_menu;
@@ -27,6 +30,15 @@ pub const REMOVED_KEY: &str = "removed_fields";
 pub fn field_id(index: usize) -> String {
     format!("form-field-{index}")
 }
+
+/// The widget id of step `step` of steps field `index`. The one after the last step is
+/// the box a new step is typed in.
+pub fn step_id(index: usize, step: usize) -> String {
+    format!("form-field-{index}-step-{step}")
+}
+
+/// The widget id of the form's scrollable, so Tab can scroll to the field it moves to.
+pub const SCROLL: &str = "form-scroll";
 
 /// Whether front matter `key` is one the form manages itself, rather than a field.
 /// The front matter key for a note's other names, which links can use too, as in Obsidian.
@@ -49,6 +61,170 @@ pub enum Message {
     FollowLink(usize),
     /// Rolls the dice in field `index`, like `1d8+3`.
     Roll(usize, String),
+    /// The text of step `.1` of steps field `.0`; the step after the last is a new one
+    /// being typed.
+    StepText(usize, usize, String),
+    /// Ticks or unticks a step.
+    StepCheck(usize, usize, bool),
+    /// Enter in a step: adds the new step being typed, or a blank one after this one.
+    StepSubmit(usize, usize),
+    /// Moves a step up (true) or down one place.
+    StepMove(usize, usize, bool),
+    StepRemove(usize, usize),
+    /// Opens the note a step links to, making it if there is none.
+    FollowStep(usize, usize),
+}
+
+impl Message {
+    /// Whether the focus moves to another input after this message, so it must be focused
+    /// again with [`Form::focused_id`].
+    pub fn moves_focus(&self) -> bool {
+        matches!(
+            self,
+            Message::StepSubmit(..) | Message::StepMove(..) | Message::StepRemove(..)
+        )
+    }
+}
+
+/// One step of a steps field: a line of text, which can be a `[[link]]` to another note.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Step {
+    done: bool,
+    text: String,
+}
+
+/// What a steps field holds.
+#[derive(Debug, Default)]
+struct Steps {
+    steps: Vec<Step>,
+    /// The new step being typed in the box under the last one.
+    draft: String,
+}
+
+impl Steps {
+    /// The steps of a `## ` section: one per line, without list marks and task boxes.
+    fn parse(body: &str) -> Self {
+        let steps = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let item = list_item(line);
+                Step {
+                    done: item.ticked == Some(true),
+                    text: item.text.to_string(),
+                }
+            })
+            .collect();
+        Steps {
+            steps,
+            draft: String::new(),
+        }
+    }
+
+    /// The steps as a Markdown task list, with the step being typed as the last one.
+    fn to_markdown(&self) -> String {
+        let draft = Step {
+            done: false,
+            text: self.draft.clone(),
+        };
+        self.steps
+            .iter()
+            .chain([&draft])
+            .filter(|step| !step.text.trim().is_empty())
+            .map(|step| {
+                let tick = if step.done { 'x' } else { ' ' };
+                format!("- [{tick}] {}", step.text.trim())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The text of step `step`, or of the new step being typed.
+    fn text(&self, step: usize) -> &str {
+        self.steps
+            .get(step)
+            .map_or(self.draft.as_str(), |step| &step.text)
+    }
+
+    fn text_mut(&mut self, step: usize) -> &mut String {
+        match self.steps.get_mut(step) {
+            Some(step) => &mut step.text,
+            None => &mut self.draft,
+        }
+    }
+}
+
+/// A line of a list, as [`list_item`] reads it.
+struct ListItem<'a> {
+    /// The text after the list mark and task box.
+    text: &'a str,
+    /// Whether the line starts with a list mark (`- `, `* `, `+ ` or `1. `), unindented.
+    listed: bool,
+    /// Whether its task box is ticked, if it has one.
+    ticked: Option<bool>,
+}
+
+fn list_item(line: &str) -> ListItem<'_> {
+    let trimmed = line.trim();
+    let marked = ["- ", "* ", "+ "]
+        .iter()
+        .find_map(|mark| trimmed.strip_prefix(mark))
+        .or_else(|| {
+            let digits = trimmed.find(|c: char| !c.is_ascii_digit())?;
+            let rest = &trimmed[digits..];
+            (digits > 0)
+                .then(|| rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")))
+                .flatten()
+        });
+    let Some(rest) = marked else {
+        return ListItem {
+            text: trimmed,
+            listed: false,
+            ticked: None,
+        };
+    };
+    let listed = !line.starts_with(char::is_whitespace);
+    let rest = rest.trim_start();
+    for (tick, ticked) in [("[ ]", false), ("[x]", true), ("[X]", true)] {
+        if let Some(text) = rest.strip_prefix(tick) {
+            return ListItem {
+                text: text.trim(),
+                listed,
+                ticked: Some(ticked),
+            };
+        }
+    }
+    ListItem {
+        text: rest.trim(),
+        listed,
+        ticked: None,
+    }
+}
+
+/// Whether a steps field's section holds only a list, so the form shows it as it is.
+pub fn is_step_list(body: &str) -> bool {
+    body.lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| list_item(line).listed)
+}
+
+/// Whether a section the type doesn't list is a task list, so the form shows it as steps.
+fn is_task_list(body: &str) -> bool {
+    let mut lines = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .peekable();
+    lines.peek().is_some()
+        && lines.all(|line| {
+            let item = list_item(line);
+            item.listed && item.ticked.is_some()
+        })
+}
+
+/// Where the link being typed at the end of `text` starts: its last `[[` with no `]]` after.
+fn open_link(text: &str) -> Option<usize> {
+    let start = text.rfind("[[")?;
+    (!text[start..].contains("]]")).then_some(start)
 }
 
 /// What a short field holds, from [`Form::short_field`].
@@ -64,12 +240,14 @@ enum Input {
     Long(text_editor::Content),
     Check(bool),
     Choice(Option<String>),
+    Steps(Steps),
 }
 
 impl Input {
     fn empty(kind: Kind) -> Self {
         match kind {
             Kind::Longtext => Input::Long(text_editor::Content::new()),
+            Kind::Steps => Input::Steps(Steps::default()),
             Kind::Checkbox => Input::Check(false),
             Kind::Choice => Input::Choice(None),
             Kind::Text | Kind::Number | Kind::Tags | Kind::Link => Input::Text(String::new()),
@@ -95,6 +273,8 @@ pub struct Form {
     show_other: bool,
     /// The field last typed or clicked in, which link suggestions are for.
     focus: Option<usize>,
+    /// In a steps field, the step last typed in.
+    step: usize,
 }
 
 impl Form {
@@ -148,21 +328,23 @@ impl Form {
                 let value = note.front.get(field.key.as_str());
                 let text = value.map(note::value_to_text).unwrap_or_default();
 
+                // Long text and steps fields are the `## ` section with their name.
+                let mut section = || {
+                    let label = field.label();
+                    let section = sections.iter_mut().find(|section| {
+                        section.as_ref().is_some_and(|section| {
+                            section.heading.eq_ignore_ascii_case(&label)
+                                || section.heading.eq_ignore_ascii_case(&field.key)
+                        })
+                    });
+                    section
+                        .and_then(Option::take)
+                        .map(|section| section.body)
+                        .unwrap_or_default()
+                };
                 match field.kind {
-                    Kind::Longtext => {
-                        let label = field.label();
-                        let section = sections.iter_mut().find(|section| {
-                            section.as_ref().is_some_and(|section| {
-                                section.heading.eq_ignore_ascii_case(&label)
-                                    || section.heading.eq_ignore_ascii_case(&field.key)
-                            })
-                        });
-                        let body = section
-                            .and_then(Option::take)
-                            .map(|section| section.body)
-                            .unwrap_or_default();
-                        Input::Long(text_editor::Content::with_text(&body))
-                    }
+                    Kind::Longtext => Input::Long(text_editor::Content::with_text(&section())),
+                    Kind::Steps => Input::Steps(Steps::parse(&section())),
                     Kind::Checkbox => Input::Check(match value {
                         Some(Value::Bool(checked)) => *checked,
                         _ => matches!(text.to_lowercase().as_str(), "true" | "yes"),
@@ -174,10 +356,16 @@ impl Form {
             })
             .collect();
 
-        // Sections the type doesn't list become long text fields of this note.
+        // Sections the type doesn't list become long text fields of this note, or steps
+        // if they are a task list.
         for section in sections.into_iter().flatten() {
-            fields.push(Field::for_note(&section.heading, Kind::Longtext));
-            inputs.push(Input::Long(text_editor::Content::with_text(&section.body)));
+            if is_task_list(&section.body) {
+                fields.push(Field::for_note(&section.heading, Kind::Steps));
+                inputs.push(Input::Steps(Steps::parse(&section.body)));
+            } else {
+                fields.push(Field::for_note(&section.heading, Kind::Longtext));
+                inputs.push(Input::Long(text_editor::Content::with_text(&section.body)));
+            }
         }
 
         let form = Form {
@@ -189,6 +377,7 @@ impl Form {
             other: text_editor::Content::with_text(&note.preamble),
             show_other: false,
             focus: None,
+            step: 0,
             front: note.front,
         };
 
@@ -217,7 +406,76 @@ impl Form {
                 }
                 return edited;
             }
-            Message::FollowLink(_) | Message::Roll(..) => return false,
+            Message::FollowLink(_) | Message::Roll(..) | Message::FollowStep(..) => return false,
+            Message::StepText(index, step, value) => {
+                let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                *steps.text_mut(step) = value;
+                self.focus = Some(index);
+                self.step = step.min(steps.steps.len());
+            }
+            Message::StepCheck(index, step, done) => {
+                let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                let Some(step) = steps.steps.get_mut(step) else {
+                    return false;
+                };
+                step.done = done;
+            }
+            Message::StepSubmit(index, step) => {
+                let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                self.focus = Some(index);
+                if step < steps.steps.len() {
+                    // Enter in a step makes a blank one after it, like in a list.
+                    steps.steps.insert(step + 1, Step::default());
+                    self.step = step + 1;
+                } else {
+                    // The new step goes on the list, and the box is ready for the next.
+                    let text = std::mem::take(&mut steps.draft);
+                    self.step = steps.steps.len();
+                    if text.trim().is_empty() {
+                        return false;
+                    }
+                    steps.steps.push(Step {
+                        done: false,
+                        text: text.trim().to_string(),
+                    });
+                    self.step += 1;
+                }
+            }
+            Message::StepMove(index, step, up) => {
+                let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                let to = if up {
+                    step.checked_sub(1)
+                } else {
+                    Some(step + 1)
+                };
+                let Some(to) = to.filter(|&to| step < steps.steps.len() && to < steps.steps.len())
+                else {
+                    return false;
+                };
+                steps.steps.swap(step, to);
+                self.focus = Some(index);
+                self.step = to;
+            }
+            Message::StepRemove(index, step) => {
+                let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                if step >= steps.steps.len() {
+                    return false;
+                }
+                steps.steps.remove(step);
+                // The focus goes to the step that took its place.
+                self.focus = Some(index);
+                self.step = step;
+            }
             Message::Check(index, value) => {
                 if let Some(Input::Check(checked)) = self.inputs.get_mut(index) {
                     *checked = value;
@@ -354,7 +612,68 @@ impl Form {
             (Input::Text(value), Kind::Link) if !value.trim().is_empty() => {
                 Some((value.clone(), true))
             }
+            (Input::Steps(steps), _) => {
+                let text = steps.text(self.step);
+                open_link(text).map(|start| (text[start + 2..].to_string(), false))
+            }
             _ => None,
+        }
+    }
+
+    /// The field last typed in, if it can link to notes: a link or steps field.
+    pub fn focused_linking_field(&self) -> Option<&Field> {
+        self.focus
+            .map(|index| &self.fields[index])
+            .filter(|field| field.kind.links())
+    }
+
+    /// Steps field `index` and the note step `step` of it links to.
+    pub fn step_link(&self, index: usize, step: usize) -> Option<(&Field, String)> {
+        let (Some(field), Some(Input::Steps(steps))) =
+            (self.fields.get(index), self.inputs.get(index))
+        else {
+            return None;
+        };
+        let text = steps.text(step);
+        let link = links::find(text).into_iter().next()?;
+        Some((field, text[link.target].to_string()))
+    }
+
+    /// The widget id of the input last typed in, to focus it again.
+    pub fn focused_id(&self) -> Option<String> {
+        let index = self.focus?;
+        Some(match self.inputs[index] {
+            Input::Steps(_) => step_id(index, self.step),
+            _ => field_id(index),
+        })
+    }
+
+    /// The inputs Tab moves between, in order: each field's and step's, with its field
+    /// and step. Checkboxes and choices can't take the keyboard's focus, so they aren't.
+    fn tab_stops(&self) -> Vec<(usize, usize, String)> {
+        let mut stops = Vec::new();
+        for (index, input) in self.inputs.iter().enumerate() {
+            match input {
+                Input::Text(_) | Input::Long(_) => stops.push((index, 0, field_id(index))),
+                Input::Steps(steps) => stops.extend(
+                    (0..=steps.steps.len()).map(|step| (index, step, step_id(index, step))),
+                ),
+                Input::Check(_) | Input::Choice(_) => {}
+            }
+        }
+        stops
+    }
+
+    /// The widget ids Tab moves between, in order, for [`tab`].
+    pub fn tab_ids(&self) -> Vec<String> {
+        self.tab_stops().into_iter().map(|(.., id)| id).collect()
+    }
+
+    /// Notes that Tab moved to input `position` of [`Self::tab_ids`].
+    pub fn tabbed_to(&mut self, position: usize) {
+        if let Some((index, step, _)) = self.tab_stops().into_iter().nth(position) {
+            self.focus = Some(index);
+            self.step = step;
         }
     }
 
@@ -390,6 +709,15 @@ impl Form {
                 *value = link.split('|').next().unwrap_or(link).to_string();
                 // The link is done, so stop suggesting notes for it.
                 self.focus = None;
+                true
+            }
+            Input::Steps(steps) => {
+                let text = steps.text_mut(self.step);
+                let Some(start) = open_link(text) else {
+                    return false;
+                };
+                text.truncate(start);
+                text.push_str(&format!("[[{link}]]"));
                 true
             }
             _ => false,
@@ -455,7 +783,7 @@ impl Form {
             Input::Text(text) => FieldValue::Text(text),
             Input::Check(checked) => FieldValue::Check(*checked),
             Input::Choice(choice) => FieldValue::Choice(choice.as_deref()),
-            Input::Long(_) => return None,
+            Input::Long(_) | Input::Steps(_) => return None,
         };
         Some((index, &self.fields[index], value))
     }
@@ -464,7 +792,7 @@ impl Form {
     fn front_field(&self, key: &str) -> Option<usize> {
         self.fields
             .iter()
-            .position(|field| field.kind != Kind::Longtext && field.key == key)
+            .position(|field| !field.kind.is_section() && field.key == key)
     }
 
     /// Front matter keys no field covers, other than `type`, such as nested lists.
@@ -487,7 +815,7 @@ impl Form {
         let keep_empty = index >= self.own;
 
         let value = match &self.inputs[index] {
-            Input::Long(_) => None,
+            Input::Long(_) | Input::Steps(_) => None,
             Input::Check(checked) => {
                 (*checked || keep_empty || self.front.contains_key(field.key.as_str()))
                     .then_some(Value::Bool(*checked))
@@ -548,7 +876,7 @@ impl Form {
         }
 
         for (index, field) in self.fields.iter().enumerate() {
-            if field.kind != Kind::Longtext
+            if !field.kind.is_section()
                 && !self.front.contains_key(field.key.as_str())
                 && let Some(value) = self.front_value(index)?
             {
@@ -561,13 +889,17 @@ impl Form {
             .iter()
             .zip(&self.inputs)
             .enumerate()
-            .filter_map(|(index, (field, input))| match input {
-                Input::Long(content) => Some(Section {
+            .filter_map(|(index, (field, input))| {
+                let body = match input {
+                    Input::Long(content) => content.text(),
+                    Input::Steps(steps) => steps.to_markdown(),
+                    _ => return None,
+                };
+                Some(Section {
                     heading: field.label(),
-                    body: content.text(),
+                    body,
                     keep_empty: index >= self.own,
-                }),
-                _ => None,
+                })
             })
             .collect();
 
@@ -712,6 +1044,12 @@ impl Form {
                             let header = label(index, String::new());
                             column![header, check].spacing(6).into()
                         }
+                        Input::Steps(steps) => column![
+                            label(index, field.label()),
+                            self.steps_view(c, map, index, steps, &accept),
+                        ]
+                        .spacing(6)
+                        .into(),
                         Input::Long(content) => column![
                             label(index, field.label()),
                             context_menu::area(
@@ -794,8 +1132,204 @@ impl Form {
         content = content.push(space().height(64));
 
         scrollable(container(content).padding([24, 32]).width(Fill))
+            .id(SCROLL)
             .height(Fill)
             .into()
+    }
+
+    /// The steps of steps field `index`, each with a box to tick it, then a box to type a
+    /// new one in. Enter in a step that links to a note being typed sends `accept`.
+    fn steps_view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        map: fn(Message) -> M,
+        index: usize,
+        steps: &'a Steps,
+        accept: &Option<M>,
+    ) -> Element<'a, M> {
+        let typing = |step: usize| self.focus == Some(index) && self.step == step;
+        // Enter finishes the link being typed, if there are notes it could be.
+        let submit = move |step: usize| match accept {
+            Some(accept) if typing(step) && open_link(steps.text(step)).is_some() => accept.clone(),
+            _ => map(Message::StepSubmit(index, step)),
+        };
+        let small = |label: &'a str, message: Option<Message>| {
+            button(text(label).size(13))
+                .padding([4, 8])
+                .style(style::flat(c, false))
+                .on_press_maybe(message.map(map))
+        };
+
+        let last = steps.steps.len();
+        let mut list = column![].spacing(6);
+        for (step, Step { done, text: value }) in steps.steps.iter().enumerate() {
+            let input = text_input("A step, or a [[link]] to another note", value)
+                .id(step_id(index, step))
+                .on_input(move |value| map(Message::StepText(index, step, value)))
+                .on_submit(submit(step))
+                .size(14)
+                .padding(8)
+                .style(style::input(c));
+            // The input stays in the same place in the row, so the Open button showing up
+            // as a link is typed doesn't lose the focus.
+            let open = (!links::find(value).is_empty()).then(|| {
+                button(text("Open").size(13))
+                    .padding([8, 10])
+                    .style(style::secondary(c))
+                    .on_press(map(Message::FollowStep(index, step)))
+            });
+            list = list.push(
+                row![
+                    checkbox(*done)
+                        .on_toggle(move |done| map(Message::StepCheck(index, step, done)))
+                        .style(style::check(c)),
+                    input,
+                ]
+                .push(open)
+                .push(small(
+                    "↑",
+                    (step > 0).then_some(Message::StepMove(index, step, true)),
+                ))
+                .push(small(
+                    "↓",
+                    (step + 1 < last).then_some(Message::StepMove(index, step, false)),
+                ))
+                .push(small("Remove", Some(Message::StepRemove(index, step))))
+                .spacing(6)
+                .align_y(Center),
+            );
+        }
+
+        let draft = text_input("Add a step, or a [[link]] to another note", &steps.draft)
+            .id(step_id(index, last))
+            .on_input(move |value| map(Message::StepText(index, last, value)))
+            .on_submit(submit(last))
+            .size(14)
+            .padding(8)
+            .style(style::input(c));
+        list.push(
+            row![
+                draft,
+                button(text("Add").size(13))
+                    .padding([8, 10])
+                    .style(style::secondary(c))
+                    .on_press_maybe(
+                        (!steps.draft.trim().is_empty())
+                            .then(|| map(Message::StepSubmit(index, last)))
+                    ),
+            ]
+            .spacing(6)
+            .align_y(Center),
+        )
+        .into()
+    }
+}
+
+/// An operation that moves the keyboard's focus from the input in `ids` that has it to the
+/// next (or, with `back`, the one before), going round at the ends, and scrolls the form
+/// to show it. With none focused, the first (or last) gets it. Its output is the position
+/// in `ids` of the input it focused. With one id, it focuses that input and shows it.
+pub fn tab(ids: Vec<String>, back: bool) -> impl Operation<usize> {
+    struct Find {
+        ids: Vec<Id>,
+        back: bool,
+        focused: Option<usize>,
+        bounds: Vec<Option<Rectangle>>,
+    }
+
+    impl Operation<usize> for Find {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<usize>)) {
+            operate(self);
+        }
+
+        fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
+            if let Some(position) = self.ids.iter().position(|target| Some(target) == id) {
+                self.bounds[position] = Some(bounds);
+                if state.is_focused() {
+                    self.focused = Some(position);
+                }
+            }
+        }
+
+        fn finish(&self) -> Outcome<usize> {
+            let count = self.ids.len();
+            if count == 0 {
+                return Outcome::None;
+            }
+            let position = match (self.focused, self.back) {
+                (Some(position), false) => (position + 1) % count,
+                (Some(position), true) => (position + count - 1) % count,
+                (None, false) => 0,
+                (None, true) => count - 1,
+            };
+            Outcome::Chain(Box::new(Focus {
+                target: self.ids[position].clone(),
+                position,
+                bounds: self.bounds[position],
+            }))
+        }
+    }
+
+    struct Focus {
+        target: Id,
+        position: usize,
+        bounds: Option<Rectangle>,
+    }
+
+    impl Operation<usize> for Focus {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<usize>)) {
+            operate(self);
+        }
+
+        fn scrollable(
+            &mut self,
+            id: Option<&Id>,
+            bounds: Rectangle,
+            _content_bounds: Rectangle,
+            translation: Vector,
+            state: &mut dyn Scrollable,
+        ) {
+            if id != Some(&Id::new(SCROLL)) {
+                return;
+            }
+            let Some(target) = self.bounds else {
+                return;
+            };
+            // Room for the field's label above it.
+            let margin = 40.0;
+            let top = target.y - bounds.y - margin;
+            let bottom = target.y + target.height - bounds.y + margin;
+            let y = if top < translation.y {
+                Some(top.max(0.0))
+            } else if bottom > translation.y + bounds.height {
+                // A field taller than the form shows from its top.
+                Some((bottom - bounds.height).min(top))
+            } else {
+                None
+            };
+            if y.is_some() {
+                state.scroll_to(AbsoluteOffset { x: None, y });
+            }
+        }
+
+        fn focusable(&mut self, id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+            if id == Some(&self.target) {
+                state.focus();
+            } else {
+                state.unfocus();
+            }
+        }
+
+        fn finish(&self) -> Outcome<usize> {
+            Outcome::Some(self.position)
+        }
+    }
+
+    Find {
+        bounds: vec![None; ids.len()],
+        ids: ids.into_iter().map(Id::from).collect(),
+        back,
+        focused: None,
     }
 }
 
@@ -955,6 +1489,137 @@ mod tests {
             again.to_markdown().unwrap(),
             "---\ntype: item\nremoved_fields:\n- stats\n---\n"
         );
+    }
+
+    fn quest_type() -> ContentType {
+        let quests = types::STARTER_TYPES
+            .iter()
+            .find(|(folder, _)| *folder == "quests")
+            .unwrap();
+        types::parse(quests.1).unwrap()
+    }
+
+    fn steps(form: &Form, index: usize) -> Vec<(bool, &str)> {
+        match &form.inputs[index] {
+            Input::Steps(steps) => steps
+                .steps
+                .iter()
+                .map(|step| (step.done, step.text.as_str()))
+                .collect(),
+            _ => panic!("field {index} isn't a steps field"),
+        }
+    }
+
+    #[test]
+    fn reads_and_writes_steps() {
+        let text = "---\nname: The Big Quest\n---\n\n## Objectives\n\n- [x] Find the map\n- [ ] [[Cross the Marsh]]\n* Talk to [[BBEG|Jerry]]\n";
+        let mut form = Form::from_note(quest_type(), note::parse(text).unwrap());
+        let objectives = form
+            .fields
+            .iter()
+            .position(|f| f.key == "objectives")
+            .unwrap();
+        assert_eq!(form.fields[objectives].kind, Kind::Steps);
+        assert_eq!(
+            steps(&form, objectives),
+            [
+                (true, "Find the map"),
+                (false, "[[Cross the Marsh]]"),
+                (false, "Talk to [[BBEG|Jerry]]")
+            ]
+        );
+        assert_eq!(
+            form.step_link(objectives, 1).map(|(_, target)| target),
+            Some("Cross the Marsh".into())
+        );
+        assert_eq!(
+            form.step_link(objectives, 2).map(|(_, target)| target),
+            Some("BBEG".into())
+        );
+        assert!(form.step_link(objectives, 0).is_none());
+
+        // Tick the second, move the last up, and type a new one.
+        form.update(Message::StepCheck(objectives, 1, true));
+        form.update(Message::StepMove(objectives, 2, true));
+        form.update(Message::StepText(objectives, 3, "Report back".into()));
+        let written = form.to_markdown().unwrap();
+        assert!(written.ends_with(
+            "## Objectives\n\n- [x] Find the map\n- [ ] Talk to [[BBEG|Jerry]]\n- [x] [[Cross the Marsh]]\n- [ ] Report back\n"
+        ));
+
+        // The steps a type doesn't list come back as steps, if they are a task list.
+        let mut again = Form::from_note(quest_type(), note::parse(&written).unwrap());
+        assert_eq!(steps(&again, objectives).len(), 4);
+        again.update(Message::StepRemove(objectives, 0));
+        assert_eq!(again.focused_id(), Some(step_id(objectives, 0)));
+        assert_eq!(steps(&again, objectives)[0].1, "Talk to [[BBEG|Jerry]]");
+    }
+
+    #[test]
+    fn enter_adds_steps() {
+        let mut form = Form::blank(quest_type());
+        let objectives = form
+            .fields
+            .iter()
+            .position(|f| f.key == "objectives")
+            .unwrap();
+
+        // Enter in the new step box puts it on the list; an empty one does nothing.
+        form.update(Message::StepText(objectives, 0, "Find the map".into()));
+        assert!(form.update(Message::StepSubmit(objectives, 0)));
+        assert!(!form.update(Message::StepSubmit(objectives, 1)));
+        assert_eq!(form.focused_id(), Some(step_id(objectives, 1)));
+
+        // Enter in a step makes a blank one after it, which isn't saved while empty.
+        form.update(Message::StepSubmit(objectives, 0));
+        assert_eq!(
+            steps(&form, objectives),
+            [(false, "Find the map"), (false, "")]
+        );
+        assert_eq!(form.focused_id(), Some(step_id(objectives, 1)));
+        assert_eq!(
+            form.to_markdown().unwrap(),
+            "---\ntype: quest\n---\n\n## Objectives\n\n- [ ] Find the map\n"
+        );
+
+        // Typing a link in a step suggests notes, and finishing it closes it.
+        form.update(Message::StepText(objectives, 1, "Go to [[Marsh".into()));
+        assert_eq!(form.link_query(), Some(("Marsh".into(), false)));
+        assert!(form.complete_link("Cross the Marsh"));
+        assert_eq!(steps(&form, objectives)[1].1, "Go to [[Cross the Marsh]]");
+        assert_eq!(form.link_query(), None);
+    }
+
+    #[test]
+    fn tab_goes_through_the_inputs_in_order() {
+        let mut form = Form::blank(quest_type());
+        // Status is a choice, which can't take the focus, so Tab skips it.
+        let ids = form.tab_ids();
+        let objectives = form
+            .fields
+            .iter()
+            .position(|f| f.key == "objectives")
+            .unwrap();
+        assert_eq!(ids[0], field_id(0));
+        assert!(!ids.contains(&field_id(1)));
+        assert_eq!(ids.last(), Some(&step_id(objectives, 0)));
+
+        form.tabbed_to(1);
+        assert_eq!(form.focused_id().as_ref(), Some(&ids[1]));
+        form.tabbed_to(ids.len() - 1);
+        assert_eq!(form.focused_id(), Some(step_id(objectives, 0)));
+    }
+
+    #[test]
+    fn steps_lines_and_lists() {
+        assert!(is_step_list("- [ ] One\n\n1. Two\n* [x] Three"));
+        assert!(!is_step_list("Some words\n- [ ] One"));
+        assert!(!is_step_list("- One\n  - Nested"));
+        assert!(is_task_list("- [ ] One\n- [x] Two"));
+        assert!(!is_task_list("- One\n- [x] Two"));
+        assert!(!is_task_list(""));
+        assert_eq!(open_link("Go to [[Mar"), Some(6));
+        assert_eq!(open_link("Go to [[Marsh]]"), None);
     }
 
     #[test]

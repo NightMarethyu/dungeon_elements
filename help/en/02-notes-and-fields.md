@@ -4,9 +4,24 @@
 
 A folder can say which fields its notes have, like Name, Location and Status for an NPC. Its notes then open as a **form**. The fields are saved as ordinary Markdown with the short ones at the top of the file, so the note still reads well in any text editor.
 
-- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, tags, a link to another note, a checkbox, or long text.
+- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, tags, a link to another note, a checkbox, long text, or steps.
 - A folder without fields holds plain Markdown notes.
 - To give a folder fields, pick it in **Edit > Types...** and add some.
+
+## Fill in a form from the keyboard
+
+- **Tab** goes to the next field and **Shift+Tab** back to the one before, scrolling the form to show it. Choices and checkboxes are skipped: click them.
+- In a link field, or while typing a `[[link]]`, Tab inserts the suggested note instead.
+
+## Steps: quests made of smaller quests
+
+A **steps** field is a checklist. Each step is a line of text, a `[[link]]` to another note, or both, like `Talk to [[Mira]]`. A step that links to another quest makes quest lines: a big quest whose steps are smaller quests, each with steps of its own. The Objectives of a quest are steps.
+
+- Type a step in the box at the bottom and press **Enter** to add it. Enter in a step adds a blank one after it.
+- Tick a step's box when it's done. **↑** and **↓** move it up or down, and **Remove** takes it off.
+- Typing `[[` suggests notes, with the notes of the folder the field **Links to** first (quests, for Objectives). A step with a link has an **Open** button, which makes the note if there isn't one yet (a new quest, in the quests folder).
+- Steps are saved as a Markdown task list (`- [ ] Find the map`) under a `## Objectives` heading, so Obsidian shows them as a checklist and the reading view can tick them too.
+- Campaigns made before steps existed have Objectives as long text. To use steps, pick the quests folder in **Edit > Types...** and change Objectives to **Steps** that **Links to** quests. Notes whose objectives are already a task list show them as steps.
 
 ## Subfolders are kinds of their folder
 

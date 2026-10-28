@@ -136,7 +136,7 @@ impl FieldDraft {
                 Vec::new()
             },
             width: self.width,
-            folder: self.folder.clone().filter(|_| self.kind == Kind::Link),
+            folder: self.folder.clone().filter(|_| self.kind.links()),
         }
     }
 }
@@ -647,7 +647,7 @@ impl Editor {
                         .on_input(move |value| Message::FieldOptions(index, value)),
                 );
             }
-            if field.kind == Kind::Link {
+            if field.kind.links() {
                 let mut choices = vec![LinksTo(None)];
                 choices.extend(self.folders.iter().map(|f| LinksTo(Some(f.name.clone()))));
                 block = block.push(
