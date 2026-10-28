@@ -8,6 +8,16 @@ A folder can say which fields its notes have, like Name, Location and Status for
 - A folder without fields holds plain Markdown notes.
 - To give a folder fields, pick it in **Edit > Types...** and add some.
 
+## Subfolders are kinds of their folder
+
+A subfolder works like a child class: its notes have every field of the folder it's in, plus fields of their own. Weapons, Armor and Gear in Items are all items, with a Value and a Rarity, but a weapon also has Damage. Enemies in NPCs start out like any NPC, then add a Challenge Rating.
+
+- **Right-click** a folder and pick **New Subfolder...**. In a folder with fields, choose **A kind of Item** (named after the folder), then add its own fields in the **Edit > Types...** window that opens next. Choose **Item notes** instead for a subfolder that only sorts notes, like Waterdeep in NPCs.
+- In **Edit > Types...**, a subfolder lists the fields it inherits first. **Change** one to make it different in the subfolder only (like other choices for an Enemy's Disposition), or **Remove** it from the subfolder's notes. Fields added to the parent folder later show up in its subfolders too.
+- A subfolder can have subfolders of its own, like Swords in Weapons: they have every Item field, every Weapon field, and theirs.
+- Right-clicking a folder offers a new note of each of its kinds (**New Item**, **New Weapon**), and the **+** next to a folder says what it makes.
+- Moving a note into a subfolder makes it that kind of note and keeps everything you filled in. A note that says it's an Item but sits in Weapons is read as a Weapon.
+
 ## Fields for one note only
 
 Sometimes one note needs something its folder doesn't have, like a tavern with a menu.

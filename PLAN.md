@@ -96,7 +96,7 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - [x] What's New (this version's part of the changelog), Report a Problem (opens a GitHub issue), and a link to the project on GitHub
   - Grows with the app: each new feature adds its shortcuts to the list and a guide (or a section of one) when it needs explaining
 - [ ] Content types grow up (see [Content types](#content-types))
-  - [ ] Subfolders inherit their parent's type, and can override it with their own `_type.yaml`
+  - [x] Subfolders inherit their parent's type, like child classes: a subfolder with its own `_type.yaml` is a kind of its parent's type (Weapons in Items, Enemies in NPCs), with the parent's fields and its own, and can change or remove inherited fields for itself. Right-click a folder for **New Subfolder...** and a new note of each kind; Edit > Types shows the inherited fields
   - [ ] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note
   - [ ] A `dice` field kind: pick the die, how many, and modifiers (`+2`, advantage, disadvantage) instead of typing an expression, and roll it from the note (builds on Phase 1's dice expressions)
   - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
@@ -201,7 +201,8 @@ Phase 3. Customization is a big part of the app, so the window's layout should b
 - Any field except `name` can be removed from a single note: the note's front matter lists it under `removed_fields`, and the main pane's + offers to bring it back.
 - A folder with no `_type.yaml` is a plain Markdown folder.
 - Phase 2:
-  - Subfolders inherit their parent's type, the parent's type can be overridden and modified if they have their own `_type.yaml`.
+  - Subfolders inherit their parent's type, like child classes. A subfolder with no `_type.yaml` has its parent's type. One with its own `_type.yaml` is a kind of its parent's type: its own `type:` id, the parent's fields in the parent's order, then its own. A field with the same key as an inherited one changes it in place, and `removed_fields: [key]` leaves an inherited field out (never `name`). Only what the subfolder adds or changes is saved in its `_type.yaml`, so changes to the parent show up in it. Folders in the campaign folder itself don't inherit the campaign folder's type.
+  - A note is read with its folder's type when its `type:` is that type or one it is a kind of, so a note that says `type: item` in Weapons is a Weapon (and becomes `type: weapon` when saved).
   - A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note. The Quest type uses it so a step can be another quest, building quest lines (a Big Quest made of smaller quests).
   - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
 - Phase 5: campaign templates, see [Campaign templates](#campaign-templates).

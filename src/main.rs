@@ -138,8 +138,12 @@ struct NewCampaign {
 struct Workspace {
     root: PathBuf,
     tree: Vec<Entry>,
-    /// The content type of each folder that has a `_type.yaml`, or what is wrong with it.
-    types: HashMap<PathBuf, Result<ContentType, String>>,
+    /// The content type of each typed folder, or what is wrong with it. A subfolder's
+    /// has its parent's fields too (see [`types::resolve`]).
+    types: types::Types,
+    /// What each folder's own `_type.yaml` says, without what it inherits. Only these
+    /// are written back to the files.
+    own_types: types::Types,
     /// What is wrong with the campaign's files, checked when it opens and whenever its
     /// files change. Notes with unsaved changes are checked as they are in their tab.
     problems: Vec<Problem>,
@@ -300,8 +304,12 @@ struct Suggestions {
 #[derive(Debug, Clone, PartialEq)]
 struct Template {
     label: String,
-    /// The `_type.yaml` to write, or `None` for a folder of plain notes.
+    /// The `_type.yaml` to write, or `None` for a folder of plain notes (or, in a typed
+    /// folder, notes of its type).
     yaml: Option<String>,
+    /// Whether the folder is made a kind of the type of the folder it is in, with a
+    /// `_type.yaml` named after it.
+    kind_of: bool,
 }
 
 impl std::fmt::Display for Template {
@@ -315,6 +323,7 @@ impl Template {
         Template {
             label: "Plain notes (no fields)".into(),
             yaml: None,
+            kind_of: false,
         }
     }
 }
@@ -1225,7 +1234,7 @@ impl App {
 impl Workspace {
     fn open(root: PathBuf, open_in_reading: bool) -> Self {
         let tree = campaign::scan(&root);
-        let types = load_types(&root, &tree);
+        let (own_types, types) = load_types(&root, &tree);
         let scan = scan_notes(&tree);
         let index = links::Index::new(&root, markdown_files(&tree)).with_aliases(&scan.aliases);
         let backlinks = backlinks::Backlinks::new(scan.mentions, &index);
@@ -1237,6 +1246,7 @@ impl Workspace {
         };
         Workspace {
             types,
+            own_types,
             problems,
             gone: check::Gone::new(),
             ignored: HashSet::new(),
@@ -1289,7 +1299,7 @@ impl Workspace {
     /// Reads the file tree and the folders' content types again, and checks the files.
     fn rescan(&mut self) {
         self.tree = campaign::scan(&self.root);
-        self.types = load_types(&self.root, &self.tree);
+        (self.own_types, self.types) = load_types(&self.root, &self.tree);
         let scan = scan_notes(&self.tree);
         self.index =
             links::Index::new(&self.root, markdown_files(&self.tree)).with_aliases(&scan.aliases);
@@ -1830,7 +1840,11 @@ impl Workspace {
 
         let named = note.front.get("type").and_then(|id| {
             let id = note::value_to_text(id);
-            self.types.values().flatten().find(|ty| ty.id == id)
+            types::named(
+                &self.types,
+                folder_type.and_then(|ty| ty.as_ref().ok()),
+                &id,
+            )
         });
 
         let ty = match (named, folder_type) {
@@ -2084,6 +2098,54 @@ impl Workspace {
         self.status = status;
     }
 
+    /// What making a note in `folder` makes: "New Weapon" in a typed folder.
+    fn new_note_label(&self, folder: &Path) -> String {
+        match self.types.get(folder) {
+            Some(Ok(ty)) => format!("New {}", ty.label()),
+            _ => "New Note Here".into(),
+        }
+    }
+
+    /// The subfolders of `folder` that are a kind of its type with fields of their own,
+    /// and the name of one of their notes, like `(items/weapons, "Weapon")`.
+    fn subtypes(&self, folder: &Path) -> Vec<(PathBuf, String)> {
+        let mut found: Vec<_> = self
+            .own_types
+            .keys()
+            .filter(|path| path.parent() == Some(folder))
+            .filter_map(|path| match self.types.get(path) {
+                Some(Ok(ty)) if !ty.parents.is_empty() => Some((path.clone(), ty.label())),
+                _ => None,
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// The types a new folder in `parent` can start with. In a typed folder: a kind of its
+    /// type, or its type as it is. Elsewhere: none, the default template's, and the
+    /// campaign's own.
+    fn folder_templates(&self, parent: &Path) -> Vec<Template> {
+        match self.types.get(parent) {
+            Some(Ok(ty)) if parent != self.root => {
+                let label = ty.label();
+                vec![
+                    Template {
+                        label: format!("A kind of {label}: {label} fields, and its own"),
+                        yaml: None,
+                        kind_of: true,
+                    },
+                    Template {
+                        label: format!("{label} notes, like {}", self.shown_name(parent)),
+                        yaml: None,
+                        kind_of: false,
+                    },
+                ]
+            }
+            _ => self.templates(),
+        }
+    }
+
     /// The types a new folder can start with: none, the default template's, and the campaign's own.
     fn templates(&self) -> Vec<Template> {
         let mut templates = vec![Template::plain()];
@@ -2093,11 +2155,17 @@ impl Workspace {
             Some((ty.id.clone(), ty.label(), yaml.to_string()))
         });
 
-        let mut folders: Vec<_> = self.types.keys().collect();
+        let mut folders: Vec<_> = self.own_types.keys().collect();
         folders.sort();
+        // A subfolder's type starts the new folder with everything it inherits.
         let campaign = folders.into_iter().filter_map(|folder| {
             let ty = self.types.get(folder)?.as_ref().ok()?;
-            let yaml = std::fs::read_to_string(folder.join(types::TYPE_FILE)).ok()?;
+            let yaml = ContentType {
+                removed_fields: Vec::new(),
+                ..ty.clone()
+            }
+            .to_yaml()
+            .ok()?;
             Some((ty.id.clone(), ty.label(), yaml))
         });
 
@@ -2110,6 +2178,7 @@ impl Workspace {
                     Template {
                         label,
                         yaml: Some(yaml),
+                        kind_of: false,
                     },
                 ));
             }
@@ -2205,12 +2274,19 @@ impl Workspace {
                     if *parent == self.root {
                         "New folder".to_string()
                     } else {
-                        format!("New folder in {}", self.relative(parent))
+                        format!("New subfolder in {}", self.relative(parent))
                     },
                     column![
                         column![
                             label("Name"),
-                            text_input("factions", name)
+                            text_input(
+                                if self.types.contains_key(parent) && *parent != self.root {
+                                    "weapons"
+                                } else {
+                                    "factions"
+                                },
+                                name
+                            )
                                 .id(DIALOG_INPUT)
                                 .on_input(Message::NewFolderName)
                                 .on_submit(Message::CreateFolder)
@@ -2221,7 +2297,7 @@ impl Workspace {
                         column![
                             label("Notes in this folder"),
                             pick_list(
-                                self.templates(),
+                                self.folder_templates(parent),
                                 Some(template.clone()),
                                 Message::NewFolderTemplate
                             )
@@ -2229,7 +2305,18 @@ impl Workspace {
                             .width(Fill)
                             .style(style::choice(c))
                             .menu_style(style::choice_menu(c)),
-                            text("Picking a type gives every note in the folder its fields. You can change them later in Edit > Types.")
+                            text(match (template.kind_of, self.types.get(parent)) {
+                                (true, Some(Ok(ty))) => format!(
+                                    "Like a child class: its notes have every {0} field, and fields of their own, which you add next in Edit > Types. Changes to {0}'s fields show up in it too.",
+                                    ty.label()
+                                ),
+                                (false, Some(Ok(ty))) if *parent != self.root => format!(
+                                    "Its notes have the same fields as {}'s. It can be made a kind of {} with fields of its own later, in Edit > Types.",
+                                    self.shown_name(parent),
+                                    ty.label()
+                                ),
+                                _ => "Picking a type gives every note in the folder its fields. You can change them later in Edit > Types.".into(),
+                            })
                                 .size(12)
                                 .color(c.text_muted),
                         ]
@@ -2947,10 +3034,15 @@ impl Workspace {
             }
             Message::ShowNewFolder => self.update(Message::ShowNewFolderIn(self.root.clone())),
             Message::ShowNewFolderIn(parent) => {
+                let template = self
+                    .folder_templates(&parent)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(Template::plain);
                 self.dialog = Some(Dialog::NewFolder {
                     parent,
                     name: String::new(),
-                    template: Template::plain(),
+                    template,
                     error: None,
                 });
                 iced::widget::operation::focus(DIALOG_INPUT)
@@ -2979,13 +3071,35 @@ impl Workspace {
                     return Task::none();
                 };
 
-                match campaign::create_folder(parent, name, template.yaml.as_deref()) {
+                // A kind of the parent's type is named for one of its notes ("Weapon").
+                let yaml = match template.kind_of {
+                    true => {
+                        let label = types::singular(name.trim());
+                        ContentType {
+                            id: types::key_from(&label),
+                            label: Some(label),
+                            icon: None,
+                            fields: Vec::new(),
+                            removed_fields: Vec::new(),
+                            parents: Vec::new(),
+                        }
+                        .to_yaml()
+                        .ok()
+                    }
+                    false => template.yaml.clone(),
+                };
+                let kind_of = template.kind_of;
+                match campaign::create_folder(parent, name, yaml.as_deref()) {
                     Ok(path) => {
                         let parent = parent.clone();
                         self.status = format!("Created the folder {}", self.relative(&path));
                         self.expanded.insert(parent);
                         self.dialog = None;
                         self.rescan();
+                        // Its own fields are added next.
+                        if kind_of {
+                            return self.update(Message::EditType(path));
+                        }
                     }
                     Err(message) => *error = Some(message),
                 }
@@ -3002,7 +3116,7 @@ impl Workspace {
             Message::EditType(folder) => {
                 let mut folders = Vec::new();
                 collect_folders(&self.tree, &mut folders);
-                let mut editor = types_editor::Editor::new(&self.root, &folders, &self.types);
+                let mut editor = types_editor::Editor::new(&self.root, &folders, &self.own_types);
                 editor.select(&folder);
                 self.dialog = Some(Dialog::Types(editor));
                 Task::none()
@@ -3771,10 +3885,17 @@ impl Workspace {
             Target::Tree(path) if path.is_dir() => {
                 let expanded = self.expanded.contains(path);
                 let typed = self.types.contains_key(path);
-                vec![
-                    item("New Note Here", Some(Message::NewNoteIn(path.clone()))),
+                let mut entries = vec![item(
+                    self.new_note_label(path),
+                    Some(Message::NewNoteIn(path.clone())),
+                )];
+                // A note of each kind of this folder's type that has a subfolder of its own.
+                entries.extend(self.subtypes(path).into_iter().map(|(folder, label)| {
+                    item(format!("New {label}"), Some(Message::NewNoteIn(folder)))
+                }));
+                entries.extend([
                     item(
-                        "New Folder Here...",
+                        "New Subfolder...",
                         Some(Message::ShowNewFolderIn(path.clone())),
                     ),
                     Entry::Separator,
@@ -3799,7 +3920,8 @@ impl Workspace {
                     ),
                     Entry::Separator,
                     item("Delete...", Some(Message::Delete(path.clone()))),
-                ]
+                ]);
+                entries
             }
             Target::Tree(path) => {
                 let note = campaign::is_markdown(path);
@@ -4145,10 +4267,16 @@ impl Workspace {
             let row: Element<'a, Message> = match entry.children {
                 Some(_) => row![
                     label,
-                    button(text("+").size(14))
-                        .padding([0, 8])
-                        .style(style::flat(c, false))
-                        .on_press(Message::NewNoteIn(entry.path.clone())),
+                    tooltip(
+                        button(text("+").size(14))
+                            .padding([0, 8])
+                            .style(style::flat(c, false))
+                            .on_press(Message::NewNoteIn(entry.path.clone())),
+                        container(text(self.new_note_label(&entry.path)).size(12))
+                            .padding([2, 6])
+                            .style(style::dropdown(c)),
+                        tooltip::Position::Right,
+                    ),
                 ]
                 .align_y(Center)
                 .into(),
@@ -4844,7 +4972,7 @@ impl Workspace {
     /// Points link fields that link to folder `old`, or a folder in it, to where it moved.
     fn retarget_link_fields(&mut self, old: &Path, new: &Path) -> Result<(), String> {
         let mut changed = Vec::new();
-        for (folder, ty) in &self.types {
+        for (folder, ty) in &self.own_types {
             let Ok(ty) = ty else {
                 continue;
             };
@@ -5418,9 +5546,10 @@ fn collect_folders(entries: &[Entry], folders: &mut Vec<PathBuf>) {
     }
 }
 
-/// Reads the `_type.yaml` of every folder in the campaign.
-fn load_types(root: &Path, tree: &[Entry]) -> HashMap<PathBuf, Result<ContentType, String>> {
-    fn visit(entries: &[Entry], types: &mut HashMap<PathBuf, Result<ContentType, String>>) {
+/// Reads the `_type.yaml` of every folder in the campaign: what each says, and each
+/// folder's type with what it inherits.
+fn load_types(root: &Path, tree: &[Entry]) -> (types::Types, types::Types) {
+    fn visit(entries: &[Entry], types: &mut types::Types) {
         for entry in entries {
             if let Some(children) = &entry.children {
                 if let Some(ty) = types::load(&entry.path) {
@@ -5436,7 +5565,11 @@ fn load_types(root: &Path, tree: &[Entry]) -> HashMap<PathBuf, Result<ContentTyp
         types.insert(root.to_path_buf(), ty);
     }
     visit(tree, &mut types);
-    types
+
+    let mut folders = Vec::new();
+    collect_folders(tree, &mut folders);
+    let all = types::resolve(root, &folders, &types);
+    (types, all)
 }
 
 /// Saves a note as "<name>.md" in its folder, renaming the file if the name changed.
