@@ -103,12 +103,18 @@ The campaign's people and plots. Everything here is notes, types and links, buil
     - **Export Type...** saves a folder's type, with what it inherits, as `<Name>.type.yaml`; saved types start new folders in any campaign. **Export Campaign Structure...** saves the folders and types as a template (pulled forward from Phase 5, at Ammon's ask, with Open Campaign listing known campaigns)
   - [x] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
     - Date fields pick from a calendar (or are plain text with the calendar off), tags have tag notes listing links to the tagged notes, and a "links to notes" field holds many links
-- [ ] Player management
-  - [ ] The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types
-  - [ ] Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)
+
+**Player Management Excluded**
+The items in Player Management are all things that will just be built as templates, these can be based off character sheets for different TTRPGs. These items are all already included as fields and types
+
+- [x] ~~Player management~~
+  - [x] ~~The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types~~
+  - [x] ~~Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)~~
 - [ ] NPC management
-  - [ ] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
+  - [x] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
+    - This was completed when we ensured links and backlinks were working properly
   - [ ] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
+    - This might just need to be the foundation of a search feature. The search wouldn't need to be fancy, but some sort of search would be useful
 - [ ] Quest tracker
   - [x] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
   - [ ] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
