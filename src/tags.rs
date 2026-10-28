@@ -10,6 +10,9 @@ use crate::campaign;
 use crate::links;
 use crate::note;
 
+/// A tag, with the folder (inside the campaign) its note is in: `(folder, tag)`.
+pub type Tag = (String, String);
+
 /// The tag note for `tag`, in `folder` of the campaign at `root`.
 pub fn path(root: &Path, folder: &str, tag: &str) -> PathBuf {
     root.join(folder)
@@ -87,6 +90,53 @@ fn lists(line: &str, links_to: &dyn Fn(&str) -> bool) -> bool {
     link.range == (0..item.len()) && links_to(&item[link.target.clone()])
 }
 
+/// Whether a tag note's `text` lists a link `links_to` says is to the tagged note.
+pub fn lists_note(text: &str, links_to: &dyn Fn(&str) -> bool) -> bool {
+    text.lines().any(|line| lists(line, links_to))
+}
+
+/// How the tag notes in the campaign at `root` differ from the tags of a note that says
+/// `text`, read from the front matter keys of `fields` (with their tag folders): the tags
+/// whose notes don't list it, and the tag notes that list it though it doesn't have the
+/// tag. `links_to` says whether a link in the tag note at the given path is to the note.
+pub fn differences(
+    root: &Path,
+    text: &str,
+    fields: &[(String, String)],
+    links_to: &dyn Fn(&str, &Path) -> bool,
+) -> (Vec<Tag>, Vec<Tag>) {
+    let tags = in_note(text, fields);
+    let missing = tags
+        .iter()
+        .filter(|(folder, tag)| {
+            let file = path(root, folder, tag);
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            !lists_note(&text, &|target| links_to(target, &file))
+        })
+        .cloned()
+        .collect();
+
+    let mut folders: Vec<&String> = fields.iter().map(|(_, folder)| folder).collect();
+    folders.dedup();
+    let mut extra = Vec::new();
+    for folder in folders {
+        for tag in known(root, folder) {
+            let file = path(root, folder, &tag);
+            let has = tags
+                .iter()
+                .any(|(in_folder, other)| in_folder == folder && path(root, folder, other) == file);
+            if has {
+                continue;
+            }
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            if lists_note(&text, &|target| links_to(target, &file)) {
+                extra.push((folder.clone(), tag));
+            }
+        }
+    }
+    (missing, extra)
+}
+
 /// A tag note's `text` with a link to the note `name` at the end of its list, or `None`
 /// if it already lists a link `links_to` says is to that note.
 pub fn add(text: &str, name: &str, links_to: &dyn Fn(&str) -> bool) -> Option<String> {
@@ -135,6 +185,25 @@ mod tests {
                 ("moods".to_string(), "sleepy".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn finds_tag_notes_out_of_date() {
+        let root = std::env::temp_dir().join(format!("tags-test-{}", std::process::id()));
+        let folder = root.join("tags");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("magic.md"), "- [[Ley Lines]]\n").unwrap();
+        std::fs::write(folder.join("old.md"), "- [[Ley Lines]]\n").unwrap();
+        std::fs::write(folder.join("other.md"), "- [[Mira]]\n").unwrap();
+
+        // Obsidian took `old` off the note and gave it `new`.
+        let text = "---\ntags: [magic, new]\n---\n";
+        let fields = [("tags".to_string(), "tags".to_string())];
+        let links_to = |target: &str, _: &Path| target == "Ley Lines";
+        let (missing, extra) = differences(&root, text, &fields, &links_to);
+        assert_eq!(missing, [("tags".to_string(), "new".to_string())]);
+        assert_eq!(extra, [("tags".to_string(), "old".to_string())]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

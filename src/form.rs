@@ -25,7 +25,7 @@ use crate::note::{self, Note, Section};
 use crate::style;
 use crate::tags;
 use crate::theme::Colors;
-use crate::types::{self, ContentType, Field, Kind, Width};
+use crate::types::{ContentType, Field, Kind, Width};
 
 /// The front matter key listing the type's fields this note doesn't use.
 pub const REMOVED_KEY: &str = "removed_fields";
@@ -1160,17 +1160,7 @@ impl Form {
     /// The front matter keys whose tags have tag notes, each with the folder they are in:
     /// the type's tags fields, and `tags` (which Obsidian reads as tags) in any note.
     pub fn tag_fields(&self) -> Vec<(String, String)> {
-        let mut fields: Vec<(String, String)> = self
-            .ty
-            .fields
-            .iter()
-            .filter(|field| field.kind == Kind::Tags && field.key != ALIASES_KEY)
-            .map(|field| (field.key.clone(), field.tag_folder()))
-            .collect();
-        if fields.iter().all(|(key, _)| key != "tags") {
-            fields.push(("tags".into(), types::TAG_FOLDER.into()));
-        }
-        fields
+        self.ty.tag_fields()
     }
 
     /// The link field last typed in, if the focus is on one.

@@ -68,6 +68,22 @@ impl ContentType {
         self.fields.iter().position(|field| field.key == "name")
     }
 
+    /// The front matter keys whose tags have tag notes, each with the folder they are in:
+    /// the type's tags fields, and `tags` (which Obsidian reads as tags) in any note.
+    /// A note's other names (`aliases`) are a list too, but not tags.
+    pub fn tag_fields(&self) -> Vec<(String, String)> {
+        let mut fields: Vec<(String, String)> = self
+            .fields
+            .iter()
+            .filter(|field| field.kind == Kind::Tags && field.key != "aliases")
+            .map(|field| (field.key.clone(), field.tag_folder()))
+            .collect();
+        if fields.iter().all(|(key, _)| key != "tags") {
+            fields.push(("tags".into(), TAG_FOLDER.into()));
+        }
+        fields
+    }
+
     /// Writes the type as the YAML of a `_type.yaml`, checking it the way [`parse`] does.
     pub fn to_yaml(&self) -> Result<String, String> {
         let yaml = serde_yaml_ng::to_string(self).map_err(|error| error.to_string())?;

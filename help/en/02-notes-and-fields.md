@@ -28,6 +28,7 @@ A **tags** field groups notes. Each tag is also a note of its own, in the **tags
 - Type a tag and press **Enter** (or type a comma) to add it. The tags there are already show under the box: click one to add it without typing it, so it's never misspelled. Typing narrows them down.
 - Each tag is a button that opens its note. **×** takes a tag off.
 - Saving the note makes the notes of new tags and adds a link to the note to each one. A tag taken off has the link taken out of its note. Renaming the note renames the links.
+- Tags changed in another app, like Obsidian, are noticed: a dialog lists the notes whose tags changed and offers to update their tag notes to match.
 - The tags are saved as a list under `tags:`, which Obsidian reads as tags. A tags field can keep its tag notes in another folder: set **Tag notes in** for it in **Edit > Types...**.
 
 ## Links to several notes

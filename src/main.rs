@@ -293,6 +293,18 @@ enum Dialog {
         folder: Option<FolderChoice>,
         error: Option<String>,
     },
+    /// Offers to bring the tag notes up to date with tags changed in another app.
+    Tags(Vec<TagChange>),
+}
+
+/// How a note's tags differ from its tag notes, after its tags were changed in another app.
+#[derive(Debug, Clone)]
+struct TagChange {
+    note: PathBuf,
+    /// The tags (with their tag folders) whose notes don't list it yet.
+    add: Vec<(String, String)>,
+    /// The tag notes that list it, though it no longer has the tag.
+    remove: Vec<(String, String)>,
 }
 
 /// What the link bar offers while a link is being typed.
@@ -554,6 +566,9 @@ enum Message {
     NewFolderTemplate(Template),
     CreateFolder,
     CloseDialog,
+    /// Brings the tag notes up to date with the tags changed in another app, as the
+    /// dialog offering it lists them.
+    UpdateTagNotes,
     ShowTypes,
     Types(types_editor::Message),
     ShowProblems,
@@ -1319,6 +1334,18 @@ impl Workspace {
             .into_iter()
             .filter(|tag| !now.contains(tag))
             .collect();
+        self.update_tag_notes(path, &now, &gone);
+    }
+
+    /// Adds a link to the note at `path` to the notes of the tags in `add` (making the
+    /// ones there aren't yet), and takes it out of the notes of the tags in `remove`.
+    fn update_tag_notes(
+        &mut self,
+        path: &Path,
+        add: &[(String, String)],
+        remove: &[(String, String)],
+    ) {
+        let (now, gone) = (add, remove);
         if now.is_empty() && gone.is_empty() {
             return;
         }
@@ -1385,6 +1412,36 @@ impl Workspace {
                 problems.join(", ")
             ));
         }
+    }
+
+    /// The notes of typed folders in `paths` whose tags differ from their tag notes, as
+    /// they would after their tags were changed in another app, like Obsidian.
+    fn tag_changes(&self, paths: &[PathBuf]) -> Vec<TagChange> {
+        let mut changes = Vec::new();
+        for path in paths {
+            let Some(Ok(ty)) = path.parent().and_then(|folder| self.types.get(folder)) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let Some(name) = path.file_stem().map(|stem| stem.to_string_lossy()) else {
+                continue;
+            };
+            let links_to = |target: &str, file: &Path| {
+                self.index.resolve(target, file) == Some(path.as_path())
+                    || links::normalize(target) == links::normalize(&name)
+            };
+            let (add, remove) = tags::differences(&self.root, &text, &ty.tag_fields(), &links_to);
+            if !add.is_empty() || !remove.is_empty() {
+                changes.push(TagChange {
+                    note: path.clone(),
+                    add,
+                    remove,
+                });
+            }
+        }
+        changes
     }
 
     fn active_tab_mut(&mut self) -> Option<&mut Tab> {
@@ -1587,6 +1644,18 @@ impl Workspace {
             self.rescan();
         } else if new_gone {
             self.rescan();
+        }
+
+        // Tags changed in another app, like Obsidian, can update the tag notes too.
+        let changed: Vec<PathBuf> = self
+            .fingerprints
+            .iter()
+            .filter(|(path, hash)| before.get(*path) != Some(*hash))
+            .map(|(path, _)| path.clone())
+            .collect();
+        let tag_changes = self.tag_changes(&changed);
+        if !tag_changes.is_empty() && self.dialog.is_none() {
+            self.dialog = Some(Dialog::Tags(tag_changes));
         }
 
         self.status.clear();
@@ -2494,6 +2563,45 @@ impl Workspace {
                     "Move",
                     Message::Move,
                 ),
+                Dialog::Tags(changes) => {
+                    let tag_list = |tags: &[(String, String)]| {
+                        tags.iter()
+                            .map(|(_, tag)| tag.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    let lines = changes.iter().map(|change| {
+                        let mut parts = Vec::new();
+                        if !change.add.is_empty() {
+                            parts.push(format!("tagged {}", tag_list(&change.add)));
+                        }
+                        if !change.remove.is_empty() {
+                            parts.push(format!("no longer tagged {}", tag_list(&change.remove)));
+                        }
+                        text(format!(
+                            "{}: {}",
+                            self.tree_name(&change.note, false),
+                            parts.join("; ")
+                        ))
+                        .size(14)
+                        .color(c.text)
+                        .into()
+                    });
+                    (
+                        "Tags changed outside Dungeon Elements".to_string(),
+                        column![
+                            text("These notes' tags were changed in another app. Update the tag notes to match? Notes with new tags are added to their lists (new tags get a note), and taken off the lists of tags they no longer have.")
+                                .size(13)
+                                .color(c.text_muted),
+                            column(lines).spacing(6),
+                        ]
+                        .spacing(12)
+                        .into(),
+                        &None,
+                        "Update Tag Notes",
+                        Message::UpdateTagNotes,
+                    )
+                }
                 Dialog::Types(_) | Dialog::Problems | Dialog::Fix(_) => {
                     unreachable!("these dialogs have their own view")
                 }
@@ -3230,6 +3338,19 @@ impl Workspace {
             }
             Message::CloseDialog => {
                 self.dialog = None;
+                Task::none()
+            }
+            Message::UpdateTagNotes => {
+                let Some(Dialog::Tags(changes)) = self.dialog.take() else {
+                    return Task::none();
+                };
+                self.status = match changes.len() {
+                    1 => "Updated the tag notes of 1 note".into(),
+                    count => format!("Updated the tag notes of {count} notes"),
+                };
+                for change in changes {
+                    self.update_tag_notes(&change.note, &change.add, &change.remove);
+                }
                 Task::none()
             }
             Message::ShowTypes => match self.active_tab() {
