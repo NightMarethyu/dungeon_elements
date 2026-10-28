@@ -26,7 +26,7 @@ use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::code;
-use crate::dice::{self, Expression};
+use crate::dice::{self, Dice, Expression};
 use crate::links::{self, Index, Names};
 use crate::note;
 use crate::style;
@@ -84,8 +84,9 @@ struct Property {
     label: String,
     /// `None` for a field of the note's type that is empty.
     value: Option<markdown::Content>,
-    /// The dice in its value, like `1d8+3` or `+5`, each with a button to roll it.
-    rolls: Vec<Expression>,
+    /// The dice in its value, like `1d8+3`, `+5` or a dice field's `1d20+5 advantage`, each
+    /// with a button to roll it.
+    rolls: Vec<String>,
 }
 
 /// A paragraph, heading, list, table, or other top-level piece of the note's body.
@@ -763,11 +764,19 @@ fn properties(front: &Mapping, ty: Option<&ContentType>) -> Vec<(String, String,
 }
 
 /// The dice expressions in the field `key`, to roll from the box of fields. A link's
-/// target is a note's name, never a roll.
-fn rolls(front: &Mapping, key: &str, ty: Option<&ContentType>) -> Vec<Expression> {
-    let link_field = ty
+/// target is a note's name, never a roll. A dice field is one roll, with its advantage.
+fn rolls(front: &Mapping, key: &str, ty: Option<&ContentType>) -> Vec<String> {
+    let kind = ty
         .and_then(|ty| ty.fields.iter().find(|field| field.key == key))
-        .is_some_and(|field| field.kind == Kind::Link);
+        .map(|field| field.kind);
+    let link_field = kind == Some(Kind::Link);
+    if kind == Some(Kind::Dice)
+        && let Some(dice) = front
+            .get(key)
+            .and_then(|value| Dice::parse(&note::value_to_text(value)))
+    {
+        return vec![dice.to_string()];
+    }
     match front.get(key) {
         Some(value) if !link_field && crate::form::kind_of(value) != Some(Kind::Link) => {
             // Not the names in `[[links]]` in it, either.
@@ -779,6 +788,9 @@ fn rolls(front: &Mapping, key: &str, ty: Option<&ContentType>) -> Vec<Expression
                 text.replace_range(start..end, " ");
             }
             Expression::find(&text)
+                .iter()
+                .map(ToString::to_string)
+                .collect()
         }
         _ => Vec::new(),
     }

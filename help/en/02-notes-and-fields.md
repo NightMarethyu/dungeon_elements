@@ -4,7 +4,7 @@
 
 A folder can say which fields its notes have, like Name, Location and Status for an NPC. Its notes then open as a **form**. The fields are saved as ordinary Markdown with the short ones at the top of the file, so the note still reads well in any text editor.
 
-- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, tags, a link to another note, a checkbox, long text, or steps.
+- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, tags, a link to another note, a checkbox, long text, steps, or [dice](guide:dice).
 - A folder without fields holds plain Markdown notes.
 - To give a folder fields, pick it in **Edit > Types...** and add some.
 

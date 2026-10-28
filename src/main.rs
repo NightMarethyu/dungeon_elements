@@ -3414,6 +3414,11 @@ impl Workspace {
                         tab.modified |= form.update(form::Message::Check(index, !checked));
                         Task::none()
                     }
+                    // A dice field's first box is how many dice.
+                    Some((index, _, form::FieldValue::Dice)) => {
+                        tab.edit = Some(ReadEdit::Field(key));
+                        iced::widget::operation::focus(form::field_id(index))
+                    }
                     Some(_) => {
                         tab.edit = Some(ReadEdit::Field(key));
                         iced::widget::operation::focus(FIELD_EDITOR)
@@ -6438,6 +6443,7 @@ fn field_input<'a>(
             .menu_style(style::choice_menu(c))
             .into(),
         ),
+        form::FieldValue::Dice => Some(form.dice_view(c, Message::Form, index, None)),
         form::FieldValue::Check(_) => None,
     }
 }

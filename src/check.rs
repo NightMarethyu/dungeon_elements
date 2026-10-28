@@ -324,6 +324,18 @@ fn value_problem(kind: Kind, options: &[String], value: &Value) -> Option<String
         Kind::Tags if form::kind_of(value).is_none() || matches!(value, Value::Bool(_)) => {
             Some("should be a list of words".into())
         }
+        Kind::Text | Kind::Link | Kind::Dice
+            if matches!(value, Value::Mapping(_) | Value::Tagged(_)) =>
+        {
+            Some("is nested YAML, but should be one line of text".into())
+        }
+        // Dice the form can't split into parts, like `1d8+1d6`, are kept as written.
+        Kind::Dice
+            if crate::dice::Dice::parse(&text).is_none()
+                && crate::dice::Expression::parse(&text).is_err() =>
+        {
+            Some(format!("should be dice like 2d6+3, but is {text:?}"))
+        }
         Kind::Text | Kind::Link if matches!(value, Value::Mapping(_) | Value::Tagged(_)) => {
             Some("is nested YAML, but should be one line of text".into())
         }
@@ -387,6 +399,22 @@ mod tests {
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems[0].contains("isn't one of its options"));
         assert!(problems[1].starts_with("Weight should be a number"));
+    }
+
+    #[test]
+    fn reports_dice_that_cant_be_rolled() {
+        let mut types = item_types();
+        let Some(Ok(item)) = types.get_mut(Path::new("items")) else {
+            unreachable!()
+        };
+        item.fields
+            .push(types::Field::for_note("damage", Kind::Dice));
+        let check = |text: &str| note(text, Path::new("items"), &types);
+        assert!(check("---\ndamage: 1d20+5 advantage\n---\n").is_empty());
+        assert!(check("---\ndamage: 1d8+1d6\n---\n").is_empty());
+        let problems = check("---\ndamage: lots\n---\n");
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].0.contains("should be dice"), "{problems:?}");
     }
 
     #[test]

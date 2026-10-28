@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Dice fields
+
+- A new kind of field, **Dice**: pick how many dice, which die, a modifier (`+2`), and something special (advantage, disadvantage, keep highest or keep lowest) instead of typing an expression. Add one to a folder in **Edit > Types...** or to one note with **+**.
+- Its roll button rolls it with the field's own advantage or disadvantage, on any die, in the form and in the reading view.
+- It is saved as readable text, like `2d6+3`, `4d6kh3` or `1d20+5 advantage`, so Obsidian shows it as it reads and it can be typed there too. Dice with more than one kind of die are kept as written.
+
 ### Steps
 
 - A new kind of field, **Steps**: a checklist where each step is text, a `[[link]]` to another note, or both. A quest's Objectives are steps, so a step can be another quest, building quest lines out of smaller quests.
