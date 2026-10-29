@@ -42,6 +42,7 @@ fields:
     folder: factions
   - key: goal
     label: Goal
+    table: Wants
   - key: tags
     label: Tags
     kind: tags

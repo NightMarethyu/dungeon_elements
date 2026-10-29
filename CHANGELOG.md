@@ -4,6 +4,11 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Story prompts
+
+- Built-in story prompts, a few words each to spark an idea: **Wants**, **Trouble**, **Twists**, **What's here** and **Feel of a place**, plus **Action and Theme**, two words to read into, like *Betray* and *Harvest*.
+- A long text field that rolls on a table has an **Inspire me** button. New campaigns set it on a quest's Hook, a location's First impression and Description, and an NPC's or faction's Wants and Goal.
+
 ### Name generators
 
 - Built-in roll tables, under **Built in** in the Roll Tables list: **Names** (any of the others), names by culture (**English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese**), **Place names**, **Inn and shop names** and **Group names**. Link to them from your own tables or type their names in the dice roller. **Copy** puts one in your **tables** folder to change it, and your copy is used in its place.

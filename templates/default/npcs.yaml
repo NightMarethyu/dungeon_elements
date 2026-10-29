@@ -36,6 +36,7 @@ fields:
     folder: sessions
   - key: wants
     label: Wants
+    table: Wants
   - key: tags
     label: Tags
     kind: tags

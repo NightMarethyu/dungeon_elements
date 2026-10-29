@@ -1554,6 +1554,7 @@ impl Form {
                                     c,
                                     roll_icon,
                                     table,
+                                    false,
                                     map(Message::RollTable(index)),
                                 )
                             });
@@ -1635,6 +1636,7 @@ impl Form {
                                         c,
                                         roll_icon,
                                         table,
+                                        true,
                                         map(Message::RollTable(index)),
                                     ),
                                 ]

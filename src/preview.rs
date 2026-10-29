@@ -88,8 +88,9 @@ struct Property {
     /// The dice in its value, like `1d8+3`, `+5` or a dice field's `1d20+5 advantage`, each
     /// with a button to roll it.
     rolls: Vec<String>,
-    /// The roll table the field rolls on to fill it in, if it names one.
-    table: Option<String>,
+    /// The roll table the field rolls on to fill it in, if it names one, and whether it is a
+    /// long text field, whose button reads Inspire me.
+    table: Option<(String, bool)>,
 }
 
 /// A paragraph, heading, list, table, or other top-level piece of the note's body.
@@ -205,7 +206,14 @@ impl Preview {
                 rolls: rolls(&front, &key, ty),
                 table: ty
                     .and_then(|ty| ty.fields.iter().find(|field| field.key == key))
-                    .and_then(|field| field.table().map(String::from)),
+                    .and_then(|field| {
+                        field.table().map(|table| {
+                            (
+                                table.to_string(),
+                                field.kind == crate::types::Kind::Longtext,
+                            )
+                        })
+                    }),
                 key,
                 label,
                 value: value.map(|value| markdown::Content::parse(&value)),
@@ -560,11 +568,12 @@ impl Preview {
                         })
                     })
                     .collect();
-                if let Some(table) = &property.table {
+                if let Some((table, inspire)) = &property.table {
                     buttons.push(dice::table_button(
                         c,
                         &edit.roll_icon,
                         table,
+                        *inspire,
                         (edit.on_roll_into)(property.key.clone()),
                     ));
                 }

@@ -124,23 +124,23 @@ The items in Player Management are all things that will just be built as templat
   - [x] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
     - A Quests list in the sidebar (View > Quests, Ctrl+Shift+Q) in place of the file tree, grouped by Status, with finished groups collapsed. Steps are ticked from the list, and a step that is a Complete quest counts as done. Built as its own piece (`src/quests.rs`) so Layouts can move it into any pane
     - Left out for now: changing a quest's Status from the list, writing a sub-quest's completion into its parent's file, sorting or filtering the list, and adding or reordering steps from it
-- [ ] Generators
+- [x] Generators
   - [x] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
     - Rolled from a Roll button above the table in the reading view, the Roll Tables list in the sidebar (View > Roll Tables, Ctrl+Shift+T), or by typing the table's name in the dice roller. Results show in the dice roller with Copy and Create New Note
     - A result that links to another table (`[[Storms]]`, `[[Weather#Winter]]`) rolls it too, and dice in a result (`1d4 days`) are rolled. A table with several result columns gives a whole row, or rolls each column on its own (a toggle, kept in `.dungeon_elements/tables.yaml`)
     - File > New Roll Table... makes an empty table (die, columns, rows split evenly) or fills one from a pasted list. Problems lists rows the die can't pick and numbers no row has
-    - Next: story prompts and Inspire me
   - [x] Name generators, built on roll tables, with a few built-in lists to start from
     - Built-in tables (in the app, read only, copied into the campaign to change): Names by culture (English, Norse, Celtic, Latin, Greek, Arabic, Slavic, Japanese), Place names, Inn and shop names, Group names. A campaign note with the same name is used in their place
     - `table:` on a text or long text field (Rolls on in Edit > Types) gives it a die button that fills it in, asking before replacing. The default template sets it on NPC, location and faction names
-  - [ ] Story prompts: suggestions for inspiration when building quests and places (drawn from roll tables, never writing the story for the GM)
+  - [x] Story prompts: suggestions for inspiration when building quests and places (drawn from roll tables, never writing the story for the GM)
+    - Built-in tables of a few words each: Wants, Trouble, Twists, What's here, Feel of a place, and Action and Theme (two words to read into). A long text field with `table:` gets an **Inspire me** button; the default template sets it on quest hooks, NPC and faction wants, and location descriptions
 - [ ] World-building walkthrough: an optional guide that asks the GM questions one at a time and turns the answers into linked starter notes
   - Offered when a new campaign is made (a *Start the walkthrough* box in New Campaign) and any time from **File > Campaign Walkthrough...**
   - Opens as a tab: chapters on the left (the campaign, the world, power, the extraordinary, where it starts, the heroes, the first session), one question at a time on the right with Back, Skip and Next. Every question can be skipped, and chapters can be done in any order
   - Each answer uses the input of the field it fills (a calendar for a date, the dice picker for dice) and is saved into its note right away, so nothing is lost and the notes stay the truth. A list answer ("name the factions") makes a note for each, and follow-up questions go through them; links fill themselves (a region is Part of the world, the starting town is the campaign's Home base)
   - Remembers where the GM left off in `.dungeon_elements/walkthrough.yaml` in the campaign: which questions were answered or skipped and which note each answer went to (hidden, so the file tree, templates and Obsidian ignore it)
   - The questions are data, in a `walkthrough.yaml` beside the types: the default one is built in, and a template can carry its own (so the built-in system templates can ask their own questions)
-  - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators)
+  - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators): a question names its table with `table:`, like a field does, falling back to Action and Theme
   - Built in three steps: the question format, progress file and writing answers into notes; the walkthrough tab and menu items, with a help guide; templates' own questions and Inspire me
 
 ### Phase 3: climax
