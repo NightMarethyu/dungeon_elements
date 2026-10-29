@@ -9,7 +9,7 @@
 # Each question fills the `field` (its key in the folder's type) of its `note`, or with no
 # field asks for the note's name, or the names of a `many` note. A field question on a
 # `many` note is asked once for each of them, with `{name}` filled in. `table` is what
-# Inspire me rolls on. Questions whose folder or field a campaign doesn't have are left out.
+# Inspire me rolls on, and an empty one (`table: ""`) leaves Inspire me out. Questions whose folder or field a campaign doesn't have are left out.
 notes:
   campaign:
     folder: campaign
@@ -204,6 +204,7 @@ chapters:
       - ask: Who plays {name}?
         note: heroes
         field: player
+        table: ""
       - ask: Who does {name} know or care about?
         hint: Type names to link NPCs, or make new ones.
         note: heroes

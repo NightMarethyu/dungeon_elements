@@ -602,6 +602,8 @@ pub struct Form {
     focus: Option<usize>,
     /// In a steps field, the step last typed in.
     step: usize,
+    /// Whether fields can't be removed (see [`Form::lock`]).
+    locked: bool,
 }
 
 impl Form {
@@ -712,6 +714,7 @@ impl Form {
             show_other: false,
             focus: None,
             step: 0,
+            locked: false,
             front: note.front,
         };
 
@@ -958,7 +961,15 @@ impl Form {
 
     /// Whether field `index` can be removed from this note: any but the name.
     fn can_remove(&self, index: usize) -> bool {
-        index < self.fields.len() && !(index < self.own && self.fields[index].key == "name")
+        !self.locked
+            && index < self.fields.len()
+            && !(index < self.own && self.fields[index].key == "name")
+    }
+
+    /// Keeps the form's fields from being removed, for a form shown somewhere fields
+    /// can't be added back, like the walkthrough.
+    pub fn lock(&mut self) {
+        self.locked = true;
     }
 
     /// The labels of the type's fields this note doesn't use.
@@ -1156,6 +1167,14 @@ impl Form {
         self.tab_stops().into_iter().map(|(.., id)| id).collect()
     }
 
+    /// The widget id of field `index`'s first input, for focusing it.
+    pub fn first_id(&self, index: usize) -> Option<String> {
+        self.tab_stops()
+            .into_iter()
+            .find(|(field, ..)| *field == index)
+            .map(|(.., id)| id)
+    }
+
     /// Notes that Tab moved to input `position` of [`Self::tab_ids`].
     pub fn tabbed_to(&mut self, position: usize) {
         if let Some((index, step, _)) = self.tab_stops().into_iter().nth(position) {
@@ -1310,15 +1329,18 @@ impl Form {
     }
 
     /// The field with `key`, if the note has it.
-    #[allow(dead_code)] // Used by the walkthrough tab, which comes next.
     pub fn field(&self, key: &str) -> Option<&Field> {
         self.fields.iter().find(|field| field.key == key)
+    }
+
+    /// The index of the field with `key`, for [`Form::field_view`].
+    pub fn index_of(&self, key: &str) -> Option<usize> {
+        self.fields.iter().position(|field| field.key == key)
     }
 
     /// What the field with `key` holds, as it is stored: its front matter value, or for a
     /// long text or steps field the text of its section. `None` if it is empty (an
     /// unticked box counts as empty) or the note has no such field.
-    #[allow(dead_code)] // Used by the walkthrough tab, which comes next.
     pub fn value(&self, key: &str) -> Result<Option<Value>, String> {
         let Some(index) = self.fields.iter().position(|field| field.key == key) else {
             return Ok(None);
@@ -1334,7 +1356,6 @@ impl Form {
 
     /// Sets the field with `key` to `value`, given as [`Form::value`] gives it. Returns
     /// whether the note has the field.
-    #[allow(dead_code)] // Used by the walkthrough tab, which comes next.
     pub fn set_value(&mut self, key: &str, value: Option<&Value>) -> bool {
         let Some(index) = self.fields.iter().position(|field| field.key == key) else {
             return false;
@@ -1523,6 +1544,7 @@ impl Form {
                 on_menu,
                 roll_icon,
                 known_tags,
+                None,
             );
             (self.fields[index].width, widget)
         });
@@ -1589,7 +1611,8 @@ impl Form {
     }
 
     /// Shows field `index` of the form on its own, with its label: the same input the
-    /// form shows for it, so it can be edited outside the form too.
+    /// form shows for it, so it can be edited outside the form too. Enter in a one-line
+    /// input sends `submit`, if given.
     #[allow(clippy::too_many_arguments)]
     pub fn field_view<'a, M: Clone + 'a>(
         &'a self,
@@ -1602,6 +1625,7 @@ impl Form {
         on_menu: fn(Point) -> M,
         roll_icon: &'a svg::Handle,
         known_tags: &'a KnownTags,
+        submit: Option<M>,
     ) -> Element<'a, M> {
         let key_binding = key_binding(accept.clone(), shortcut);
 
@@ -1656,6 +1680,8 @@ impl Form {
                     && let Some(accept) = &accept
                 {
                     input = input.on_submit(accept.clone());
+                } else if let Some(submit) = &submit {
+                    input = input.on_submit(submit.clone());
                 }
 
                 // The input is always first in a row, so the Open button
@@ -2311,7 +2337,6 @@ pub fn tab(ids: Vec<String>, back: bool) -> impl Operation<usize> {
 }
 
 /// Whether a stored value holds nothing: null, blank text or an empty list.
-#[allow(dead_code)] // Used by the walkthrough tab, which comes next.
 pub fn is_empty_value(value: &Value) -> bool {
     match value {
         Value::Null => true,

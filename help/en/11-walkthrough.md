@@ -1,0 +1,48 @@
+# The campaign walkthrough
+
+The walkthrough builds your world with you, one question at a time: what the campaign is about, the world and its regions, who holds power, where the heroes start, who the heroes are, and how the first session opens. Each answer goes into a note, and the notes it needs are made for you, linked to each other.
+
+## Starting it
+
+- When you make a campaign, **Start the walkthrough** is ticked. Leave it ticked, and the walkthrough opens once the campaign is made.
+- **File > Campaign Walkthrough...** opens it any time, at the question you were on.
+- With no note open, click **Build your world with the walkthrough**.
+
+The walkthrough opens in a tab of its own. Close it like any other tab and open it again later: your answers are already in their notes, and the walkthrough remembers where you were.
+
+## Answering
+
+The chapters are listed on the left, with how many of their questions are answered. Click one to go to it.
+
+On the right is one question, with the box you answer in. Under it, **Goes into** names the note the answer is written into, and the field it fills. Click the note's name to open it.
+
+- **Next** writes the answer and goes on. In a one-line answer, **Enter** does the same, and in a long one, **Ctrl+Enter**.
+- **Back** goes to the question before.
+- **Skip** leaves the question for later, and **Skip Chapter** leaves the rest of the chapter.
+- **Inspire me** rolls on a roll table for an idea and puts it in the answer, like a name for a faction or a twist for the first session. Roll again for another. If the answer already has something in it, you're asked whether to replace it or add the roll on a new line.
+
+An empty answer writes nothing, so pressing **Next** without typing is the same as skipping.
+
+## Names and lists
+
+Some questions ask for names: the campaign's, the world's, or a list like the regions or factions, one name on each line. Each name makes a note in its folder, and the questions after it are asked about each one: "What do the Iron Guild want?", then the same for the next faction.
+
+Changing a name you gave before renames its note, and its links with it.
+
+## Links
+
+Answers that name other notes, like a faction's leader or a hero's bonds, link to them. Type a name: notes that match are offered as you type (**Tab** takes the first), and a name with no note yet makes one when you press **Next**. In a long answer or a step, type `[[` to start a link.
+
+So answering "Who leads the Iron Guild?" with a name makes an NPC with that name, and the faction links to them.
+
+## Changing your answers
+
+Every answer is an ordinary field in an ordinary note. Change it in the note, and the walkthrough shows the new answer next time. A note you rename or move is still found.
+
+If a note is open with changes you haven't saved, the walkthrough's answer goes into its tab instead, so your changes aren't written over. Save the tab to keep both.
+
+At the end of each chapter, a summary lists the notes it made. Click one to open it. When you reach the end, open any chapter to change answers or fill in ones you skipped.
+
+## Your own folders
+
+The walkthrough asks about the starter folders. If a campaign doesn't have a folder or a field a question is about, that question is left out, so the walkthrough fits campaigns whose folders you've changed.

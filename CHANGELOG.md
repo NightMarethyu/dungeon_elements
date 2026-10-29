@@ -4,6 +4,16 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Campaign walkthrough
+
+- A walkthrough that builds your world with you, one question at a time, in seven chapters: the campaign, the world, power, the extraordinary, where it starts, the heroes and the first session. Each answer goes into a note, and the notes it needs are made for you and linked: name the factions and each gets a note, then questions about each one; name a faction's leader and an NPC is made.
+- **Start the walkthrough** in New Campaign opens it once the campaign is made. **File > Campaign Walkthrough...** and **Build your world with the walkthrough**, shown when no note is open, open it later, at the question you were on.
+- **Next**, **Back**, **Skip** and **Skip Chapter** move through it, and **Enter** (or **Ctrl+Enter** in a long answer) goes to the next question. The chapters are listed on the side with how many questions are answered, and each ends with a summary of the notes it made.
+- **Inspire me** rolls on a roll table for an idea: names from the name generators, and wants, trouble and twists from the story prompts.
+- Answers are ordinary fields, so changing them in a note changes them in the walkthrough. A note open with unsaved changes gets the answer in its tab.
+- Questions about folders or fields a campaign doesn't have are left out.
+- New guide in **Help > How-To Guides**: The campaign walkthrough.
+
 ### Story prompts
 
 - Built-in story prompts, a few words each to spark an idea: **Wants**, **Trouble**, **Twists**, **What's here** and **Feel of a place**, plus **Action and Theme**, two words to read into, like *Betray* and *Harvest*.

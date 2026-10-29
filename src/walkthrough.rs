@@ -10,9 +10,6 @@
 //! walkthrough made, which questions were skipped, and where the GM was. Whether a
 //! question is answered is read from its note, so the notes stay the truth.
 
-// The walkthrough tab, which uses all of this, comes next.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,6 +65,15 @@ pub struct NoteSpec {
     pub add_to: Option<AddTo>,
 }
 
+impl NoteSpec {
+    /// The set name the note gets, with the campaign's title filled in. A list of notes
+    /// has none.
+    pub fn set_name(&self, campaign: &Campaign) -> Option<String> {
+        let name = self.name.as_ref().filter(|_| !self.many)?;
+        Some(name.replace("{title}", &campaign.title()))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AddTo {
@@ -103,7 +109,8 @@ pub struct Question {
     /// (or, for a `many` note, the names of the notes to make).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
-    /// The roll tables Inspire me rolls on, with commas between them, like a field's.
+    /// The roll tables Inspire me rolls on, with commas between them, like a field's. An
+    /// empty one leaves Inspire me out, for answers no table could give, like who plays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<String>,
 }
@@ -120,6 +127,12 @@ impl Question {
     /// The question about the note called `name`, with `{name}` filled in.
     pub fn ask_about(&self, name: Option<&str>) -> String {
         match name {
+            // "What do the {name} want?" about The Pale Court shouldn't say "the The".
+            Some(name) if name.to_lowercase().starts_with("the ") => self
+                .ask
+                .replace("the {name}", name)
+                .replace("The {name}", name)
+                .replace("{name}", name),
             Some(name) => self.ask.replace("{name}", name),
             None => self.ask.replace("{name}", "it"),
         }
@@ -221,6 +234,14 @@ impl Questions {
         }
     }
 
+    /// Whether any of the questions would be asked in a campaign with these typed
+    /// folders (inside the campaign, like `locations/settlements`).
+    pub fn asks_about(&self, typed: &[&str]) -> bool {
+        self.notes
+            .values()
+            .any(|spec| typed.contains(&spec.folder.trim_matches('/')))
+    }
+
     /// The questions in order, with the chapter each is in.
     pub fn all(&self) -> impl Iterator<Item = (&Chapter, &Question)> {
         self.chapters.iter().flat_map(|chapter| {
@@ -300,7 +321,7 @@ impl Campaign<'_> {
         self.root.join(spec.folder.trim_matches('/'))
     }
 
-    fn type_of(&self, spec: &NoteSpec) -> Option<&ContentType> {
+    pub fn type_of(&self, spec: &NoteSpec) -> Option<&ContentType> {
         self.types.get(&self.folder(spec))?.as_ref().ok()
     }
 
@@ -452,10 +473,8 @@ impl Progress {
             }
         }
         if found.is_empty()
-            && !spec.many
-            && let Some(set) = &spec.name
+            && let Some(name) = spec.set_name(campaign)
         {
-            let name = set.replace("{title}", &campaign.title());
             found.extend(in_folder(&note_file(&name)));
         }
         found
@@ -518,12 +537,12 @@ impl Progress {
         let Some(field) = &question.field else {
             let mut names: Vec<String> = notes.iter().map(|path| name_of(path)).collect();
             if names.is_empty()
-                && let Some(set) = questions
+                && let Some(name) = questions
                     .notes
                     .get(&question.note)
-                    .and_then(|spec| spec.name.as_ref())
+                    .and_then(|spec| spec.set_name(campaign))
             {
-                names.push(set.replace("{title}", &campaign.title()));
+                names.push(name);
             }
             return Ok(Current::Names(names));
         };
@@ -612,9 +631,30 @@ impl Progress {
             }
             (Some(key), Answer::Value(value)) => {
                 let notes = self.subjects(campaign, questions, question);
-                let path = notes
-                    .get(which)
-                    .ok_or_else(|| format!("There is no {} to write this into yet", ty.label()))?;
+                let path = match notes.get(which) {
+                    Some(path) => path.clone(),
+                    // A note with a set name is made by its first answer.
+                    None => match spec.set_name(campaign) {
+                        Some(name) if which == 0 => {
+                            let path =
+                                self.make(campaign, questions, spec, &ty, &name, &mut written)?;
+                            self.record(
+                                campaign,
+                                questions,
+                                &question.note,
+                                std::slice::from_ref(&path),
+                            );
+                            path
+                        }
+                        _ => {
+                            return Err(format!(
+                                "There is no {} to write this into yet",
+                                ty.label()
+                            ));
+                        }
+                    },
+                };
+                let path = &path;
                 let mut form = read_form(campaign, &ty, path)?;
                 if !form.set_value(key, value.as_ref()) {
                     return Err(format!("{} has no field {key}", ty.label()));
@@ -748,7 +788,7 @@ fn link_value(kind: Kind, paths: &[PathBuf]) -> Option<Value> {
 
 /// Makes a note for each `[[link]]` in `value`, the new value of `field` in the note at
 /// `from`, that names no note yet, in the folder the field links to.
-fn make_linked(
+pub fn make_linked(
     campaign: &Campaign,
     field: &Field,
     value: Option<&Value>,
@@ -804,7 +844,7 @@ fn stem(path: &Path) -> String {
 }
 
 /// The name of the note at `path`: its name field, or else its file name.
-fn name_of(path: &Path) -> String {
+pub fn name_of(path: &Path) -> String {
     fs::read_to_string(path)
         .ok()
         .and_then(|text| note::parse(&text).ok())
@@ -1102,6 +1142,10 @@ mod tests {
             goal.ask_about(Some("Iron Guild")),
             "What do the Iron Guild want?"
         );
+        assert_eq!(
+            goal.ask_about(Some("The Pale Court")),
+            "What do The Pale Court want?"
+        );
 
         progress
             .answer(&campaign, &questions, goal, 1, text("The crown"))
@@ -1209,6 +1253,33 @@ mod tests {
         assert!(text.contains("- '[[Kestrel]]'\n- '[[Odo]]'"), "{text}");
         // Heroes are from the starting town.
         assert!(test.read("players/Odo.md").contains("home: '[[Brindle]]'"));
+    }
+
+    #[test]
+    fn a_note_with_a_set_name_is_made_by_its_first_answer() {
+        let test = Test::new("set_name");
+        let index = test.index();
+        let campaign = Campaign {
+            root: &test.root,
+            types: &test.types,
+            index: &index,
+        };
+        let questions = Questions::built_in();
+        let mut progress = Progress::default();
+        let opening = question(&questions, "first_session.strong_start");
+        assert_eq!(
+            progress.current(&campaign, &questions, opening, 0),
+            Ok(Current::NoNote)
+        );
+
+        let written = progress
+            .answer(&campaign, &questions, opening, 0, text("An ambush"))
+            .unwrap();
+        assert_eq!(written.made, [test.root.join("sessions/Session 1.md")]);
+        let text = test.read("sessions/Session 1.md");
+        assert!(text.contains("status: Planned"), "{text}");
+        assert!(text.contains("An ambush"), "{text}");
+        assert!(progress.answered(&campaign, &questions, opening));
     }
 
     #[test]
@@ -1321,6 +1392,8 @@ mod tests {
         assert_eq!(ask.tables(Some(wants), &npc), ["Wants"]);
         assert_eq!(ask.tables(Some(notes), &npc), [FALLBACK_TABLE]);
         assert!(ask.tables(Some(status), &npc).is_empty());
+        ask.table = Some(String::new());
+        assert!(ask.tables(Some(notes), &npc).is_empty());
     }
 
     #[test]

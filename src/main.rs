@@ -32,6 +32,7 @@ mod theme;
 mod types;
 mod types_editor;
 mod walkthrough;
+mod walkthrough_tab;
 mod watch;
 mod web;
 
@@ -41,8 +42,8 @@ use std::time::SystemTime;
 
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
-    Svg, button, center, column, container, mouse_area, opaque, pick_list, row, rule, scrollable,
-    space, stack, svg, text, text_editor, text_input, tooltip,
+    Svg, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
+    scrollable, space, stack, svg, text, text_editor, text_input, tooltip,
 };
 use iced::{Center, Element, Fill, Point, Size, Subscription, Task, window};
 
@@ -149,6 +150,8 @@ struct NewCampaign {
     template: templates::Template,
     /// The folders the picked template makes, or why it can't be read.
     structure: Result<templates::Structure, String>,
+    /// Whether to start the walkthrough once the campaign is made.
+    walkthrough: bool,
     error: Option<String>,
 }
 
@@ -157,6 +160,20 @@ impl NewCampaign {
     fn pick(&mut self, template: templates::Template) {
         self.structure = template.structure();
         self.template = template;
+    }
+
+    /// Whether the walkthrough has questions for the folders the picked template makes.
+    fn has_walkthrough(&self) -> bool {
+        let Ok(structure) = &self.structure else {
+            return false;
+        };
+        let typed: Vec<&str> = structure
+            .folders
+            .iter()
+            .filter(|(_, ty)| ty.is_some())
+            .map(|(folder, _)| folder.as_str())
+            .collect();
+        walkthrough::Questions::built_in().asks_about(&typed)
     }
 }
 
@@ -252,6 +269,8 @@ struct Workspace {
     table_settings: tables::Settings,
     /// The folder the last note made from a roll went in.
     roll_folder: Option<PathBuf>,
+    /// The world-building walkthrough, while its tab is open.
+    walkthrough: Option<walkthrough_tab::Walkthrough>,
 }
 
 /// What the sidebar's search box holds, and the notes it found.
@@ -621,6 +640,8 @@ enum Message {
     BrowseLocation,
     LocationPicked(Option<PathBuf>),
     TemplatePicked(templates::Template),
+    /// New Campaign's Start the walkthrough box.
+    ToggleNewWalkthrough(bool),
     /// Asks for a template (`.zip`) or type (`.yaml`) file to import.
     ImportTemplate,
     ImportPicked(Option<PathBuf>),
@@ -762,6 +783,10 @@ enum Message {
     /// Searches the whole campaign again.
     SearchEverywhere,
     ClearSearch,
+    // The world-building walkthrough
+    /// Opens the walkthrough in its tab, or shows the tab.
+    ShowWalkthrough,
+    Walkthrough(walkthrough_tab::Message),
     // Quests
     ShowQuests,
     Quests(quests::Message),
@@ -1246,6 +1271,7 @@ impl App {
                         templates: templates::list(),
                         template: templates::Template::Starter,
                         structure: Ok(templates::Structure::default()),
+                        walkthrough: true,
                         error: None,
                     };
                     form.pick(templates::Template::Starter);
@@ -1283,9 +1309,16 @@ impl App {
                         }
                     };
 
+                    let walkthrough = form.walkthrough && form.has_walkthrough();
                     match campaign::create(Path::new(form.location.trim()), &form.title, structure)
                     {
-                        Ok(root) => self.open_workspace(root),
+                        Ok(root) => {
+                            self.open_workspace(root);
+                            if walkthrough && let Screen::Workspace(workspace) = &mut self.screen {
+                                workspace.show_walkthrough();
+                                return workspace.focus_walkthrough();
+                            }
+                        }
                         Err(message) => form.error = Some(message),
                     }
                     Task::none()
@@ -1299,6 +1332,7 @@ impl App {
                                 form.location = path.display().to_string();
                             }
                             Message::TemplatePicked(template) => form.pick(template),
+                            Message::ToggleNewWalkthrough(on) => form.walkthrough = on,
                             Message::ImportPicked(Some(file)) => match templates::import(&file) {
                                 Ok(templates::Imported::Template(name, _)) => {
                                     form.templates = templates::list();
@@ -1457,6 +1491,8 @@ impl App {
                     item("New Folder...", Some(Message::ShowNewFolder)),
                     item("New Roll Table...", Some(Message::ShowNewTable(None))),
                     item("Open File...", Some(Message::OpenFile)).shortcut("Ctrl+O"),
+                    Entry::Separator,
+                    item("Campaign Walkthrough...", Some(Message::ShowWalkthrough)),
                     Entry::Separator,
                     item("Save", when(has_tab, Message::Save)).shortcut("Ctrl+S"),
                     item("Save As...", when(has_tab, Message::SaveAs)).shortcut("Ctrl+Shift+S"),
@@ -1640,6 +1676,7 @@ impl Workspace {
             tables: tables::List::default(),
             table_settings,
             roll_folder: None,
+            walkthrough: None,
         }
     }
 
@@ -4203,7 +4240,26 @@ impl Workspace {
             self.finish_editing();
         }
 
+        // While the walkthrough shows, typing goes into its answer box.
+        if self.walkthrough_shown()
+            && matches!(
+                message,
+                Message::Form(_)
+                    | Message::CompleteLink(_)
+                    | Message::TabField(_)
+                    | Message::FieldTabbed(_)
+                    | Message::FillField(_)
+            )
+        {
+            return self.walkthrough_input(message);
+        }
+
         match message {
+            Message::ShowWalkthrough => {
+                self.show_walkthrough();
+                self.focus_walkthrough()
+            }
+            Message::Walkthrough(message) => self.walkthrough_message(message),
             Message::ToggleFolder(path) => {
                 if !self.expanded.remove(&path) {
                     self.expanded.insert(path);
@@ -5156,6 +5212,10 @@ impl Workspace {
             }
             Message::SelectTab(id) => {
                 self.active = Some(id);
+                if self.walkthrough_shown() {
+                    // Its notes may have changed in their tabs.
+                    self.refresh_walkthrough();
+                }
                 Task::none()
             }
             Message::ShowProblems => {
@@ -5212,6 +5272,10 @@ impl Workspace {
                     tab.disk = tab.path.as_deref().and_then(check::modified_time);
                     self.status = "Keeping your version; saving will replace the file".into();
                 }
+                Task::none()
+            }
+            Message::CloseTab(id) if self.walkthrough.as_ref().is_some_and(|w| w.id == id) => {
+                self.close_walkthrough();
                 Task::none()
             }
             Message::CloseTab(id) => {
@@ -5786,10 +5850,13 @@ impl Workspace {
         settings: &Settings,
         dice: &'a dice::Icons,
     ) -> Element<'a, Message> {
-        let mut main = column![
-            self.tab_bar(c, settings, dice),
-            self.editor(c, settings.show_toolbar, dice)
-        ];
+        let pane = match &self.walkthrough {
+            Some(walkthrough) if self.walkthrough_shown() => {
+                self.walkthrough_view(c, walkthrough, dice)
+            }
+            _ => self.editor(c, settings.show_toolbar, dice),
+        };
+        let mut main = column![self.tab_bar(c, settings, dice), pane];
         if self.dice.open {
             main = main
                 .push(rule::horizontal(c.border_width.max(1.0)).style(style::separator(c)))
@@ -6165,6 +6232,30 @@ impl Workspace {
             })
             .into()
         });
+        // The walkthrough's tab comes first.
+        let walkthrough = self
+            .walkthrough
+            .as_ref()
+            .map(|walkthrough| -> Element<'_, Message> {
+                let active = self.walkthrough_shown();
+                container(
+                    row![
+                        button(text("Walkthrough").size(13))
+                            .padding([8, 4])
+                            .style(style::tab_button(c, active))
+                            .on_press(Message::SelectTab(walkthrough.id)),
+                        button(text("×").size(13))
+                            .padding([8, 4])
+                            .style(style::tab_button(c, active))
+                            .on_press(Message::CloseTab(walkthrough.id)),
+                    ]
+                    .align_y(Center),
+                )
+                .padding([0, 6])
+                .style(style::tab(c, active))
+                .into()
+            });
+        let tabs = walkthrough.into_iter().chain(tabs);
 
         // The d20 at the right opens and closes the dice roller.
         let roll = button(Svg::new(dice.roll.clone()).width(28).height(28))
@@ -6286,25 +6377,36 @@ impl Workspace {
     /// The flag is true when the link is typed in a link field rather than a text editor.
     fn link_suggestions(&self) -> Suggestions {
         let none = Suggestions::default();
-        let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
-            return none;
-        };
-        // In the reading view, the link is typed in the block or field being edited.
-        let form = match &tab.edit {
-            Some(ReadEdit::Field(key)) => tab
-                .form
-                .as_ref()
-                .filter(|form| form.short_field(key).map(|(index, ..)| index) == form.focus()),
-            _ => tab.form.as_ref().filter(|_| tab.shows_form()),
-        };
-        let query = match (&tab.edit, form) {
-            (Some(ReadEdit::Block { content, .. }), _) => {
-                links::query(content).map(|query| (query, false))
+        let (form, query, from) = match &self.walkthrough {
+            // The walkthrough's answer box is a form of its own.
+            Some(walkthrough) if self.walkthrough_shown() => {
+                let Some(form) = &walkthrough.form else {
+                    return none;
+                };
+                (Some(form), form.link_query(), self.walkthrough_from())
             }
-            (_, Some(form)) => form.link_query(),
-            (Some(ReadEdit::Field(_)), None) => None,
-            (None, None) if tab.reading() => None,
-            (None, None) => links::query(&tab.content).map(|query| (query, false)),
+            _ => {
+                let Some(tab) = self.active_tab().filter(|tab| tab.is_note()) else {
+                    return none;
+                };
+                // In the reading view, the link is typed in the block or field being edited.
+                let form = match &tab.edit {
+                    Some(ReadEdit::Field(key)) => tab.form.as_ref().filter(|form| {
+                        form.short_field(key).map(|(index, ..)| index) == form.focus()
+                    }),
+                    _ => tab.form.as_ref().filter(|_| tab.shows_form()),
+                };
+                let query = match (&tab.edit, form) {
+                    (Some(ReadEdit::Block { content, .. }), _) => {
+                        links::query(content).map(|query| (query, false))
+                    }
+                    (_, Some(form)) => form.link_query(),
+                    (Some(ReadEdit::Field(_)), None) => None,
+                    (None, None) if tab.reading() => None,
+                    (None, None) => links::query(&tab.content).map(|query| (query, false)),
+                };
+                (form, query, tab.note_path())
+            }
         };
         let Some((query, in_field)) = query else {
             return none;
@@ -6321,9 +6423,9 @@ impl Workspace {
 
         let notes = self
             .index
-            .suggest(&query, &tab.note_path(), folder.as_deref(), SUGGESTIONS);
+            .suggest(&query, &from, folder.as_deref(), SUGGESTIONS);
         // A link field that already names a note needs no suggestions.
-        if in_field && self.index.resolve(&query, &tab.note_path()).is_some() {
+        if in_field && self.index.resolve(&query, &from).is_some() {
             return none;
         }
 
@@ -6611,8 +6713,17 @@ impl Workspace {
         let mut problems = Vec::new();
 
         // The walkthrough keeps track of the notes it made.
-        let mut progress = walkthrough::Progress::load(&self.root);
-        if progress.renamed(&self.root, moved) && progress.save(&self.root).is_err() {
+        let saved = match &mut self.walkthrough {
+            Some(walkthrough) => {
+                !walkthrough.progress.renamed(&self.root, moved)
+                    || walkthrough.progress.save(&self.root).is_ok()
+            }
+            None => {
+                let mut progress = walkthrough::Progress::load(&self.root);
+                !progress.renamed(&self.root, moved) || progress.save(&self.root).is_ok()
+            }
+        };
+        if !saved {
             problems.push(".dungeon_elements/walkthrough.yaml".to_string());
         }
 
@@ -6769,6 +6880,484 @@ impl Workspace {
         };
         self.relink(&[(path.to_path_buf(), target)], &done);
         Ok(())
+    }
+
+    /// Whether the walkthrough's tab is the one showing.
+    fn walkthrough_shown(&self) -> bool {
+        self.walkthrough
+            .as_ref()
+            .is_some_and(|walkthrough| Some(walkthrough.id) == self.active)
+    }
+
+    /// Opens the walkthrough in a tab where the GM left off, or shows its tab.
+    fn show_walkthrough(&mut self) {
+        if let Some(walkthrough) = &self.walkthrough {
+            self.active = Some(walkthrough.id);
+            self.refresh_walkthrough();
+            return;
+        }
+        let id = self.next_id;
+        let campaign = walkthrough::Campaign {
+            root: &self.root,
+            types: &self.types,
+            index: &self.index,
+        };
+        let tabs = &self.tabs;
+        match walkthrough_tab::Walkthrough::open(id, &campaign, &|path| open_text(tabs, path)) {
+            Ok(walkthrough) => {
+                self.next_id += 1;
+                self.walkthrough = Some(walkthrough);
+                self.active = Some(id);
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    /// Reads the walkthrough's questions and answers again from the notes.
+    fn refresh_walkthrough(&mut self) {
+        let Some(mut walkthrough) = self.walkthrough.take() else {
+            return;
+        };
+        let campaign = walkthrough::Campaign {
+            root: &self.root,
+            types: &self.types,
+            index: &self.index,
+        };
+        let tabs = &self.tabs;
+        walkthrough.refresh(&campaign, &|path| open_text(tabs, path));
+        self.walkthrough = Some(walkthrough);
+    }
+
+    /// Closes the walkthrough's tab. Where the GM was is kept for next time.
+    fn close_walkthrough(&mut self) {
+        let Some(walkthrough) = self.walkthrough.take() else {
+            return;
+        };
+        if let Err(error) = walkthrough.progress.save(&self.root) {
+            self.status = format!("Could not remember where the walkthrough was: {error}");
+        }
+        if self.active == Some(walkthrough.id) {
+            self.active = self.tabs.first().map(|tab| tab.id);
+        }
+    }
+
+    /// Puts the cursor in the walkthrough's answer box.
+    fn focus_walkthrough(&self) -> Task<Message> {
+        let id = self
+            .walkthrough
+            .as_ref()
+            .and_then(|walkthrough| walkthrough.form.as_ref()?.first_id(walkthrough.field?));
+        match id {
+            Some(id) if self.walkthrough_shown() => iced::widget::operation::focus(id),
+            _ => Task::none(),
+        }
+    }
+
+    fn walkthrough_message(&mut self, message: walkthrough_tab::Message) -> Task<Message> {
+        use walkthrough_tab::Message as Step;
+        // Ctrl+Enter sends Next wherever the cursor is.
+        if !self.walkthrough_shown() {
+            return Task::none();
+        }
+        match &message {
+            Step::Open(path) => {
+                self.open_file(path.clone());
+                return Task::none();
+            }
+            Step::Inspire(table) => {
+                // The roll goes into the answer, as a field's own table button's does.
+                if let Some(index) = self.walkthrough.as_ref().and_then(|w| w.field) {
+                    // The answer keeps the keyboard, so Enter goes on to the next question.
+                    let roll = self.walkthrough_input(Message::Form(form::Message::RollTable(
+                        index,
+                        table.clone(),
+                    )));
+                    return roll.chain(self.focus_walkthrough());
+                }
+                let from = self.walkthrough_from();
+                match self.linked_table(table, &from) {
+                    Some((name, table, each_column)) => {
+                        self.roll_found(&from, &name, &table, each_column);
+                    }
+                    None => self.status = format!("There is no roll table called {table}"),
+                }
+                return Task::none();
+            }
+            Step::Next => {
+                if let Err(error) = self.answer_walkthrough() {
+                    if let Some(walkthrough) = &mut self.walkthrough {
+                        walkthrough.error = Some(error);
+                    }
+                    return Task::none();
+                }
+            }
+            _ => {}
+        }
+
+        let Some(mut walkthrough) = self.walkthrough.take() else {
+            return Task::none();
+        };
+        let campaign = walkthrough::Campaign {
+            root: &self.root,
+            types: &self.types,
+            index: &self.index,
+        };
+        let tabs = &self.tabs;
+        let open = |path: &Path| open_text(tabs, path);
+        match message {
+            Step::Chapter(chapter) => walkthrough.open_chapter(chapter, &campaign, &open),
+            Step::Back => walkthrough.back(&campaign, &open),
+            Step::Next => walkthrough.next(&campaign, &open),
+            Step::Skip => walkthrough.skip(&campaign, &open),
+            Step::SkipChapter => walkthrough.skip_chapter(&campaign, &open),
+            Step::Open(_) | Step::Inspire(_) => {}
+        }
+        if let Err(error) = walkthrough.progress.save(&self.root) {
+            self.status = format!("Could not remember where the walkthrough was: {error}");
+        }
+        self.walkthrough = Some(walkthrough);
+        self.focus_walkthrough()
+    }
+
+    /// The note links in the walkthrough's answer box are read from: the note the answer
+    /// goes into, or else the campaign folder.
+    fn walkthrough_from(&self) -> PathBuf {
+        self.walkthrough
+            .as_ref()
+            .and_then(|walkthrough| walkthrough.subject.clone())
+            .unwrap_or_else(|| self.root.join("Untitled.md"))
+    }
+
+    /// Writes the walkthrough's answer into its note. A note open with unsaved changes
+    /// gets it in its tab instead, so they aren't written over.
+    fn answer_walkthrough(&mut self) -> Result<(), String> {
+        let Some(walkthrough) = &self.walkthrough else {
+            return Ok(());
+        };
+        let (Some((question, _)), Some(answer)) = (walkthrough.question(), walkthrough.answer())
+        else {
+            return Ok(());
+        };
+        let key = question.field.clone();
+        let subject = walkthrough.subject.clone();
+        // Nothing typed and nothing there before: nothing to write.
+        if walkthrough.unchanged(&answer) {
+            return Ok(());
+        }
+
+        if let (Some(path), Some(key), walkthrough::Answer::Value(value)) =
+            (&subject, &key, &answer)
+            && let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| tab.modified && tab.path.as_ref() == Some(path))
+        {
+            let name = display_name(path, false);
+            let tab = &mut self.tabs[index];
+            let Some(form) = tab.form.as_mut().filter(|_| !tab.source) else {
+                return Err(format!(
+                    "{name} is open as Markdown with unsaved changes. Save it first"
+                ));
+            };
+            form.set_value(key, value.as_ref());
+            let field = form.field(key).cloned();
+            if let Some(field) = field {
+                let campaign = walkthrough::Campaign {
+                    root: &self.root,
+                    types: &self.types,
+                    index: &self.index,
+                };
+                let mut written = walkthrough::Written::default();
+                walkthrough::make_linked(&campaign, &field, value.as_ref(), path, &mut written)?;
+                if !written.made.is_empty() {
+                    self.rescan();
+                }
+            }
+            self.status = format!(
+                "Put the answer in {name}'s tab, which has unsaved changes. Save it to keep it"
+            );
+            if let Some(walkthrough) = &mut self.walkthrough {
+                walkthrough.answered();
+            }
+            return Ok(());
+        }
+
+        let before = subject
+            .as_deref()
+            .and_then(|path| std::fs::read_to_string(path).ok());
+        let Some(mut walkthrough) = self.walkthrough.take() else {
+            return Ok(());
+        };
+        let campaign = walkthrough::Campaign {
+            root: &self.root,
+            types: &self.types,
+            index: &self.index,
+        };
+        let result = walkthrough.write(&campaign, answer);
+        let saved = walkthrough.progress.save(&self.root);
+        self.walkthrough = Some(walkthrough);
+        let written = result?;
+        saved.map_err(|error| format!("Could not save the walkthrough's progress: {error}"))?;
+
+        // Open notes show what was written into them.
+        for path in written.made.iter().chain(&written.changed) {
+            if let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| tab.path.as_ref() == Some(path) && !tab.modified)
+            {
+                let _ = self.reload_tab(index);
+            }
+        }
+        self.rescan();
+        if let (Some(path), Some(before)) = (&subject, &before)
+            && let Ok(after) = std::fs::read_to_string(path)
+            && let Some(Ok(ty)) = path.parent().and_then(|folder| self.types.get(folder))
+        {
+            let fields = ty.tag_fields();
+            self.sync_tags(path, &fields, before, &after);
+        }
+        self.status = match written.made.as_slice() {
+            [] => match &subject {
+                Some(path) => format!("Saved the answer in {}", display_name(path, false)),
+                None => "Saved".into(),
+            },
+            made => format!(
+                "Made {}",
+                made.iter()
+                    .map(|path| display_name(path, false))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        if let Some((path, name)) = written.rename {
+            self.rename_note(&path, &name)?;
+        }
+        Ok(())
+    }
+
+    /// Typing and buttons in the walkthrough's answer box, which is a form of its own.
+    fn walkthrough_input(&mut self, message: Message) -> Task<Message> {
+        let from = self.walkthrough_from();
+        let ctrl = self.ctrl;
+        match message {
+            Message::Form(form::Message::RollTable(index, table)) => {
+                let Some(form) = self
+                    .walkthrough
+                    .as_ref()
+                    .and_then(|walkthrough| walkthrough.form.as_ref())
+                else {
+                    return Task::none();
+                };
+                let (Some((current, long)), Some(label)) =
+                    (form.text_value(index), form.label(index))
+                else {
+                    return Task::none();
+                };
+                let Some((name, found, each_column)) = self.linked_table(&table, &from) else {
+                    self.status = format!("There is no roll table called {table}");
+                    return Task::none();
+                };
+                let value = self.roll_found(&from, &name, &found, each_column);
+                let names = self
+                    .walkthrough
+                    .as_ref()
+                    .is_some_and(walkthrough_tab::Walkthrough::asks_for_names);
+                let form = self
+                    .walkthrough
+                    .as_mut()
+                    .and_then(|walkthrough| walkthrough.form.as_mut());
+                match form {
+                    // A rolled name goes on the list.
+                    Some(form) if names => {
+                        let list = current.trim_end();
+                        let text = if list.is_empty() {
+                            value
+                        } else {
+                            format!("{list}\n{value}")
+                        };
+                        form.set_text_value(index, &text, false);
+                    }
+                    Some(form) if current.trim().is_empty() => {
+                        form.set_text_value(index, &value, false);
+                    }
+                    Some(_) => {
+                        self.dialog = Some(Dialog::ReplaceField {
+                            index,
+                            label,
+                            value,
+                            long,
+                        });
+                    }
+                    None => {}
+                }
+                Task::none()
+            }
+            Message::FillField(add_line) => {
+                if let Some(Dialog::ReplaceField { index, value, .. }) = self.dialog.take()
+                    && let Some(form) = self
+                        .walkthrough
+                        .as_mut()
+                        .and_then(|walkthrough| walkthrough.form.as_mut())
+                {
+                    form.set_text_value(index, &value, add_line);
+                }
+                Task::none()
+            }
+            Message::Form(form::Message::Roll(index, expression)) => {
+                let label = self
+                    .walkthrough
+                    .as_ref()
+                    .and_then(|walkthrough| walkthrough.form.as_ref())
+                    .and_then(|form| form.label(index))
+                    .unwrap_or_default();
+                self.dice.open = true;
+                self.dice.roll_field(&label, &expression);
+                Task::none()
+            }
+            Message::Form(
+                form::Message::FollowLink(index)
+                | form::Message::FollowItem(index, _)
+                | form::Message::FollowStep(index, _),
+            ) => {
+                // The link in the field, or the item or step clicked.
+                let Some(form) = self
+                    .walkthrough
+                    .as_ref()
+                    .and_then(|walkthrough| walkthrough.form.as_ref())
+                else {
+                    return Task::none();
+                };
+                let found = match &message {
+                    Message::Form(form::Message::FollowItem(_, item)) => {
+                        form.list_items(index).and_then(|(field, items)| {
+                            Some((field.clone(), items.get(*item)?.clone()))
+                        })
+                    }
+                    Message::Form(form::Message::FollowStep(_, step)) => form
+                        .step_link(index, *step)
+                        .map(|(field, target)| (field.clone(), target)),
+                    _ => form
+                        .link_field(index)
+                        .map(|(field, target)| (field.clone(), target.to_string())),
+                };
+                let Some((field, target)) = found else {
+                    return Task::none();
+                };
+                let target = target.split(['|', '#']).next().unwrap_or(&target).trim();
+                if target.is_empty() || field.kind == types::Kind::Tags {
+                    return Task::none();
+                }
+                let folder = self.link_folder(&field);
+                self.follow_link_into(target, folder)
+            }
+            Message::Form(form::Message::FollowAll(_)) => Task::none(),
+            Message::Form(message) => {
+                let click = matches!(
+                    message,
+                    form::Message::Long(_, text_editor::Action::Click(_))
+                );
+                let moves_focus = message.moves_focus();
+                let Some(form) = self
+                    .walkthrough
+                    .as_mut()
+                    .and_then(|walkthrough| walkthrough.form.as_mut())
+                else {
+                    return Task::none();
+                };
+                form.update(message);
+                if click
+                    && ctrl
+                    && let Some(target) = form.link_under_cursor()
+                {
+                    return self.follow_link(&target);
+                }
+                if moves_focus && let Some(id) = form.focused_id() {
+                    return iced::advanced::widget::operate(form::tab(vec![id], false)).discard();
+                }
+                Task::none()
+            }
+            Message::CompleteLink(link) => {
+                let Some(form) = self
+                    .walkthrough
+                    .as_mut()
+                    .and_then(|walkthrough| walkthrough.form.as_mut())
+                else {
+                    return Task::none();
+                };
+                let focus = form.focused_id();
+                form.complete_link(&link);
+                match focus {
+                    Some(id) => iced::widget::operation::focus(id),
+                    None => Task::none(),
+                }
+            }
+            Message::TabField(back) => {
+                if self.dialog.is_some() || self.context.is_some() {
+                    return Task::none();
+                }
+                // In a link field or step, Tab finishes the link being typed, as in a form.
+                if let Some((link, _)) = self.link_suggestions().notes.first() {
+                    let link = link.clone();
+                    return self.walkthrough_input(Message::CompleteLink(link));
+                }
+                let Some(form) = self
+                    .walkthrough
+                    .as_ref()
+                    .and_then(|walkthrough| walkthrough.form.as_ref())
+                else {
+                    return Task::none();
+                };
+                iced::advanced::widget::operate(form::tab(form.tab_ids(), back))
+                    .map(Message::FieldTabbed)
+            }
+            Message::FieldTabbed(position) => {
+                if let Some(form) = self
+                    .walkthrough
+                    .as_mut()
+                    .and_then(|walkthrough| walkthrough.form.as_mut())
+                {
+                    form.tabbed_to(position);
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// The walkthrough's tab: its answer box is drawn by its form, with the notes to link
+    /// to under it while a link is typed.
+    fn walkthrough_view<'a>(
+        &'a self,
+        c: Colors,
+        walkthrough: &'a walkthrough_tab::Walkthrough,
+        dice: &'a dice::Icons,
+    ) -> Element<'a, Message> {
+        let suggestions = self.link_suggestions();
+        let accept = suggestions
+            .notes
+            .first()
+            .map(|(link, _)| Message::CompleteLink(link.clone()));
+        let answer = walkthrough
+            .form
+            .as_ref()
+            .zip(walkthrough.field)
+            .map(|(form, index)| {
+                form.field_view(
+                    index,
+                    c,
+                    Message::Form,
+                    shortcut,
+                    self.link_colors(c),
+                    accept,
+                    editor_menu,
+                    &dice.field,
+                    &self.tags,
+                    Some(Message::Walkthrough(walkthrough_tab::Message::Next)),
+                )
+            });
+        let chips = suggestion_chips(c, &suggestions, true);
+        walkthrough.view(c, answer, chips, Message::Walkthrough)
     }
 
     /// Renames the note at `path` to `name`, in the same folder. Its name field changes
@@ -7071,6 +7660,14 @@ impl Workspace {
                     text("Pick a file in the sidebar, or press Ctrl+N for a new note.")
                         .size(14)
                         .color(c.text_muted),
+                    button(
+                        text("Build your world with the walkthrough")
+                            .size(14)
+                            .color(c.accent)
+                    )
+                    .padding([4, 10])
+                    .style(style::flat(c, false))
+                    .on_press(Message::ShowWalkthrough),
                 ]
                 .spacing(8)
                 .align_x(Center),
@@ -7390,6 +7987,14 @@ fn renamed_notes(
     moved
 }
 
+/// The text of the note at `path` as its tab in `tabs` has it, if it is open with
+/// unsaved changes.
+fn open_text(tabs: &[Tab], path: &Path) -> Option<String> {
+    tabs.iter()
+        .find(|tab| tab.modified && tab.path.as_deref() == Some(path))
+        .and_then(|tab| tab.text().ok())
+}
+
 /// Makes an empty note for a link to `target`, which names no note yet: `<target>.md`
 /// in `folder` (or else the campaign folder `root`), or in the folder the target's path
 /// names. With a type `ty`, the note gets its `type:` and its name filled in.
@@ -7701,6 +8306,10 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     if !modifiers.command() {
         return None;
     }
+    // Next in the walkthrough, from any answer box.
+    if let Key::Named(keyboard::key::Named::Enter) = key.as_ref() {
+        return Some(Message::Walkthrough(walkthrough_tab::Message::Next));
+    }
 
     let Key::Character(c) = key.as_ref() else {
         return None;
@@ -7871,6 +8480,21 @@ fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
         .spacing(4),
     ]
     .spacing(16);
+
+    if form.has_walkthrough() {
+        content = content.push(
+            column![
+                checkbox(form.walkthrough)
+                    .label("Start the walkthrough")
+                    .on_toggle(Message::ToggleNewWalkthrough)
+                    .style(style::check(c)),
+                text("Questions about your world, one at a time, that make your first notes. Skip any, and come back to it from the File menu.")
+                    .size(12)
+                    .color(c.text_muted),
+            ]
+            .spacing(4),
+        );
+    }
 
     if let Some(error) = &form.error {
         content = content.push(text(error).size(13).color(c.danger));
