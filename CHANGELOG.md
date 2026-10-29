@@ -4,6 +4,16 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Roll tables
+
+- Any Markdown table whose first column is a die, like `d6`, `2d6` or `d100`, is a roll table. Rows can be single numbers or ranges (`2-3`, `01-05`, `00` for 100, `5+`).
+- In the reading view, each roll table has a **Roll** button above it. **View > Roll Tables** (Ctrl+Shift+T) lists every roll table in the campaign in the sidebar, to roll or open. You can also type a table's name in the dice roller's box.
+- A result that links to another table, like `[[Storms]]` or `[[Weather#Winter]]`, rolls that table too, and dice in a result, like `1d4 days of rain`, are rolled. The result shows in the dice roller with the rolls behind it, a **Copy** button, and **Create New Note** to make a note named after it.
+- A table with several result columns gives a whole row, or, with **Roll each column** ticked, rolls each column on its own to mix them: a First and a Last column make any mix of names.
+- **File > New Roll Table...** (or a folder's right-click menu, or the **+** in the list) makes a table: pick the die, the columns and how many rows, or paste a list from a web page or PDF. Tables go in a **tables** folder to start with.
+- **Problems** points out rows a table's die can't pick and numbers it can roll that no row has.
+- New guide in **Help > How-To Guides**: Roll tables.
+
 ### Track your quests
 
 - **View > Quests** (Ctrl+Shift+Q), or **Show Quests** on a Quests folder's right-click menu, shows the campaign's quests in the sidebar, grouped by Status. Complete, Failed and Abandoned start collapsed, so the quests still going come first.

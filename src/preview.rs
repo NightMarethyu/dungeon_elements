@@ -30,6 +30,7 @@ use crate::dice::{self, Dice, Expression};
 use crate::links::{self, Index, Names};
 use crate::note;
 use crate::style;
+use crate::tables;
 use crate::theme::Colors;
 use crate::types::{ContentType, Kind, title_case};
 use crate::web;
@@ -96,6 +97,15 @@ struct Block {
     content: markdown::Content,
     /// Where the `[ ]` of each of its task boxes is in the note's text, in order.
     tasks: Vec<usize>,
+    /// The roll table it is, if it is one.
+    table: Option<RollTable>,
+}
+
+/// What the bar above a roll table needs: its die, and whether it has columns to roll
+/// on their own.
+struct RollTable {
+    die: String,
+    has_columns: bool,
 }
 
 /// A note that links to the one shown, for the list under it ("Linked from").
@@ -138,6 +148,12 @@ pub struct Editing<'a, M> {
     pub on_roll: fn(String, String) -> M,
     /// The icon on the roll buttons.
     pub roll_icon: svg::Handle,
+    /// The Roll button of the roll table at this place in the note's text was clicked.
+    pub on_roll_table: fn(usize) -> M,
+    /// The roll table at this place was set to roll each column on its own, or not.
+    pub on_each_column: fn(usize, bool) -> M,
+    /// Where the roll tables that roll each column on their own are in the note's text.
+    pub each_column: Vec<usize>,
     /// The space for adding text at the end was clicked.
     pub on_add: M,
     /// Somewhere else on the page was clicked.
@@ -191,6 +207,7 @@ impl Preview {
 
         // `body` is the end of `source`, so this is where it starts in it.
         let offset = source.len() - body.len();
+        let roll_tables = tables::find(source);
         let blocks: Vec<Block> = block_ranges(body)
             .into_iter()
             .map(|range| Block {
@@ -202,6 +219,13 @@ impl Preview {
                     .into_iter()
                     .map(|at| at + range.start + offset)
                     .collect(),
+                table: roll_tables
+                    .iter()
+                    .find(|table| table.range.start == range.start + offset)
+                    .map(|table| RollTable {
+                        die: table.die.to_string(),
+                        has_columns: table.has_columns(),
+                    }),
                 range: range.start + offset..range.end + offset,
             })
             .collect();
@@ -414,10 +438,29 @@ impl Preview {
             block = block.padding(padding::top(settings.text_size / 2.0));
         }
 
-        mouse_area(block)
+        let block_element: Element<'a, M> = mouse_area(block)
             .on_press((edit.on_block)(index))
             .interaction(Interaction::Text)
-            .into()
+            .into();
+        let Some(table) = &self.blocks[index].table else {
+            return block_element;
+        };
+        // A roll table gets a bar above it to roll it.
+        let start = self.blocks[index].range.start;
+        let roll = dice::field_button(reader.c, &edit.roll_icon, &table.die, {
+            let on_roll = edit.on_roll_table;
+            move |_| on_roll(start)
+        });
+        let mut bar = row![roll].spacing(12).align_y(Center);
+        if table.has_columns {
+            let on_each = edit.on_each_column;
+            bar = bar.push(tables::each_column(
+                reader.c,
+                edit.each_column.contains(&start),
+                move |on| on_each(start, on),
+            ));
+        }
+        column![bar, block_element].spacing(6).into()
     }
 
     /// How many of the note's first blocks go beside the box of fields: everything
