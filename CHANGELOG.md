@@ -4,6 +4,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### New starter folders
+
+- New campaigns start with nine folders built to answer the questions world-building asks: **Campaign** (the pitch, the big picture, arcs and house rules), **Sessions** (prep and recap, in place of Journal), **Players**, **Quests**, **NPCs**, **Factions**, **Locations**, **Lore** and **Items**. They aren't tied to any game system.
+- Some come with subfolders that are kinds of their folder: Enemies and Deities in NPCs, Religions in Factions, Settlements and Sites in Locations, History, Peoples, Magic and Technology, and Creatures in Lore, and Weapons, Armor and Gear in Items.
+- The fields use what fields can do now: links between notes (a faction's Leader and Members, a location's Inhabitants), dates (a session's real date and its in-world one), steps (a session's Scenes and Secrets and clues, a faction's Plan), dice (an enemy's Attack and Damage) and tags. World notes have **Known to players** and a **Secrets** section, and NPCs have a **Status** (alive, dead, missing...).
+- Campaigns you already have keep their folders and fields.
+
 ### Templates, shared types and a list of your campaigns
 
 - **Edit > Types...** can **Export Campaign Structure...**: the campaign's folders and their fields, subfolders and all, without any notes, as an ordinary `.zip` file. Saved in your templates folder, it's offered by **New Campaign...**; saved anywhere else, it's ready to share.

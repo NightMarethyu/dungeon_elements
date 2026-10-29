@@ -1,0 +1,17 @@
+type: creature
+label: Creature
+fields:
+  - key: habitat
+    label: Habitat
+    kind: links
+    folder: locations
+  - key: danger
+    label: Danger
+    kind: choice
+    options: [Harmless, Wary, Dangerous, Deadly]
+  - key: behavior
+    label: Behavior
+    kind: longtext
+  - key: ecology
+    label: Ecology
+    kind: longtext

@@ -1,0 +1,23 @@
+type: site
+label: Site
+removed_fields: [kind]
+fields:
+  - key: danger
+    label: Danger
+    kind: choice
+    options: [Safe, Risky, Dangerous, Deadly]
+  - key: threats
+    label: Threats
+    kind: links
+    folder: npcs/enemies
+  - key: treasure
+    label: Treasure
+    kind: links
+    folder: items
+  - key: areas
+    label: Areas
+    kind: steps
+    folder: locations
+  - key: hazards
+    label: Hazards and traps
+    kind: longtext

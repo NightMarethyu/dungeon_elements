@@ -1,0 +1,8 @@
+type: weapon
+label: Weapon
+fields:
+  - key: damage
+    label: Damage
+    kind: dice
+  - key: range
+    label: Range

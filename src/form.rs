@@ -2269,7 +2269,7 @@ mod tests {
     use crate::types;
 
     fn item_type() -> ContentType {
-        types::parse(types::STARTER_TYPES[0].1).unwrap()
+        types::parse(types::TEST_ITEM).unwrap()
     }
 
     #[test]
@@ -2499,11 +2499,8 @@ attack: 1d8+1d6
     }
 
     fn quest_type() -> ContentType {
-        let quests = types::STARTER_TYPES
-            .iter()
-            .find(|(folder, _)| *folder == "quests")
-            .unwrap();
-        types::parse(quests.1).unwrap()
+        let quests = types::starter_yaml("quests");
+        types::parse(quests).unwrap()
     }
 
     fn steps(form: &Form, index: usize) -> Vec<(bool, &str)> {
@@ -2609,11 +2606,15 @@ attack: 1d8+1d6
             .unwrap();
         assert_eq!(ids[0], field_id(0));
         assert!(!ids.contains(&field_id(1)));
-        assert_eq!(ids.last(), Some(&step_id(objectives, 0)));
+        let step = ids
+            .iter()
+            .position(|id| *id == step_id(objectives, 0))
+            .unwrap();
+        assert_eq!(ids[step + 1], field_id(objectives + 1));
 
         form.tabbed_to(1);
         assert_eq!(form.focused_id().as_ref(), Some(&ids[1]));
-        form.tabbed_to(ids.len() - 1);
+        form.tabbed_to(step);
         assert_eq!(form.focused_id(), Some(step_id(objectives, 0)));
     }
 
@@ -2657,12 +2658,9 @@ attack: 1d8+1d6
 
     #[test]
     fn picks_tags_one_by_one() {
-        let lore = types::STARTER_TYPES
-            .iter()
-            .find(|(folder, _)| *folder == "lore")
-            .unwrap();
+        let lore = types::starter_yaml("lore");
         let text = "---\ntype: lore\nname: Ley Lines\ntags: [magic, '#old']\n---\n";
-        let mut form = Form::from_note(types::parse(lore.1).unwrap(), note::parse(text).unwrap());
+        let mut form = Form::from_note(types::parse(lore).unwrap(), note::parse(text).unwrap());
         let tags = form.fields.iter().position(|f| f.key == "tags").unwrap();
         assert!(form.is_tag_field(tags));
         assert_eq!(list(&form, tags).0, ["magic", "old"]);
@@ -2699,13 +2697,10 @@ attack: 1d8+1d6
 
     #[test]
     fn links_to_many_notes() {
-        let lore = types::STARTER_TYPES
-            .iter()
-            .find(|(folder, _)| *folder == "lore")
-            .unwrap();
+        let lore = types::starter_yaml("lore");
         let text =
             "---\ntype: lore\nname: Blood Magic\nrelated:\n- '[[Mira]]'\n- '[[BBEG|Jerry]]'\n---\n";
-        let mut form = Form::from_note(types::parse(lore.1).unwrap(), note::parse(text).unwrap());
+        let mut form = Form::from_note(types::parse(lore).unwrap(), note::parse(text).unwrap());
         let related = form.fields.iter().position(|f| f.key == "related").unwrap();
         assert_eq!(form.fields[related].kind, Kind::Links);
         assert_eq!(list(&form, related).0, ["Mira", "BBEG|Jerry"]);
@@ -2741,11 +2736,8 @@ attack: 1d8+1d6
     }
 
     fn journal_type() -> ContentType {
-        let journal = types::STARTER_TYPES
-            .iter()
-            .find(|(folder, _)| *folder == "journal")
-            .unwrap();
-        types::parse(journal.1).unwrap()
+        let journal = types::starter_yaml("sessions");
+        types::parse(journal).unwrap()
     }
 
     #[test]

@@ -1,0 +1,25 @@
+type: people
+label: People
+fields:
+  - key: homelands
+    label: Homelands
+    kind: links
+    folder: locations
+  - key: languages
+    label: Languages
+  - key: notable_members
+    label: Notable members
+    kind: links
+    folder: npcs
+  - key: appearance
+    label: Appearance
+    kind: longtext
+  - key: customs
+    label: Values and customs
+    kind: longtext
+  - key: relations
+    label: Relations with others
+    kind: longtext
+  - key: names
+    label: Names
+    kind: longtext

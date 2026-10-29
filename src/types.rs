@@ -16,18 +16,79 @@ pub const TYPE_FILE: &str = "_type.yaml";
 /// Each folder's content type, or what is wrong with its `_type.yaml`.
 pub type Types = HashMap<PathBuf, Result<ContentType, String>>;
 
-/// The `_type.yaml` files of the default campaign template, by folder.
+/// The `_type.yaml` files of the default campaign template, by folder in name order, so
+/// each folder comes before its subfolders. A subfolder's type is a kind of its parent's
+/// (see [`inherit`]).
 pub const STARTER_TYPES: &[(&str, &str)] = &[
+    (
+        "campaign",
+        include_str!("../templates/default/campaign.yaml"),
+    ),
+    (
+        "factions",
+        include_str!("../templates/default/factions.yaml"),
+    ),
+    (
+        "factions/religions",
+        include_str!("../templates/default/factions/religions.yaml"),
+    ),
     ("items", include_str!("../templates/default/items.yaml")),
-    ("journal", include_str!("../templates/default/journal.yaml")),
+    (
+        "items/armor",
+        include_str!("../templates/default/items/armor.yaml"),
+    ),
+    (
+        "items/gear",
+        include_str!("../templates/default/items/gear.yaml"),
+    ),
+    (
+        "items/weapons",
+        include_str!("../templates/default/items/weapons.yaml"),
+    ),
     (
         "locations",
         include_str!("../templates/default/locations.yaml"),
     ),
+    (
+        "locations/settlements",
+        include_str!("../templates/default/locations/settlements.yaml"),
+    ),
+    (
+        "locations/sites",
+        include_str!("../templates/default/locations/sites.yaml"),
+    ),
     ("lore", include_str!("../templates/default/lore.yaml")),
+    (
+        "lore/creatures",
+        include_str!("../templates/default/lore/creatures.yaml"),
+    ),
+    (
+        "lore/history",
+        include_str!("../templates/default/lore/history.yaml"),
+    ),
+    (
+        "lore/magic",
+        include_str!("../templates/default/lore/magic.yaml"),
+    ),
+    (
+        "lore/peoples",
+        include_str!("../templates/default/lore/peoples.yaml"),
+    ),
     ("npcs", include_str!("../templates/default/npcs.yaml")),
+    (
+        "npcs/deities",
+        include_str!("../templates/default/npcs/deities.yaml"),
+    ),
+    (
+        "npcs/enemies",
+        include_str!("../templates/default/npcs/enemies.yaml"),
+    ),
     ("players", include_str!("../templates/default/players.yaml")),
     ("quests", include_str!("../templates/default/quests.yaml")),
+    (
+        "sessions",
+        include_str!("../templates/default/sessions.yaml"),
+    ),
 ];
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -313,6 +374,52 @@ pub fn load(folder: &Path) -> Option<Result<ContentType, String>> {
     )
 }
 
+/// The default template's type for `folder` (like `items/weapons`), with everything it
+/// inherits from the folders it is in.
+pub fn starter(folder: &str) -> Option<ContentType> {
+    let (_, yaml) = STARTER_TYPES.iter().find(|(name, _)| *name == folder)?;
+    let own = parse(yaml).ok()?;
+    match folder.rsplit_once('/') {
+        Some((parent, _)) => Some(inherit(&starter(parent)?, &own)),
+        None => Some(own),
+    }
+}
+
+/// A small Item type for tests, so they don't change when the default template does.
+#[cfg(test)]
+pub const TEST_ITEM: &str = "type: item
+label: Item
+fields:
+  - key: name
+    label: Name
+  - key: value
+    label: Value
+  - key: rarity
+    label: Rarity
+    kind: choice
+    options: [Common, Uncommon, Rare, Very Rare, Legendary, Artifact]
+  - key: owner
+    label: Owner
+    kind: link
+    folder: npcs
+  - key: history
+    label: History
+    kind: longtext
+  - key: stats
+    label: Stats
+    kind: longtext
+";
+
+/// The default template's own `_type.yaml` for `folder`, for tests.
+#[cfg(test)]
+pub fn starter_yaml(folder: &str) -> &'static str {
+    STARTER_TYPES
+        .iter()
+        .find(|(name, _)| *name == folder)
+        .map(|(_, yaml)| *yaml)
+        .unwrap_or_else(|| panic!("no starter type for {folder}"))
+}
+
 /// The type of a subfolder whose own `_type.yaml` is `own`, in a folder of type `parent`:
 /// the parent's fields in the parent's order (less the ones `own` removes, and as `own`
 /// changes them), then the fields only `own` has.
@@ -453,8 +560,19 @@ mod tests {
     #[test]
     fn starter_types_are_valid() {
         for (folder, yaml) in STARTER_TYPES {
-            let ty = parse(yaml).unwrap_or_else(|error| panic!("{folder}: {error}"));
+            parse(yaml).unwrap_or_else(|error| panic!("{folder}: {error}"));
+            // A subfolder's type has its parent's fields, and its link fields link to folders the template has.
+            let ty = starter(folder).unwrap_or_else(|| panic!("{folder} has no parent"));
             assert!(ty.name_field().is_some(), "{folder} has no name field");
+            for field in &ty.fields {
+                if let Some(linked) = &field.folder {
+                    assert!(
+                        STARTER_TYPES.iter().any(|(name, _)| name == linked),
+                        "{folder}: {} links to {linked}",
+                        field.key
+                    );
+                }
+            }
         }
     }
 
@@ -507,7 +625,7 @@ mod tests {
             ],
         );
         let mut own = Types::new();
-        own.insert(root.join("items"), parse(STARTER_TYPES[0].1));
+        own.insert(root.join("items"), parse(TEST_ITEM));
         own.insert(
             root.join("items/weapons"),
             parse(

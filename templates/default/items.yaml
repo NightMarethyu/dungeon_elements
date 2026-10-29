@@ -8,14 +8,27 @@ fields:
   - key: rarity
     label: Rarity
     kind: choice
-    options: [Common, Uncommon, Rare, Very Rare, Legendary, Artifact]
+    options: [Common, Uncommon, Rare, Unique]
   - key: owner
     label: Owner
     kind: link
     folder: npcs
+  - key: location
+    label: Where it is
+    kind: link
+    folder: locations
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: known_to_players
+    label: Known to players
+    kind: checkbox
+  - key: description
+    label: Description
+    kind: longtext
+  - key: properties
+    label: Properties
+    kind: longtext
   - key: history
     label: History
-    kind: longtext
-  - key: stats
-    label: Stats
     kind: longtext

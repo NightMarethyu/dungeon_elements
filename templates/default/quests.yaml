@@ -6,18 +6,39 @@ fields:
   - key: status
     label: Status
     kind: choice
-    options: [Not started, Active, Complete, Failed]
+    options: [Rumored, Available, Active, Complete, Failed, Abandoned]
   - key: giver
     label: Quest giver
     kind: link
     folder: npcs
+  - key: where
+    label: Where
+    kind: links
+    folder: locations
+  - key: factions
+    label: Factions involved
+    kind: links
+    folder: factions
+  - key: began_in
+    label: Began in
+    kind: link
+    folder: sessions
   - key: reward
     label: Reward
-  - key: summary
-    label: Summary
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: hook
+    label: Hook
     kind: longtext
   - key: objectives
     label: Objectives
     kind: steps
     width: full
     folder: quests
+  - key: stakes
+    label: Stakes
+    kind: longtext
+  - key: outcome
+    label: Outcome
+    kind: longtext

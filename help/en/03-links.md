@@ -27,4 +27,4 @@ Links turn your notes into a wiki of your world. They are written like Obsidian'
 
 ## See where a note is linked from
 
-At the end of a note in the reading view, **Linked from** lists every note that links to it, so an NPC shows the quests, places and journal entries they turn up in.
+At the end of a note in the reading view, **Linked from** lists every note that links to it, so an NPC shows the quests, places and sessions they turn up in.

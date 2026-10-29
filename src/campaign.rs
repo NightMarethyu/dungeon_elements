@@ -7,20 +7,6 @@ use std::path::{Path, PathBuf};
 use crate::templates::Structure;
 use crate::types;
 
-/// The optional starter folders for a new campaign.
-///
-/// Each gets a `_type.yaml` from the default template. They are plain folders,
-/// so a campaign also works as an Obsidian vault.
-pub const TEMPLATE_FOLDERS: &[&str] = &[
-    "items",
-    "journal",
-    "locations",
-    "lore",
-    "npcs",
-    "players",
-    "quests",
-];
-
 /// Creates a folder named `title` inside `parent` and returns its path, with the folders
 /// and types of `template` inside it.
 pub fn create(parent: &Path, title: &str, template: &Structure) -> Result<PathBuf, String> {
@@ -340,7 +326,7 @@ mod tests {
         let root = create(&parent, "  Curse of the Lich  ", &Structure::starter()).unwrap();
 
         assert_eq!(root, parent.join("Curse of the Lich"));
-        for folder in TEMPLATE_FOLDERS {
+        for (folder, _) in types::STARTER_TYPES {
             assert!(root.join(folder).is_dir());
             let ty = types::load(&root.join(folder)).expect("has a type");
             assert!(ty.is_ok(), "{folder}: {ty:?}");

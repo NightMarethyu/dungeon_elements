@@ -1,0 +1,12 @@
+type: deity
+label: Deity
+removed_fields: [first_met]
+fields:
+  - key: domains
+    label: Domains
+  - key: symbol
+    label: Symbol
+  - key: worshipped_by
+    label: Worshipped by
+    kind: links
+    folder: factions/religions

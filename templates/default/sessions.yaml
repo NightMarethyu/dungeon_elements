@@ -1,0 +1,57 @@
+type: session
+label: Session
+fields:
+  - key: name
+    label: Title
+  - key: session
+    label: Session
+    kind: number
+  - key: date
+    label: Played on
+    kind: date
+  - key: world_date
+    label: In-world date
+    kind: date
+    calendar: false
+  - key: status
+    label: Status
+    kind: choice
+    options: [Planned, Played, Cancelled]
+  - key: present
+    label: Present
+    kind: links
+    folder: players
+  - key: where
+    label: Where
+    kind: links
+    folder: locations
+  - key: npcs
+    label: Featured NPCs
+    kind: links
+    folder: npcs
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: strong_start
+    label: Strong start
+    kind: longtext
+  - key: scenes
+    label: Scenes
+    kind: steps
+    folder: locations
+  - key: secrets
+    label: Secrets and clues
+    kind: steps
+    folder: lore
+  - key: rewards
+    label: Rewards
+    kind: links
+    folder: items
+  - key: recap
+    label: Recap
+    kind: longtext
+    width: full
+  - key: follow_ups
+    label: Follow-ups
+    kind: steps
+    folder: quests

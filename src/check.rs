@@ -366,7 +366,7 @@ mod tests {
     use super::*;
 
     fn item_types() -> HashMap<PathBuf, Result<ContentType, String>> {
-        let mut item = types::parse(types::STARTER_TYPES[0].1).unwrap();
+        let mut item = types::parse(types::TEST_ITEM).unwrap();
         let mut weight = types::Field::for_note("weight", Kind::Number);
         weight.label = Some("Weight".into());
         item.fields.push(weight);
@@ -469,11 +469,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("items")).unwrap();
         std::fs::create_dir_all(root.join("broken")).unwrap();
-        std::fs::write(
-            root.join("items").join(types::TYPE_FILE),
-            types::STARTER_TYPES[0].1,
-        )
-        .unwrap();
+        std::fs::write(root.join("items").join(types::TYPE_FILE), types::TEST_ITEM).unwrap();
         std::fs::write(root.join("broken").join(types::TYPE_FILE), "fields: [").unwrap();
         std::fs::write(
             root.join("items").join("Ring.md"),

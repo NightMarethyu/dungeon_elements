@@ -6,16 +6,40 @@ fields:
   - key: kind
     label: Kind
     kind: choice
-    options: [World, Region, City, Town, Village, Building, Dungeon, Landmark, Other]
+    options: [World, Plane, Continent, Region, Wilderness, Landmark, Building, Other]
   - key: part_of
     label: Part of
     kind: link
     folder: locations
+  - key: ruled_by
+    label: Ruled by
+    kind: link
+    folder: factions
+  - key: inhabitants
+    label: Inhabitants
+    kind: links
+    folder: npcs
+  - key: factions
+    label: Factions present
+    kind: links
+    folder: factions
   - key: tags
     label: Tags
     kind: tags
+  - key: known_to_players
+    label: Known to players
+    kind: checkbox
+  - key: first_impression
+    label: First impression
+    kind: longtext
   - key: description
     label: Description
+    kind: longtext
+  - key: history
+    label: History
+    kind: longtext
+  - key: rumors
+    label: Rumors and hooks
     kind: longtext
   - key: secrets
     label: Secrets

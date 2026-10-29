@@ -5,19 +5,50 @@ fields:
     label: Name
   - key: role
     label: Role
+  - key: status
+    label: Status
+    kind: choice
+    options: [Alive, Dead, Missing, Unknown]
+  - key: disposition
+    label: Attitude
+    kind: choice
+    options: [Friendly, Neutral, Hostile, Unknown]
   - key: location
     label: Location
     kind: link
     folder: locations
-  - key: disposition
-    label: Disposition
-    kind: choice
-    options: [Friendly, Neutral, Hostile, Unknown]
+  - key: people
+    label: People
+    kind: link
+    folder: lore/peoples
+  - key: factions
+    label: Factions
+    kind: links
+    folder: factions
+  - key: connections
+    label: Connections
+    kind: links
+    folder: npcs
+  - key: first_met
+    label: First met
+    kind: link
+    folder: sessions
+  - key: wants
+    label: Wants
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: known_to_players
+    label: Known to players
+    kind: checkbox
   - key: appearance
     label: Appearance
     kind: longtext
   - key: personality
-    label: Personality
+    label: Personality and voice
+    kind: longtext
+  - key: secrets
+    label: Secrets
     kind: longtext
   - key: notes
     label: Notes
