@@ -105,9 +105,6 @@ The campaign's people and plots. Everything here is notes, types and links, buil
     - Date fields pick from a calendar (or are plain text with the calendar off), tags have tag notes listing links to the tagged notes, and a "links to notes" field holds many links
   - [x] Edit > Types has an **Add New** button at the bottom of its list: a new type with a new folder for its notes
 - [ ] Adjust the default folders and types: go over the starter folders (`templates/default/`) and each type's fields now that fields can do much more (dates, tags, links to notes, steps, dice, subfolders as kinds), and change what a new campaign starts with to match
-- [ ] Built-in templates for specific systems and uses, offered by New Campaign beside the starter folders (for example D&D 5e, Shadowdark, Cairn and Cyberpunk, and uses beyond TTRPGs like a novel or a setting bible)
-  - Made in the same format as the user's own templates (a zip of folders and `_type.yaml` files), so they show what a template can do and can be exported, changed and shared like any other
-  - Player and character types come from these: each system's character sheet as fields (see Player Management Excluded below)
 
 **Player Management Excluded**
 The items in Player Management are all things that will just be built as templates, these can be based off character sheets for different TTRPGs. These items are all already included as fields and types
@@ -163,6 +160,9 @@ Sharing and reference: everything that leaves the campaign folder or comes in fr
   - [x] Save a campaign's setup as a template, and share it as a file (Edit > Types > Export Campaign Structure; Import... adds one)
   - [x] Open Campaign lists the campaigns opened or made before, newest first, with a search box, instead of only a folder picker
   - [ ] Templates can set dice presets and suggest a game system
+  - [ ] Built-in templates for specific systems and uses, offered by New Campaign beside the starter folders (for example D&D 5e, Shadowdark, Cairn and Cyberpunk, and uses beyond TTRPGs like a novel or a setting bible)
+  - Made in the same format as the user's own templates (a zip of folders and `_type.yaml` files), so they show what a template can do and can be exported, changed and shared like any other
+  - Player and character types come from these: each system's character sheet as fields (see Player Management Excluded below)
   - Once this exists, Ammon builds templates for a few systems to find where it's awkward before the format settles
 - [ ] Settings: reuse a world in another campaign or book (see [Settings](#settings))
   - [ ] Mark folders as setting and export them, or start a new campaign from an existing setting (a copy)
