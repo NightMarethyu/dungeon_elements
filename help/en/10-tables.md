@@ -57,3 +57,24 @@ A table that rolls on itself stops after 10 rolls.
 A table with more than one result column, like `| d20 | Name | Description |`, gives a whole row: each column's header and result.
 
 Tick **Roll each column**, above the table in the reading view or under it in the Roll Tables list, to roll the die again for every column instead. A name table with First, Middle and Last columns then makes any mix of names, like "Wren Ash Halloway". Which tables roll each column is kept in the campaign, in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
+
+Rolling each column puts the results together with spaces. A result that starts with a hyphen joins the one before it instead: `Ash` and `-ford` make "Ashford".
+
+## Built-in tables
+
+Some tables come with the app, listed under **Built in** in the Roll Tables list:
+
+- **Names**, which picks one of the name tables below at random.
+- Names by culture: **English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese names**, each with a first and a family name.
+- **Place names** (like Ashford or Ravenmoor), **Inn and shop names** (The Crooked Lantern) and **Group names**, for factions, crews and ships (The Silent Hand).
+
+Roll them like any other table, link to them from your own (`[[Norse names]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled.
+
+## Fields that roll on a table
+
+A text or long text field can roll on a table to fill itself in. In **Edit > Types...**, type the table's name in the field's **Rolls on** box. The field then has a die button with the table's name, in the form and in the reading view.
+
+- An empty field is filled with the result.
+- A field with something in it asks first: **Replace** what's there, or **Cancel**. A long text field can also **Add on a New Line**.
+
+The result shows in the dice roller too, so you can copy it or roll again. In new campaigns, an NPC's Name rolls on **Names**, a location's on **Place names**, and a faction's on **Group names**.

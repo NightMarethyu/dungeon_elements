@@ -129,8 +129,10 @@ The items in Player Management are all things that will just be built as templat
     - Rolled from a Roll button above the table in the reading view, the Roll Tables list in the sidebar (View > Roll Tables, Ctrl+Shift+T), or by typing the table's name in the dice roller. Results show in the dice roller with Copy and Create New Note
     - A result that links to another table (`[[Storms]]`, `[[Weather#Winter]]`) rolls it too, and dice in a result (`1d4 days`) are rolled. A table with several result columns gives a whole row, or rolls each column on its own (a toggle, kept in `.dungeon_elements/tables.yaml`)
     - File > New Roll Table... makes an empty table (die, columns, rows split evenly) or fills one from a pasted list. Problems lists rows the die can't pick and numbers no row has
-    - Next: built-in name tables and a field's `table:` that rolls into it (Name generators), then story prompts and Inspire me
-  - [ ] Name generators, built on roll tables, with a few built-in lists to start from
+    - Next: story prompts and Inspire me
+  - [x] Name generators, built on roll tables, with a few built-in lists to start from
+    - Built-in tables (in the app, read only, copied into the campaign to change): Names by culture (English, Norse, Celtic, Latin, Greek, Arabic, Slavic, Japanese), Place names, Inn and shop names, Group names. A campaign note with the same name is used in their place
+    - `table:` on a text or long text field (Rolls on in Edit > Types) gives it a die button that fills it in, asking before replacing. The default template sets it on NPC, location and faction names
   - [ ] Story prompts: suggestions for inspiration when building quests and places (drawn from roll tables, never writing the story for the GM)
 - [ ] World-building walkthrough: an optional guide that asks the GM questions one at a time and turns the answers into linked starter notes
   - Offered when a new campaign is made (a *Start the walkthrough* box in New Campaign) and any time from **File > Campaign Walkthrough...**

@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Name generators
+
+- Built-in roll tables, under **Built in** in the Roll Tables list: **Names** (any of the others), names by culture (**English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese**), **Place names**, **Inn and shop names** and **Group names**. Link to them from your own tables or type their names in the dice roller. **Copy** puts one in your **tables** folder to change it, and your copy is used in its place.
+- A text or long text field can roll on a table: set its **Rolls on** in **Edit > Types...**, and it gets a die button in the form and the reading view. An empty field is filled in; a filled one asks before replacing what's there (or adding the roll on a new line). New campaigns roll NPC names on Names, locations on Place names and factions on Group names.
+- Rolling each column joins a result that starts with a hyphen to the one before it, so `Ash` and `-ford` make "Ashford".
+
 ### Roll tables
 
 - Any Markdown table whose first column is a die, like `d6`, `2d6` or `d100`, is a roll table. Rows can be single numbers or ranges (`2-3`, `01-05`, `00` for 100, `5+`).

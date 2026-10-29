@@ -291,10 +291,21 @@ impl Rolled {
     pub fn text(&self) -> String {
         let filled = self.results.iter().filter(|(_, value)| !value.is_empty());
         if self.results.len() == 1 || self.each_column {
-            filled
-                .map(|(_, value)| value.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
+            // A result starting with a hyphen joins the one before it: Ash and -ford
+            // make Ashford.
+            let mut text = String::new();
+            for (_, value) in filled {
+                match value.strip_prefix('-').filter(|rest| !rest.is_empty()) {
+                    Some(rest) => text.push_str(rest),
+                    None => {
+                        if !text.is_empty() {
+                            text.push(' ');
+                        }
+                        text.push_str(value);
+                    }
+                }
+            }
+            text
         } else {
             filled
                 .map(|(column, value)| format!("{column}: {value}"))
@@ -487,6 +498,54 @@ impl Settings {
     }
 }
 
+/// A roll table built into the app, used where a campaign has no note of its name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BuiltIn {
+    pub name: &'static str,
+    pub text: &'static str,
+    /// Whether it rolls each column on its own, like a name's first and family names.
+    pub each_column: bool,
+}
+
+macro_rules! built_in {
+    ($name:literal, $each_column:literal) => {
+        BuiltIn {
+            name: $name,
+            text: include_str!(concat!("../assets/tables/", $name, ".md")),
+            each_column: $each_column,
+        }
+    };
+}
+
+/// The tables built into the app, in the order the Roll Tables list shows them.
+pub const BUILT_IN: [BuiltIn; 12] = [
+    built_in!("Names", false),
+    built_in!("English names", true),
+    built_in!("Norse names", true),
+    built_in!("Celtic names", true),
+    built_in!("Latin names", true),
+    built_in!("Greek names", true),
+    built_in!("Arabic names", true),
+    built_in!("Slavic names", true),
+    built_in!("Japanese names", true),
+    built_in!("Place names", true),
+    built_in!("Inn and shop names", true),
+    built_in!("Group names", true),
+];
+
+/// The built-in table called `name`, ignoring case.
+pub fn built_in(name: &str) -> Option<BuiltIn> {
+    BUILT_IN
+        .into_iter()
+        .find(|table| table.name.eq_ignore_ascii_case(name.trim()))
+}
+
+impl BuiltIn {
+    pub fn table(&self) -> Option<Table> {
+        find(self.text).into_iter().next()
+    }
+}
+
 /// A table in the Tables list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
@@ -510,6 +569,10 @@ pub enum Message {
     /// Set whether that table rolls each column on its own.
     EachColumn(PathBuf, usize, bool),
     Open(PathBuf),
+    /// Roll the built-in table with this name.
+    RollBuiltIn(String),
+    /// Copy the built-in table with this name into the campaign, to change it.
+    CopyBuiltIn(String),
     New,
     Close,
 }
@@ -519,13 +582,19 @@ pub enum Message {
 pub struct List {
     pub open: bool,
     entries: Vec<Entry>,
+    /// The built-in tables shown, with their dice: those the campaign has no note for.
+    built_in: Vec<(String, String)>,
 }
 
 impl List {
-    /// Shows `entries`, sorted by name.
-    pub fn set(&mut self, mut entries: Vec<Entry>) {
+    /// Shows `entries`, sorted by name, then the built-in tables in `built_in`.
+    pub fn set(&mut self, mut entries: Vec<Entry>, built_in: Vec<BuiltIn>) {
         entries.sort_by_cached_key(|entry| (entry.name().to_lowercase(), entry.path.clone()));
         self.entries = entries;
+        self.built_in = built_in
+            .into_iter()
+            .filter_map(|table| Some((table.name.to_string(), table.table()?.die.to_string())))
+            .collect();
     }
 
     pub fn view(&self, c: Colors, selected: Option<&Path>) -> Element<'_, Message> {
@@ -564,8 +633,9 @@ impl List {
             let start = entry.table.range.start;
             let roll = hint(
                 c,
-                button(text(entry.table.die.to_string()).size(11))
-                    .padding([1, 6])
+                button(die_label(entry.table.die.to_string()))
+                    .width(DIE_WIDTH)
+                    .padding([1, 0])
                     .style(style::secondary(c))
                     .on_press(Message::Roll(entry.path.clone(), start)),
                 "Roll it",
@@ -606,6 +676,54 @@ impl List {
                 );
             }
             rows.push(container(line).padding([2, 8]).into());
+        }
+
+        if !self.built_in.is_empty() {
+            rows.push(
+                container(text("BUILT IN").size(11).color(c.text_muted))
+                    .padding(iced::padding::top(12).left(8).right(8).bottom(2))
+                    .into(),
+            );
+        }
+        for (name, die) in &self.built_in {
+            let roll = hint(
+                c,
+                button(die_label(die.clone()))
+                    .width(DIE_WIDTH)
+                    .padding([1, 0])
+                    .style(style::secondary(c))
+                    .on_press(Message::RollBuiltIn(name.clone())),
+                "Roll it",
+            );
+            let copy = hint(
+                c,
+                button(text("Copy").size(11))
+                    .padding([1, 6])
+                    .style(style::flat(c, false))
+                    .on_press(Message::CopyBuiltIn(name.clone())),
+                "Copy it into this campaign, to change it",
+            );
+            rows.push(
+                container(
+                    row![
+                        roll,
+                        container(
+                            text(name)
+                                .size(13)
+                                .color(c.text)
+                                .wrapping(text::Wrapping::None)
+                        )
+                        .clip(true)
+                        .padding([1, 4])
+                        .width(Fill),
+                        copy,
+                    ]
+                    .spacing(6)
+                    .align_y(Center),
+                )
+                .padding([2, 8])
+                .into(),
+            );
         }
         column(rows).spacing(1).into()
     }
@@ -814,6 +932,13 @@ pub fn markdown(blank: &Blank) -> String {
     out
 }
 
+/// Every die button in the list is this wide, so the names line up.
+const DIE_WIDTH: f32 = 40.0;
+
+fn die_label<'a>(die: String) -> iced::widget::Text<'a> {
+    text(die).size(11).width(Fill).align_x(Center)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1009,6 +1134,47 @@ mod tests {
         assert_eq!(
             pasted_lines("3rd bridge")[0],
             (None, "3rd bridge".to_string())
+        );
+    }
+
+    #[test]
+    fn built_in_tables_read_and_roll() {
+        let mut rng = fastrand::Rng::with_seed(5);
+        for table in BUILT_IN {
+            let read = table
+                .table()
+                .unwrap_or_else(|| panic!("{} isn't a table", table.name));
+            assert!(
+                problems(table.text, table.name).is_empty(),
+                "{}",
+                table.name
+            );
+            // Every table it links to is built in too.
+            for link in links::targets(table.text) {
+                assert!(built_in(&link).is_some(), "{} links to {link}", table.name);
+            }
+            let mut lookup = |target: &str| {
+                let found = built_in(target)?;
+                Some((found.name.to_string(), found.table()?, found.each_column))
+            };
+            let rolled = roll(table.name, &read, table.each_column, &mut rng, &mut lookup);
+            assert!(
+                !rolled.text().is_empty() && !rolled.text().contains("[["),
+                "{}",
+                table.name
+            );
+        }
+        assert!(built_in("names").is_some());
+    }
+
+    #[test]
+    fn a_hyphen_joins_the_result_before_it() {
+        let text = "| d1 | Start | End |\n| - | - | - |\n| 1 | Ash | -ford |\n";
+        let table = find(text).remove(0);
+        let mut rng = fastrand::Rng::with_seed(1);
+        assert_eq!(
+            roll("Place", &table, true, &mut rng, &mut no_tables).text(),
+            "Ashford"
         );
     }
 

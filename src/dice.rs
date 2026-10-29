@@ -1283,6 +1283,33 @@ fn tip<'a>(
     .into()
 }
 
+/// A small button beside a field that rolls on the roll table `table` to fill the field in.
+pub fn table_button<'a, M: Clone + 'a>(
+    c: Colors,
+    icon: &svg::Handle,
+    table: &str,
+    on_press: M,
+) -> Element<'a, M> {
+    let label = row![
+        Svg::new(icon.clone()).width(16).height(16),
+        text(table.to_string()).size(13),
+    ]
+    .spacing(4)
+    .align_y(Center);
+
+    tooltip(
+        button(label)
+            .padding([3, 8])
+            .style(style::secondary(c))
+            .on_press(on_press),
+        container(text(format!("Roll on {table} to fill this in")).size(12))
+            .padding([2, 6])
+            .style(style::dropdown(c)),
+        tooltip::Position::Top,
+    )
+    .into()
+}
+
 /// A small button that rolls `expression` from a note's field; `on_roll` gets the
 /// expression as text.
 pub fn field_button<'a, M: Clone + 'a>(

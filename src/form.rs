@@ -75,6 +75,8 @@ pub enum Message {
     FollowLink(usize),
     /// Rolls the dice in field `index`, like `1d8+3`.
     Roll(usize, String),
+    /// Rolls on the roll table field `index` names, to fill it in.
+    RollTable(usize),
     /// The text of step `.1` of steps field `.0`; the step after the last is a new one
     /// being typed.
     StepText(usize, usize, String),
@@ -825,7 +827,10 @@ impl Form {
                 }
                 return edited;
             }
-            Message::FollowLink(_) | Message::Roll(..) | Message::FollowStep(..) => return false,
+            Message::FollowLink(_)
+            | Message::Roll(..)
+            | Message::RollTable(_)
+            | Message::FollowStep(..) => return false,
             Message::StepText(index, step, value) => {
                 let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
                     return false;
@@ -1025,6 +1030,40 @@ impl Form {
         self.fields.push(Field::for_note(label, kind));
         self.inputs.push(Input::empty(kind));
         Ok(())
+    }
+
+    /// The roll table field `index` rolls on, if it has one.
+    pub fn table(&self, index: usize) -> Option<String> {
+        self.fields.get(index)?.table().map(String::from)
+    }
+
+    /// What text or long text field `index` holds, and whether it is a long one.
+    pub fn text_value(&self, index: usize) -> Option<(String, bool)> {
+        match self.inputs.get(index)? {
+            Input::Text(text) => Some((text.clone(), false)),
+            Input::Long(content) => Some((content.text(), true)),
+            _ => None,
+        }
+    }
+
+    /// Puts `value` in text or long text field `index`, in place of what it holds, or for
+    /// a long text field on a new line after it (`add_line`).
+    pub fn set_text_value(&mut self, index: usize, value: &str, add_line: bool) -> bool {
+        match self.inputs.get_mut(index) {
+            Some(Input::Text(text)) => *text = value.to_string(),
+            Some(Input::Long(content)) => {
+                let before = content.text();
+                let before = before.trim_end();
+                let text = if add_line && !before.is_empty() {
+                    format!("{before}\n\n{value}")
+                } else {
+                    value.to_string()
+                };
+                *content = text_editor::Content::with_text(&text);
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// The label of field `index`, to name what was rolled from it.
@@ -1510,9 +1549,18 @@ impl Form {
                                 }))
                                 .spacing(6)
                             });
+                            let table = field.table().map(|table| {
+                                dice::table_button(
+                                    c,
+                                    roll_icon,
+                                    table,
+                                    map(Message::RollTable(index)),
+                                )
+                            });
                             let input = row![input]
                                 .push(open)
                                 .push(rolls)
+                                .push(table)
                                 .spacing(6)
                                 .align_y(Center);
 
@@ -1580,7 +1628,21 @@ impl Form {
                         .spacing(6)
                         .into(),
                         Input::Long(content) => column![
-                            label(index, field.label()),
+                            match field.table() {
+                                Some(table) => row![
+                                    container(label(index, field.label())).width(Fill),
+                                    dice::table_button(
+                                        c,
+                                        roll_icon,
+                                        table,
+                                        map(Message::RollTable(index)),
+                                    ),
+                                ]
+                                .spacing(8)
+                                .align_y(Center)
+                                .into(),
+                                None => label(index, field.label()),
+                            },
                             context_menu::area(
                                 text_editor(content)
                                     .id(field_id(index))
@@ -2270,6 +2332,34 @@ mod tests {
 
     fn item_type() -> ContentType {
         types::parse(types::TEST_ITEM).unwrap()
+    }
+
+    #[test]
+    fn fills_fields_from_rolls() {
+        let mut ty = item_type();
+        ty.fields[0].table = Some("Names".into());
+        let mut form = Form::blank(ty.clone());
+        assert_eq!(form.table(0).as_deref(), Some("Names"));
+        assert!(form.set_text_value(0, "Wren Ash", false));
+        assert_eq!(form.name().as_deref(), Some("Wren Ash"));
+        // A long text field takes a roll on a new line, or in place of what it has.
+        let long = ty
+            .fields
+            .iter()
+            .position(|field| field.kind == Kind::Longtext)
+            .unwrap();
+        form.set_text_value(long, "Forged.", false);
+        form.set_text_value(long, "Cursed.", true);
+        assert_eq!(
+            form.text_value(long),
+            Some(("Forged.\n\nCursed.".into(), true))
+        );
+        form.set_text_value(long, "Lost.", false);
+        assert_eq!(form.text_value(long), Some(("Lost.".into(), true)));
+        // Only text fields can name a table.
+        let mut check = ty.fields[0].clone();
+        check.kind = Kind::Checkbox;
+        assert_eq!(check.table(), None);
     }
 
     #[test]

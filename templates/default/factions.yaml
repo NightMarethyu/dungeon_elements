@@ -3,6 +3,7 @@ label: Faction
 fields:
   - key: name
     label: Name
+    table: Group names
   - key: kind
     label: Kind
     kind: choice

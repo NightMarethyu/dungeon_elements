@@ -176,6 +176,10 @@ pub struct Field {
     /// that aren't on one (like a Stardate, or a date in the campaign's world).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub calendar: Option<bool>,
+    /// For text and long text fields: the roll table (like `Names`) a die button beside
+    /// the field rolls on, to fill the field in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<String>,
 }
 
 impl Field {
@@ -189,11 +193,20 @@ impl Field {
             width: Width::Half,
             folder: None,
             calendar: None,
+            table: None,
         }
     }
 
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_else(|| title_case(&self.key))
+    }
+
+    /// The roll table a die button beside the field rolls on, if it has one.
+    pub fn table(&self) -> Option<&str> {
+        self.table
+            .as_deref()
+            .map(str::trim)
+            .filter(|table| !table.is_empty() && self.kind.rolls_tables())
     }
 
     /// Whether a date field picks its date from a calendar, rather than being plain text.
@@ -246,6 +259,11 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Whether a field of this kind can name a roll table to fill it in.
+    pub fn rolls_tables(self) -> bool {
+        matches!(self, Kind::Text | Kind::Longtext)
+    }
+
     pub const ALL: [Kind; 11] = [
         Kind::Text,
         Kind::Longtext,
@@ -561,6 +579,15 @@ mod tests {
     fn starter_types_are_valid() {
         for (folder, yaml) in STARTER_TYPES {
             parse(yaml).unwrap_or_else(|error| panic!("{folder}: {error}"));
+            // The roll tables fields roll on are built in.
+            for field in &parse(yaml).unwrap().fields {
+                if let Some(table) = field.table() {
+                    assert!(
+                        crate::tables::built_in(table).is_some(),
+                        "{folder}: {table}"
+                    );
+                }
+            }
             // A subfolder's type has its parent's fields, and its link fields link to folders the template has.
             let ty = starter(folder).unwrap_or_else(|| panic!("{folder} has no parent"));
             assert!(ty.name_field().is_some(), "{folder} has no name field");

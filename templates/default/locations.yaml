@@ -3,6 +3,7 @@ label: Location
 fields:
   - key: name
     label: Name
+    table: Place names
   - key: kind
     label: Kind
     kind: choice

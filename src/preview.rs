@@ -88,6 +88,8 @@ struct Property {
     /// The dice in its value, like `1d8+3`, `+5` or a dice field's `1d20+5 advantage`, each
     /// with a button to roll it.
     rolls: Vec<String>,
+    /// The roll table the field rolls on to fill it in, if it names one.
+    table: Option<String>,
 }
 
 /// A paragraph, heading, list, table, or other top-level piece of the note's body.
@@ -150,6 +152,8 @@ pub struct Editing<'a, M> {
     pub roll_icon: svg::Handle,
     /// The Roll button of the roll table at this place in the note's text was clicked.
     pub on_roll_table: fn(usize) -> M,
+    /// The roll button of the field with this key, which rolls on its roll table.
+    pub on_roll_into: fn(String) -> M,
     /// The roll table at this place was set to roll each column on its own, or not.
     pub on_each_column: fn(usize, bool) -> M,
     /// Where the roll tables that roll each column on their own are in the note's text.
@@ -199,6 +203,9 @@ impl Preview {
             .into_iter()
             .map(|(key, label, value)| Property {
                 rolls: rolls(&front, &key, ty),
+                table: ty
+                    .and_then(|ty| ty.fields.iter().find(|field| field.key == key))
+                    .and_then(|field| field.table().map(String::from)),
                 key,
                 label,
                 value: value.map(|value| markdown::Content::parse(&value)),
@@ -539,16 +546,28 @@ impl Preview {
                     .into(),
             };
             // The roll buttons go under the value; clicking one rolls instead of editing.
-            let value: Element<'a, M> = if property.rolls.is_empty() {
+            let value: Element<'a, M> = if property.rolls.is_empty() && property.table.is_none() {
                 value
             } else {
                 let on_roll = edit.on_roll;
-                let buttons = property.rolls.iter().map(|expression| {
-                    let label = property.label.clone();
-                    dice::field_button(c, &edit.roll_icon, expression, move |expression| {
-                        on_roll(label.clone(), expression)
+                let mut buttons: Vec<Element<'a, M>> = property
+                    .rolls
+                    .iter()
+                    .map(|expression| {
+                        let label = property.label.clone();
+                        dice::field_button(c, &edit.roll_icon, expression, move |expression| {
+                            on_roll(label.clone(), expression)
+                        })
                     })
-                });
+                    .collect();
+                if let Some(table) = &property.table {
+                    buttons.push(dice::table_button(
+                        c,
+                        &edit.roll_icon,
+                        table,
+                        (edit.on_roll_into)(property.key.clone()),
+                    ));
+                }
                 column![value, row(buttons).spacing(6).wrap()]
                     .spacing(6)
                     .into()
