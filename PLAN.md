@@ -113,11 +113,12 @@ The items in Player Management are all things that will just be built as templat
 - [x] ~~Player management~~
   - [x] ~~The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types~~
   - [x] ~~Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)~~
-- [ ] NPC management
+- [x] NPC management
   - [x] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
     - This was completed when we ensured links and backlinks were working properly
-  - [ ] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
-    - This might just need to be the foundation of a search feature. The search wouldn't need to be fancy, but some sort of search would be useful
+  - [x] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
+    - NPCs got their Status field with the new starter folders. The filtering is a simple note search: a box at the top of the file tree (Ctrl+Shift+F) that matches names and aliases first, then text, with `field:value` filters (`status:alive location:Saltmarsh`), and **Search in Folder** on a folder's right-click menu. It reads the notes each time, with no index (`src/search.rs`)
+    - Maybe later, not decided: Boolean searches (and, or, not), regular expressions, and sorting the results (by a field, or by when notes changed). Worth considering if the simple search feels short, but not planned yet
 - [ ] Quest tracker
   - [x] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
   - [ ] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree

@@ -21,6 +21,7 @@ mod menu;
 mod note;
 mod preview;
 mod recent;
+mod search;
 mod settings;
 mod style;
 mod tags;
@@ -236,7 +237,31 @@ struct Workspace {
     /// The tags fields of notes being saved in the background, and what the notes said
     /// before, by tab, to bring their tags' notes up to date once they are saved.
     tag_saves: HashMap<u64, (Vec<(String, String)>, String)>,
+    /// The sidebar's search, which shows its results in place of the file tree.
+    search: Search,
 }
+
+/// What the sidebar's search box holds, and the notes it found.
+#[derive(Debug, Default)]
+struct Search {
+    query: String,
+    /// The folder searched in (with its subfolders), from a folder's **Search in
+    /// Folder**, or `None` for the whole campaign.
+    folder: Option<PathBuf>,
+    hits: Vec<search::Hit>,
+}
+
+impl Search {
+    /// Whether the sidebar shows results instead of the file tree.
+    fn active(&self) -> bool {
+        !self.query.trim().is_empty() || self.folder.is_some()
+    }
+}
+
+/// The sidebar's search box, for Ctrl+Shift+F.
+const SEARCH: &str = "search-notes";
+/// At most this many results are shown, so a search for one letter stays quick to draw.
+const MAX_HITS: usize = 200;
 
 /// A fix for one of the active note's problems, from the dialog [`Message::FixProblems`] opens.
 #[derive(Debug, Clone)]
@@ -689,6 +714,18 @@ enum Message {
     SaveTab(u64),
     CloseTabs(Vec<u64>),
     CloseTabsConfirmed(Vec<u64>, bool),
+
+    // Search
+    SearchChanged(String),
+    /// Searches only this folder and its subfolders.
+    SearchIn(PathBuf),
+    /// Searches the whole campaign again.
+    SearchEverywhere,
+    ClearSearch,
+    /// Ctrl+Shift+F: puts the cursor in the search box.
+    FocusSearch,
+    /// Enter in the search box: opens the first note found.
+    OpenFirstHit,
 }
 
 impl App {
@@ -868,10 +905,26 @@ impl App {
             Screen::Splash { .. } => Subscription::none(),
         };
 
+        // The search box keeps Escape to itself; during a search, Escape still leaves it.
+        let searching = match &self.screen {
+            Screen::Workspace(workspace) if workspace.search.active() => {
+                iced::event::listen_with(|event, status, _| match event {
+                    iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                        if status == iced::event::Status::Captured =>
+                    {
+                        escape(&key)
+                    }
+                    _ => None,
+                })
+            }
+            _ => Subscription::none(),
+        };
+
         Subscription::batch([
             keys,
             focus,
             files,
+            searching,
             window::close_requests().map(|_| Message::Exit),
         ])
     }
@@ -942,8 +995,14 @@ impl App {
                         *open_campaign = None;
                     }
                     Screen::Workspace(workspace) if !self.about => {
+                        let editing = workspace.active_tab().is_some_and(|tab| tab.edit.is_some());
+                        // Escape leaves a search, once there is nothing else to close.
                         if workspace.dialog.take().is_none() {
-                            workspace.finish_editing();
+                            if workspace.search.active() && !editing {
+                                workspace.search = Search::default();
+                            } else {
+                                workspace.finish_editing();
+                            }
                         }
                     }
                     _ => {}
@@ -1350,6 +1409,12 @@ impl App {
                     ),
                 ),
                 Entry::Separator,
+                item(
+                    "Search Notes",
+                    when(workspace.is_some(), Message::FocusSearch),
+                )
+                .shortcut("Ctrl+Shift+F"),
+                Entry::Separator,
                 item("Types...", Some(Message::ShowTypes)),
             ],
             Menu::View => {
@@ -1467,6 +1532,7 @@ impl Workspace {
             save_all: None,
             tags,
             tag_saves: HashMap::new(),
+            search: Search::default(),
         }
     }
 
@@ -1633,6 +1699,51 @@ impl Workspace {
                 self.recheck_tab(index);
             }
         }
+        self.refresh_search();
+    }
+
+    /// Searches the notes again for what is in the search box. Open notes are searched
+    /// as their tabs have them, unsaved changes and all.
+    fn refresh_search(&mut self) {
+        if !self.search.active() {
+            self.search.hits.clear();
+            return;
+        }
+        let query = search::Query::parse(&self.search.query);
+        let mut hits = Vec::new();
+        for path in markdown_files(&self.tree) {
+            if self
+                .search
+                .folder
+                .as_ref()
+                .is_some_and(|folder| !path.starts_with(folder))
+            {
+                continue;
+            }
+            let open = self
+                .tabs
+                .iter()
+                .find(|tab| tab.modified && tab.path.as_ref() == Some(&path))
+                .and_then(|tab| tab.text().ok());
+            let Some(text) = open.or_else(|| std::fs::read_to_string(&path).ok()) else {
+                continue;
+            };
+            let mut names = vec![display_name(&path, false)];
+            names.extend(self.titles.get(&path).cloned());
+            let fields: Vec<(String, String)> =
+                match path.parent().and_then(|folder| self.types.get(folder)) {
+                    Some(Ok(ty)) => ty
+                        .fields
+                        .iter()
+                        .map(|field| (field.key.clone(), field.label()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+            hits.extend(search::find(&query, path, &text, &names, &fields));
+        }
+        // Notes named for what was typed first, then by name.
+        hits.sort_by_cached_key(|hit| (hit.rank, self.tree_name(&hit.path, false).to_lowercase()));
+        self.search.hits = hits;
     }
 
     /// Checks the note in the tab at `index` as the tab has it, unsaved changes and all,
@@ -3378,6 +3489,33 @@ impl Workspace {
                 self.dice.roll_field(&label, &expression);
                 Task::none()
             }
+            Message::SearchChanged(query) => {
+                self.search.query = query;
+                self.refresh_search();
+                Task::none()
+            }
+            Message::SearchIn(folder) => {
+                self.search.folder = Some(folder);
+                self.refresh_search();
+                iced::widget::operation::focus(SEARCH)
+            }
+            Message::SearchEverywhere => {
+                self.search.folder = None;
+                self.refresh_search();
+                Task::none()
+            }
+            Message::ClearSearch => {
+                self.search = Search::default();
+                Task::none()
+            }
+            Message::FocusSearch => iced::widget::operation::focus(SEARCH),
+            Message::OpenFirstHit => match self.search.hits.first() {
+                Some(hit) => {
+                    let path = hit.path.clone();
+                    self.update(Message::OpenEntry(path))
+                }
+                None => Task::none(),
+            },
             Message::RefreshTree => {
                 self.status.clear();
                 self.pick_up_outside_changes();
@@ -4483,6 +4621,7 @@ impl Workspace {
                         Some(Message::ShowNewFolderIn(path.clone())),
                     ),
                     Entry::Separator,
+                    item("Search in Folder", Some(Message::SearchIn(path.clone()))),
                     item(
                         if expanded { "Collapse" } else { "Expand" },
                         Some(Message::ToggleFolder(path.clone())),
@@ -4733,7 +4872,9 @@ impl Workspace {
         .align_y(Center)
         .padding([6, 12]);
 
-        let tree: Element<'_, Message> = if self.tree.is_empty() {
+        let tree: Element<'_, Message> = if self.search.active() {
+            self.search_results(c)
+        } else if self.tree.is_empty() {
             text("This campaign has no folders or Markdown files yet.")
                 .size(13)
                 .color(c.text_muted)
@@ -4764,6 +4905,7 @@ impl Workspace {
 
         let sidebar = container(column![
             root_area(header),
+            self.search_box(c),
             stack![
                 scrollable(column![tree, root_area(space().height(Fill).into())].padding([0, 4]))
                     .height(Fill),
@@ -4780,6 +4922,118 @@ impl Workspace {
             Message::OpenContextMenu(Target::Tree(root.clone()), position)
         })
         .into()
+    }
+
+    /// The search box at the top of the sidebar, with the folder being searched in.
+    fn search_box(&self, c: Colors) -> Element<'_, Message> {
+        let input = text_input("Search notes  (status:alive)", &self.search.query)
+            .id(SEARCH)
+            .on_input(Message::SearchChanged)
+            .on_submit(Message::OpenFirstHit)
+            .size(13)
+            .padding([4, 8])
+            .style(style::input(c));
+        let clear = |message| {
+            button(text("✕").size(11))
+                .padding([2, 6])
+                .style(style::flat(c, false))
+                .on_press(message)
+        };
+        let mut content = column![
+            row![input]
+                .push(self.search.active().then(|| clear(Message::ClearSearch)))
+                .spacing(2)
+                .align_y(Center)
+        ]
+        .spacing(4);
+        if let Some(folder) = &self.search.folder {
+            let name = folder
+                .strip_prefix(&self.root)
+                .unwrap_or(folder)
+                .display()
+                .to_string();
+            content = content.push(
+                row![
+                    text(format!("In {name}"))
+                        .size(12)
+                        .color(c.text_muted)
+                        .width(Fill),
+                    button(text("Search everywhere").size(11).color(c.accent))
+                        .padding([0, 4])
+                        .style(style::flat(c, false))
+                        .on_press(Message::SearchEverywhere),
+                ]
+                .align_y(Center),
+            );
+        }
+        container(content).padding([4, 8]).into()
+    }
+
+    /// The notes the search found, in place of the file tree: each with its folder and
+    /// the line that matched.
+    fn search_results(&self, c: Colors) -> Element<'_, Message> {
+        let hits = &self.search.hits;
+        let count = match hits.len() {
+            0 => "No notes found".to_string(),
+            1 => "1 note".to_string(),
+            n => format!("{n} notes"),
+        };
+        let mut rows = vec![
+            container(text(count).size(11).color(c.text_muted))
+                .padding([2, 8])
+                .into(),
+        ];
+        let active_path = self.active_tab().and_then(|tab| tab.path.as_ref());
+        for hit in hits.iter().take(MAX_HITS) {
+            let folder = hit
+                .path
+                .parent()
+                .and_then(|folder| folder.strip_prefix(&self.root).ok())
+                .map(|folder| folder.display().to_string())
+                .unwrap_or_default();
+            let mut lines = column![
+                row![
+                    text(self.tree_name(&hit.path, false))
+                        .size(13)
+                        .color(c.text)
+                        .wrapping(text::Wrapping::None),
+                    text(folder)
+                        .size(11)
+                        .color(c.text_muted)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::End)
+            ]
+            .spacing(1);
+            if let Some(line) = &hit.line {
+                lines = lines.push(text(line).size(11).color(c.text_muted));
+            }
+            let selected = active_path == Some(&hit.path);
+            rows.push(
+                button(container(lines).clip(true))
+                    .width(Fill)
+                    .padding([3, 8])
+                    .style(style::flat(c, selected))
+                    .on_press(Message::OpenEntry(hit.path.clone()))
+                    .into(),
+            );
+        }
+        if hits.len() > MAX_HITS {
+            rows.push(
+                container(
+                    text(format!(
+                        "and {} more. Type more to narrow the search.",
+                        hits.len() - MAX_HITS
+                    ))
+                    .size(11)
+                    .color(c.text_muted),
+                )
+                .padding([2, 8])
+                .into(),
+            );
+        }
+        column(rows).spacing(1).into()
     }
 
     /// Adds a row for each entry, and for the contents of expanded folders.
@@ -6456,6 +6710,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     match c.to_ascii_lowercase().as_str() {
         "n" => Some(Message::NewNote),
         "o" => Some(Message::OpenFile),
+        "f" if modifiers.shift() => Some(Message::FocusSearch),
         "s" if modifiers.alt() => Some(Message::SaveAll),
         "s" if modifiers.shift() => Some(Message::SaveAs),
         "s" => Some(Message::Save),
