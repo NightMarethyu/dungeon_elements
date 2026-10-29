@@ -8,6 +8,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 - **Edit > Types...** can **Export Campaign Structure...**: the campaign's folders and their fields, subfolders and all, without any notes, as an ordinary `.zip` file. Saved in your templates folder, it's offered by **New Campaign...**; saved anywhere else, it's ready to share.
 - **New Campaign...** starts from the starter folders, an empty folder, or any of your templates. **Import...** adds a template someone shared, including a folder zipped with your file manager (only its folders and types are used).
+- **Add New** at the bottom of the list in **Edit > Types...** makes a new type, with a folder for its notes named after it.
 - **Export Type...** saves one folder's fields as a file like `Weapon.type.yaml`. Saved types can start a new folder in any campaign, from the **+** at the bottom of the file tree or in **Edit > Types...**.
 - **Open Campaign...** lists the campaigns you've opened or made, the latest first, with a box to find one by name. **Browse for a Folder...** opens any other.
 - New guide in **Help > How-To Guides**: Templates and sharing types.

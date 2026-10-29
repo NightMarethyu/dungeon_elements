@@ -103,6 +103,11 @@ The campaign's people and plots. Everything here is notes, types and links, buil
     - **Export Type...** saves a folder's type, with what it inherits, as `<Name>.type.yaml`; saved types start new folders in any campaign. **Export Campaign Structure...** saves the folders and types as a template (pulled forward from Phase 5, at Ammon's ask, with Open Campaign listing known campaigns)
   - [x] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
     - Date fields pick from a calendar (or are plain text with the calendar off), tags have tag notes listing links to the tagged notes, and a "links to notes" field holds many links
+  - [x] Edit > Types has an **Add New** button at the bottom of its list: a new type with a new folder for its notes
+- [ ] Adjust the default folders and types: go over the starter folders (`templates/default/`) and each type's fields now that fields can do much more (dates, tags, links to notes, steps, dice, subfolders as kinds), and change what a new campaign starts with to match
+- [ ] Built-in templates for specific systems and uses, offered by New Campaign beside the starter folders (for example D&D 5e, Shadowdark, Cairn and Cyberpunk, and uses beyond TTRPGs like a novel or a setting bible)
+  - Made in the same format as the user's own templates (a zip of folders and `_type.yaml` files), so they show what a template can do and can be exported, changed and shared like any other
+  - Player and character types come from these: each system's character sheet as fields (see Player Management Excluded below)
 
 **Player Management Excluded**
 The items in Player Management are all things that will just be built as templates, these can be based off character sheets for different TTRPGs. These items are all already included as fields and types

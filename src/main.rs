@@ -3647,8 +3647,19 @@ impl Workspace {
                 Task::none()
             }
             Message::Types(message) => {
+                let added = matches!(message, types_editor::Message::AddNew);
                 if let Some(Dialog::Types(editor)) = &mut self.dialog {
                     editor.update(message);
+                }
+                // A new type is at the end of the list, and is named first.
+                if added {
+                    return Task::batch([
+                        iced::widget::operation::snap_to(
+                            types_editor::LIST,
+                            iced::widget::scrollable::RelativeOffset::END,
+                        ),
+                        iced::widget::operation::focus(types_editor::NAME_INPUT),
+                    ]);
                 }
                 Task::none()
             }

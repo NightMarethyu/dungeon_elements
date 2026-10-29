@@ -7,6 +7,7 @@ A folder can say which fields its notes have, like Name, Location and Status for
 - **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, a date, tags, a link to another note, links to several notes, a checkbox, long text, steps, or [dice](guide:dice).
 - A folder without fields holds plain Markdown notes.
 - To give a folder fields, pick it in **Edit > Types...** and add some.
+- **Add New**, at the bottom of the list in **Edit > Types...**, makes a new type and a folder for its notes. Name the type (like Faction) and the folder is named after it (factions), or type another name for the folder. **Discard** leaves it out. The folder is made when you choose **Save**.
 
 ## Fill in a form from the keyboard
 
