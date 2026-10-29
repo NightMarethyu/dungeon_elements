@@ -119,9 +119,11 @@ The items in Player Management are all things that will just be built as templat
   - [x] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
     - NPCs got their Status field with the new starter folders. The filtering is a simple note search: a box at the top of the file tree (Ctrl+Shift+F) that matches names and aliases first, then text, with `field:value` filters (`status:alive location:Saltmarsh`), and **Search in Folder** on a folder's right-click menu. It reads the notes each time, with no index (`src/search.rs`)
     - Maybe later, not decided: Boolean searches (and, or, not), regular expressions, and sorting the results (by a field, or by when notes changed). Worth considering if the simple search feels short, but not planned yet
-- [ ] Quest tracker
+- [x] Quest tracker
   - [x] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
-  - [ ] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
+  - [x] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
+    - A Quests list in the sidebar (View > Quests, Ctrl+Shift+Q) in place of the file tree, grouped by Status, with finished groups collapsed. Steps are ticked from the list, and a step that is a Complete quest counts as done. Built as its own piece (`src/quests.rs`) so Layouts can move it into any pane
+    - Left out for now: changing a quest's Status from the list, writing a sub-quest's completion into its parent's file, sorting or filtering the list, and adding or reordering steps from it
 - [ ] Generators
   - [ ] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
   - [ ] Name generators, built on roll tables, with a few built-in lists to start from

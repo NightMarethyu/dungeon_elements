@@ -99,6 +99,16 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Quests",
+        &[
+            (
+                "Ctrl+Shift+Q",
+                "Show the Quests list in place of the file tree",
+            ),
+            ("Escape", "Close the Quests list"),
+        ],
+    ),
+    (
         "Reading view",
         &[
             (

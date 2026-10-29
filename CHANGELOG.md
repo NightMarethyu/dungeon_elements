@@ -4,6 +4,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Track your quests
+
+- **View > Quests** (Ctrl+Shift+Q), or **Show Quests** on a Quests folder's right-click menu, shows the campaign's quests in the sidebar, grouped by Status. Complete, Failed and Abandoned start collapsed, so the quests still going come first.
+- Each quest shows its progress, like `2/5`, with a bar. Click the arrow to see its steps and tick them off right there: in the quest's tab if it's open, or straight into the note if it isn't.
+- Quest lines show as a tree: a step that links to another quest shows that quest under it, with its own steps. A step that is a quest counts as done when that quest is Complete.
+- New guide in **Help > How-To Guides**: Tracking quests.
+
 ### Search your notes
 
 - A search box at the top of the file tree (**Edit > Search Notes**, Ctrl+Shift+F) finds notes as you type. Notes whose name or alias matches come first, then notes that mention it, each with its folder and the line that matched. Click one to open it, or press Enter for the first. Clear the box or press Escape to see the file tree again.
