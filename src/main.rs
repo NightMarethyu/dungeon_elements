@@ -20,6 +20,7 @@ mod marks;
 mod menu;
 mod note;
 mod preview;
+mod quests;
 mod recent;
 mod search;
 mod settings;
@@ -239,6 +240,8 @@ struct Workspace {
     tag_saves: HashMap<u64, (Vec<(String, String)>, String)>,
     /// The sidebar's search, which shows its results in place of the file tree.
     search: Search,
+    /// The Quests list, shown in the sidebar in place of the file tree when it is open.
+    quests: quests::Quests,
 }
 
 /// What the sidebar's search box holds, and the notes it found.
@@ -722,6 +725,9 @@ enum Message {
     /// Searches the whole campaign again.
     SearchEverywhere,
     ClearSearch,
+    // Quests
+    ShowQuests,
+    Quests(quests::Message),
     /// Ctrl+Shift+F: puts the cursor in the search box.
     FocusSearch,
     /// Enter in the search box: opens the first note found.
@@ -1000,6 +1006,8 @@ impl App {
                         if workspace.dialog.take().is_none() {
                             if workspace.search.active() && !editing {
                                 workspace.search = Search::default();
+                            } else if workspace.quests.open && !editing {
+                                workspace.quests.open = false;
                             } else {
                                 workspace.finish_editing();
                             }
@@ -1265,6 +1273,9 @@ impl App {
                 let task = workspace.update(message);
                 if edit {
                     workspace.recheck_active();
+                    if workspace.active_tab().is_some_and(|tab| tab.modified) {
+                        workspace.refresh_quests();
+                    }
                 }
                 workspace.refresh_preview();
                 Task::batch([task, workspace.fetch_pictures()])
@@ -1456,6 +1467,18 @@ impl App {
                     .checked(self.settings.open_in_reading),
                     Entry::Separator,
                     item(
+                        "Quests",
+                        workspace.map(|workspace| {
+                            if workspace.quests.open {
+                                Message::Quests(quests::Message::Close)
+                            } else {
+                                Message::ShowQuests
+                            }
+                        }),
+                    )
+                    .shortcut("Ctrl+Shift+Q")
+                    .checked(workspace.is_some_and(|workspace| workspace.quests.open)),
+                    item(
                         "Refresh File Tree",
                         when(workspace.is_some(), Message::RefreshTree),
                     ),
@@ -1533,6 +1556,7 @@ impl Workspace {
             tags,
             tag_saves: HashMap::new(),
             search: Search::default(),
+            quests: quests::Quests::default(),
         }
     }
 
@@ -1700,6 +1724,77 @@ impl Workspace {
             }
         }
         self.refresh_search();
+        self.refresh_quests();
+    }
+
+    /// Reads the quests again for the Quests list, if it is open. Open notes are read as
+    /// their tabs have them, so ticking a step there finds its box where the tab has it.
+    fn refresh_quests(&mut self) {
+        if !self.quests.open {
+            return;
+        }
+        let mut found = Vec::new();
+        let mut options: Vec<String> = Vec::new();
+        for path in markdown_files(&self.tree) {
+            let Some(Ok(ty)) = path.parent().and_then(|folder| self.types.get(folder)) else {
+                continue;
+            };
+            if !ty.is_a(quests::QUEST) {
+                continue;
+            }
+            if let Some(status) = ty.fields.iter().find(|field| field.key == "status") {
+                for option in &status.options {
+                    if !options.contains(option) {
+                        options.push(option.clone());
+                    }
+                }
+            }
+            let open = self
+                .tabs
+                .iter()
+                .find(|tab| tab.path.as_ref() == Some(&path))
+                .and_then(|tab| tab.text().ok());
+            let Some(text) = open.or_else(|| std::fs::read_to_string(&path).ok()) else {
+                continue;
+            };
+            let name = self.tree_name(&path, false);
+            found.push(quests::read(path, name, &text, ty, &self.index));
+        }
+        self.quests.set(found, &options);
+    }
+
+    /// Ticks or unticks the step of the quest at `path` whose task box is at `at`: in its
+    /// tab if it is open, where it stays unsaved like any edit, or else in the file.
+    fn tick_step(&mut self, path: &Path, at: usize) {
+        let root = self.root.clone();
+        let index = self.index.clone();
+        if let Some(at_tab) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.path.as_deref() == Some(path))
+        {
+            let tab = &mut self.tabs[at_tab];
+            let text = tab.text().unwrap_or_else(|_| tab.content.text());
+            if let Some(new) = preview::toggle_task(&text, at) {
+                tab.set_text(&new);
+                tab.modified = true;
+                if tab.preview.is_some() {
+                    tab.preview = Some(tab.make_preview(&root, &index));
+                }
+                self.recheck_tab(at_tab);
+            }
+        } else {
+            let ticked = std::fs::read_to_string(path)
+                .map_err(|error| error.to_string())
+                .and_then(|text| {
+                    preview::toggle_task(&text, at).ok_or_else(|| "the step has moved".to_string())
+                })
+                .and_then(|new| std::fs::write(path, new).map_err(|error| error.to_string()));
+            if let Err(error) = ticked {
+                self.status = format!("Could not tick the step: {error}");
+            }
+        }
+        self.refresh_quests();
     }
 
     /// Searches the notes again for what is in the search box. Open notes are searched
@@ -3509,6 +3604,27 @@ impl Workspace {
                 Task::none()
             }
             Message::FocusSearch => iced::widget::operation::focus(SEARCH),
+            Message::ShowQuests => {
+                self.quests.open = true;
+                self.search = Search::default();
+                self.refresh_quests();
+                Task::none()
+            }
+            Message::Quests(message) => match message {
+                quests::Message::Open(path) => self.update(Message::OpenEntry(path)),
+                quests::Message::Tick(path, at) => {
+                    self.tick_step(&path, at);
+                    Task::none()
+                }
+                quests::Message::Close => {
+                    self.quests.open = false;
+                    Task::none()
+                }
+                message => {
+                    self.quests.update(message);
+                    Task::none()
+                }
+            },
             Message::OpenFirstHit => match self.search.hits.first() {
                 Some(hit) => {
                     let path = hit.path.clone();
@@ -4622,6 +4738,11 @@ impl Workspace {
                     ),
                     Entry::Separator,
                     item("Search in Folder", Some(Message::SearchIn(path.clone()))),
+                ]);
+                if matches!(self.types.get(path), Some(Ok(ty)) if ty.is_a(quests::QUEST)) {
+                    entries.push(item("Show Quests", Some(Message::ShowQuests)));
+                }
+                entries.extend([
                     item(
                         if expanded { "Collapse" } else { "Expand" },
                         Some(Message::ToggleFolder(path.clone())),
@@ -4874,6 +4995,9 @@ impl Workspace {
 
         let tree: Element<'_, Message> = if self.search.active() {
             self.search_results(c)
+        } else if self.quests.open {
+            let selected = self.active_tab().and_then(|tab| tab.path.as_deref());
+            self.quests.view(c, selected).map(Message::Quests)
         } else if self.tree.is_empty() {
             text("This campaign has no folders or Markdown files yet.")
                 .size(13)
@@ -6711,6 +6835,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "n" => Some(Message::NewNote),
         "o" => Some(Message::OpenFile),
         "f" if modifiers.shift() => Some(Message::FocusSearch),
+        "q" if modifiers.shift() => Some(Message::ShowQuests),
         "s" if modifiers.alt() => Some(Message::SaveAll),
         "s" if modifiers.shift() => Some(Message::SaveAs),
         "s" => Some(Message::Save),
