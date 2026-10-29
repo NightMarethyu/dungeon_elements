@@ -20,9 +20,11 @@ mod marks;
 mod menu;
 mod note;
 mod preview;
+mod recent;
 mod settings;
 mod style;
 mod tags;
+mod templates;
 mod theme;
 mod types;
 mod types_editor;
@@ -35,8 +37,8 @@ use std::time::SystemTime;
 
 use iced::keyboard::{self, Key, Modifiers};
 use iced::widget::{
-    Svg, button, center, checkbox, column, container, mouse_area, opaque, pick_list, row, rule,
-    scrollable, space, stack, svg, text, text_editor, text_input, tooltip,
+    Svg, button, center, column, container, mouse_area, opaque, pick_list, row, rule, scrollable,
+    space, stack, svg, text, text_editor, text_input, tooltip,
 };
 use iced::{Center, Element, Fill, Point, Size, Subscription, Task, window};
 
@@ -101,7 +103,8 @@ struct App {
 enum Screen {
     /// Asks whether to open a campaign or create a new one.
     Splash {
-        new_campaign: Option<NewCampaign>,
+        new_campaign: Option<Box<NewCampaign>>,
+        open_campaign: Option<OpenCampaign>,
         error: Option<String>,
     },
     Workspace(Box<Workspace>),
@@ -111,6 +114,7 @@ impl Default for Screen {
     fn default() -> Self {
         Screen::Splash {
             new_campaign: None,
+            open_campaign: None,
             error: None,
         }
     }
@@ -118,6 +122,8 @@ impl Default for Screen {
 
 /// The widget id of the title field in the "New campaign" dialog.
 const TITLE_INPUT: &str = "new-campaign-title";
+/// The widget id of the box that finds a campaign in the "Open campaign" dialog.
+const OPEN_FILTER: &str = "open-campaign-filter";
 /// The widget id of the name field in the workspace's dialogs.
 const DIALOG_INPUT: &str = "dialog-name";
 /// The widget id of the text editor that shows a file's text.
@@ -132,8 +138,41 @@ const SUGGESTIONS: usize = 8;
 struct NewCampaign {
     title: String,
     location: String,
-    with_template: bool,
+    /// The templates to start from: the starter folders, none, and the user's own.
+    templates: Vec<templates::Template>,
+    template: templates::Template,
+    /// The folders the picked template makes, or why it can't be read.
+    structure: Result<templates::Structure, String>,
     error: Option<String>,
+}
+
+impl NewCampaign {
+    /// Picks `template`, reading the folders it makes.
+    fn pick(&mut self, template: templates::Template) {
+        self.structure = template.structure();
+        self.template = template;
+    }
+}
+
+/// The "Open campaign" dialog: the campaigns opened before, to pick one from.
+struct OpenCampaign {
+    campaigns: Vec<recent::Campaign>,
+    /// Text typed to find a campaign by name or folder.
+    filter: String,
+}
+
+impl OpenCampaign {
+    /// The campaigns whose name or folder has the text typed in them.
+    fn shown(&self) -> impl Iterator<Item = &recent::Campaign> {
+        let filter = self.filter.trim().to_lowercase();
+        self.campaigns.iter().filter(move |campaign| {
+            campaign
+                .path
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(&filter)
+        })
+    }
 }
 
 /// An open campaign folder: its file tree and the files open in tabs.
@@ -497,15 +536,30 @@ enum Message {
     ExitConfirmed(bool),
 
     // Splash screen
+    /// Lists the campaigns opened before, or asks for a folder if there are none.
     OpenCampaign,
+    /// Asks for a campaign folder to open.
+    BrowseCampaign,
     CampaignPicked(Option<PathBuf>),
+    /// Opens a campaign from the list of those opened before.
+    OpenKnown(PathBuf),
+    /// Takes a campaign off the list of those opened before.
+    ForgetCampaign(PathBuf),
+    OpenFilter(String),
+    /// Enter in the "Open campaign" dialog: opens the first campaign it shows.
+    OpenFirstCampaign,
+    CancelOpenCampaign,
     ShowNewCampaign,
     CancelNewCampaign,
     TitleChanged(String),
     LocationChanged(String),
     BrowseLocation,
     LocationPicked(Option<PathBuf>),
-    TemplateToggled(bool),
+    TemplatePicked(templates::Template),
+    /// Asks for a template (`.zip`) or type (`.yaml`) file to import.
+    ImportTemplate,
+    ImportPicked(Option<PathBuf>),
+    ShowTemplatesFolder,
     CreateCampaign,
 
     // Workspace
@@ -571,6 +625,9 @@ enum Message {
     UpdateTagNotes,
     ShowTypes,
     Types(types_editor::Message),
+    /// A type or the campaign's structure was exported, to here (or not, if cancelled).
+    Exported(Result<Option<PathBuf>, String>),
+    TypesImportPicked(Option<PathBuf>),
     ShowProblems,
     OpenProblem(PathBuf),
     /// Opens the note and a dialog offering fixes for its problems.
@@ -647,6 +704,7 @@ impl App {
         let mut app = App {
             screen: Screen::Splash {
                 new_campaign: None,
+                open_campaign: None,
                 error: theme_problems(&problems),
             },
             settings,
@@ -669,13 +727,20 @@ impl App {
         if let Some(root) = std::env::args_os().nth(1).map(PathBuf::from)
             && root.is_dir()
         {
-            app.screen = Screen::Workspace(Box::new(Workspace::open(
-                root,
-                app.settings.open_in_reading,
-            )));
+            app.open_workspace(root);
         }
 
         app
+    }
+
+    /// Opens the campaign at `root`, and puts it at the top of Open Campaign's list.
+    fn open_workspace(&mut self, root: PathBuf) {
+        // Not being able to remember it doesn't stop it opening.
+        let _ = recent::remember(&root);
+        self.screen = Screen::Workspace(Box::new(Workspace::open(
+            root,
+            self.settings.open_in_reading,
+        )));
     }
 
     fn colors(&self) -> Colors {
@@ -868,7 +933,14 @@ impl App {
             }
             Message::Escape => {
                 match &mut self.screen {
-                    Screen::Splash { new_campaign, .. } if !self.about => *new_campaign = None,
+                    Screen::Splash {
+                        new_campaign,
+                        open_campaign,
+                        ..
+                    } if !self.about => {
+                        *new_campaign = None;
+                        *open_campaign = None;
+                    }
                     Screen::Workspace(workspace) if !self.about => {
                         if workspace.dialog.take().is_none() {
                             workspace.finish_editing();
@@ -964,32 +1036,88 @@ impl App {
         match &mut self.screen {
             Screen::Splash {
                 new_campaign,
+                open_campaign,
                 error,
             } => match message {
                 Message::OpenCampaign => {
+                    *error = None;
+                    let campaigns = recent::load();
+                    // With none to list yet, the folder picker is all there is.
+                    if campaigns.is_empty() {
+                        return self.update(Message::BrowseCampaign);
+                    }
+                    *open_campaign = Some(OpenCampaign {
+                        campaigns,
+                        filter: String::new(),
+                    });
+                    iced::widget::operation::focus(OPEN_FILTER)
+                }
+                Message::BrowseCampaign => {
                     Task::perform(pick_folder("Open campaign folder"), Message::CampaignPicked)
                 }
                 Message::CampaignPicked(Some(root)) => {
                     if root.is_dir() {
-                        self.screen = Screen::Workspace(Box::new(Workspace::open(
-                            root,
-                            self.settings.open_in_reading,
-                        )));
+                        self.open_workspace(root);
                     } else {
                         *error = Some(format!("{} is not a folder", root.display()));
                     }
                     Task::none()
                 }
+                Message::OpenKnown(root) => {
+                    if root.is_dir() {
+                        self.open_workspace(root);
+                    } else {
+                        *error = Some(format!(
+                            "{} can't be found. It may have been moved, renamed or deleted, or be on a drive that isn't connected.",
+                            root.display()
+                        ));
+                        *open_campaign = None;
+                    }
+                    Task::none()
+                }
+                Message::ForgetCampaign(root) => {
+                    if let Err(message) = recent::forget(&root) {
+                        *error = Some(format!("Could not update the list: {message}"));
+                    }
+                    if let Some(open) = open_campaign {
+                        open.campaigns.retain(|campaign| campaign.path != root);
+                    }
+                    Task::none()
+                }
+                Message::OpenFilter(value) => {
+                    if let Some(open) = open_campaign {
+                        open.filter = value;
+                    }
+                    Task::none()
+                }
+                Message::OpenFirstCampaign => {
+                    match open_campaign.as_ref().and_then(|open| open.shown().next()) {
+                        Some(campaign) => {
+                            let root = campaign.path.clone();
+                            self.update(Message::OpenKnown(root))
+                        }
+                        None => Task::none(),
+                    }
+                }
+                Message::CancelOpenCampaign => {
+                    *open_campaign = None;
+                    Task::none()
+                }
                 Message::ShowNewCampaign => {
                     *error = None;
-                    *new_campaign = Some(NewCampaign {
+                    *open_campaign = None;
+                    let mut form = NewCampaign {
                         title: String::new(),
                         location: default_location()
                             .map(|path| path.display().to_string())
                             .unwrap_or_default(),
-                        with_template: true,
+                        templates: templates::list(),
+                        template: templates::Template::Starter,
+                        structure: Ok(templates::Structure::default()),
                         error: None,
-                    });
+                    };
+                    form.pick(templates::Template::Starter);
+                    *new_campaign = Some(Box::new(form));
                     iced::widget::operation::focus(TITLE_INPUT)
                 }
                 Message::CancelNewCampaign => {
@@ -1000,22 +1128,32 @@ impl App {
                     pick_folder("Choose where to save the campaign"),
                     Message::LocationPicked,
                 ),
+                Message::ImportTemplate => Task::perform(pick_import(), Message::ImportPicked),
+                Message::ShowTemplatesFolder => {
+                    if let Some(folder) = templates::templates_folder() {
+                        let _ = std::fs::create_dir_all(&folder);
+                        if let Err(message) = open_folder(&folder) {
+                            *error =
+                                Some(format!("Could not open {}: {message}", folder.display()));
+                        }
+                    }
+                    Task::none()
+                }
                 Message::CreateCampaign => {
                     let Some(form) = new_campaign else {
                         return Task::none();
                     };
-
-                    match campaign::create(
-                        Path::new(form.location.trim()),
-                        &form.title,
-                        form.with_template,
-                    ) {
-                        Ok(root) => {
-                            self.screen = Screen::Workspace(Box::new(Workspace::open(
-                                root,
-                                self.settings.open_in_reading,
-                            )))
+                    let structure = match &form.structure {
+                        Ok(structure) => structure,
+                        Err(message) => {
+                            form.error = Some(message.clone());
+                            return Task::none();
                         }
+                    };
+
+                    match campaign::create(Path::new(form.location.trim()), &form.title, structure)
+                    {
+                        Ok(root) => self.open_workspace(root),
                         Err(message) => form.error = Some(message),
                     }
                     Task::none()
@@ -1028,7 +1166,30 @@ impl App {
                             Message::LocationPicked(Some(path)) => {
                                 form.location = path.display().to_string();
                             }
-                            Message::TemplateToggled(checked) => form.with_template = checked,
+                            Message::TemplatePicked(template) => form.pick(template),
+                            Message::ImportPicked(Some(file)) => match templates::import(&file) {
+                                Ok(templates::Imported::Template(name, _)) => {
+                                    form.templates = templates::list();
+                                    if let Some(template) = form
+                                        .templates
+                                        .iter()
+                                        .find(|template| template.to_string() == name)
+                                        .cloned()
+                                    {
+                                        form.pick(template);
+                                    }
+                                }
+                                Ok(templates::Imported::Type(label)) => {
+                                    form.error = Some(format!(
+                                        "Saved the type {label}. New folders can start with it, in any campaign."
+                                    ));
+                                    return Task::none();
+                                }
+                                Err(message) => {
+                                    form.error = Some(format!("Could not import it: {message}"));
+                                    return Task::none();
+                                }
+                            },
                             _ => {}
                         }
                         form.error = None;
@@ -1080,6 +1241,10 @@ impl App {
                 new_campaign: Some(form),
                 ..
             } => Some(modal(new_campaign_dialog(c, form))),
+            Screen::Splash {
+                open_campaign: Some(open),
+                ..
+            } => Some(modal(open_campaign_dialog(c, open))),
             Screen::Workspace(workspace) => workspace
                 .dialog
                 .as_ref()
@@ -2352,6 +2517,18 @@ impl Workspace {
             Some((ty.id.clone(), ty.label(), yaml))
         });
 
+        // Types saved for every campaign come with their own label, so they can be told apart.
+        let saved: Vec<Template> = templates::saved_types()
+            .iter()
+            .filter_map(|ty| {
+                Some(Template {
+                    label: format!("{} (saved type)", ty.label()),
+                    yaml: Some(templates::standalone(ty).ok()?),
+                    kind_of: false,
+                })
+            })
+            .collect();
+
         // The campaign's own version of a type wins over the default one with the same id.
         let mut seen: Vec<(String, Template)> = Vec::new();
         for (id, label, yaml) in campaign.chain(starters) {
@@ -2368,6 +2545,7 @@ impl Workspace {
         }
         seen.sort_by(|a, b| a.1.label.cmp(&b.1.label));
         templates.extend(seen.into_iter().map(|(_, template)| template));
+        templates.extend(saved);
         templates
     }
 
@@ -3361,6 +3539,7 @@ impl Workspace {
                 let mut folders = Vec::new();
                 collect_folders(&self.tree, &mut folders);
                 let mut editor = types_editor::Editor::new(&self.root, &folders, &self.own_types);
+                editor.set_saved(templates::saved_types());
                 editor.select(&folder);
                 self.dialog = Some(Dialog::Types(editor));
                 Task::none()
@@ -3387,9 +3566,100 @@ impl Workspace {
                 }
                 Task::none()
             }
+            Message::Types(types_editor::Message::ExportType) => {
+                let Some(Dialog::Types(editor)) = &mut self.dialog else {
+                    return Task::none();
+                };
+                match editor.export_type() {
+                    Ok((name, yaml)) => Task::perform(
+                        save_export(templates::types_folder(), name, yaml.into_bytes()),
+                        Message::Exported,
+                    ),
+                    Err(message) => {
+                        editor.error = Some(message);
+                        Task::none()
+                    }
+                }
+            }
+            Message::Types(types_editor::Message::ExportStructure) => {
+                let Some(Dialog::Types(editor)) = &mut self.dialog else {
+                    return Task::none();
+                };
+                match templates::Structure::read(&self.root).to_zip() {
+                    Ok(bytes) => Task::perform(
+                        save_export(
+                            templates::templates_folder(),
+                            format!("{}.zip", self.name()),
+                            bytes,
+                        ),
+                        Message::Exported,
+                    ),
+                    Err(message) => {
+                        editor.error = Some(format!("Could not export it: {message}"));
+                        Task::none()
+                    }
+                }
+            }
+            Message::Types(types_editor::Message::Import) => {
+                Task::perform(pick_import(), Message::TypesImportPicked)
+            }
+            Message::Exported(result) => {
+                let Some(Dialog::Types(editor)) = &mut self.dialog else {
+                    return Task::none();
+                };
+                match result {
+                    Ok(None) => {}
+                    Ok(Some(path)) => {
+                        editor.set_saved(templates::saved_types());
+                        editor.notice = Some(exported_notice(&path));
+                    }
+                    Err(message) => editor.error = Some(format!("Could not export it: {message}")),
+                }
+                Task::none()
+            }
+            Message::TypesImportPicked(file) => {
+                let (Some(Dialog::Types(editor)), Some(file)) = (&mut self.dialog, file) else {
+                    return Task::none();
+                };
+                match templates::import(&file) {
+                    Ok(templates::Imported::Type(label)) => {
+                        editor.set_saved(templates::saved_types());
+                        editor.notice = Some(format!(
+                            "Saved the type {label}. Folders with no type can start from it, here or in New Folder, in any campaign."
+                        ));
+                    }
+                    Ok(templates::Imported::Template(name, skipped)) => {
+                        let skipped = match skipped {
+                            0 => String::new(),
+                            1 => {
+                                " One file in it that isn't a folder or a type was left out.".into()
+                            }
+                            n => format!(
+                                " {n} files in it that aren't folders or types were left out."
+                            ),
+                        };
+                        editor.notice = Some(format!(
+                            "Added the template {name}. New campaigns can start from it.{skipped}"
+                        ));
+                    }
+                    Err(message) => editor.error = Some(format!("Could not import it: {message}")),
+                }
+                Task::none()
+            }
             Message::Types(message) => {
+                let added = matches!(message, types_editor::Message::AddNew);
                 if let Some(Dialog::Types(editor)) = &mut self.dialog {
                     editor.update(message);
+                }
+                // A new type is at the end of the list, and is named first.
+                if added {
+                    return Task::batch([
+                        iced::widget::operation::snap_to(
+                            types_editor::LIST,
+                            iced::widget::scrollable::RelativeOffset::END,
+                        ),
+                        iced::widget::operation::focus(types_editor::NAME_INPUT),
+                    ]);
                 }
                 Task::none()
             }
@@ -6314,16 +6584,32 @@ fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
         ]
         .spacing(4),
         column![
-            checkbox(form.with_template)
-                .label("Set up the starter folder structure")
-                .on_toggle(Message::TemplateToggled)
-                .style(style::check(c)),
-            text(format!(
-                "Adds these folders, each with its own note fields: {}",
-                campaign::TEMPLATE_FOLDERS.join(", ")
-            ))
-            .size(12)
-            .color(c.text_muted),
+            label("Start from"),
+            row![
+                pick_list(
+                    form.templates.clone(),
+                    Some(form.template.clone()),
+                    Message::TemplatePicked
+                )
+                .padding(8)
+                .width(Fill)
+                .style(style::choice(c))
+                .menu_style(style::choice_menu(c)),
+                button("Import...")
+                    .style(style::secondary(c))
+                    .padding(8)
+                    .on_press(Message::ImportTemplate),
+            ]
+            .spacing(8),
+            match &form.structure {
+                Ok(structure) => text(template_summary(structure)).color(c.text_muted),
+                Err(error) => text(format!("This template can't be read: {error}")).color(c.danger),
+            }
+            .size(12),
+            button(text("Show my templates folder").size(12).color(c.accent))
+                .padding(0)
+                .style(style::flat(c, false))
+                .on_press(Message::ShowTemplatesFolder),
         ]
         .spacing(4),
     ]
@@ -6348,6 +6634,143 @@ fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
 
     container(content)
         .width(480)
+        .padding(24)
+        .style(style::dialog(c))
+        .into()
+}
+
+/// Says where an export went, and how it can be used.
+fn exported_notice(path: &Path) -> String {
+    let file = path.display();
+    let in_folder = |folder: Option<PathBuf>| {
+        folder.is_some_and(|folder| path.parent().is_some_and(|parent| parent == folder))
+    };
+    if in_folder(templates::templates_folder()) {
+        format!("Saved {file}. New campaigns can start from it, and you can share the file.")
+    } else if in_folder(templates::types_folder()) {
+        format!(
+            "Saved {file}. New folders in any campaign can start from it, and you can share the file."
+        )
+    } else {
+        format!("Saved {file}. To use it yourself, Import it.")
+    }
+}
+
+/// What a campaign template makes, for the "New campaign" dialog.
+fn template_summary(structure: &templates::Structure) -> String {
+    let top = structure.top_folders();
+    if top.is_empty() {
+        return "An empty campaign folder. Add folders and their fields as you go.".into();
+    }
+    let subfolders = structure
+        .folders
+        .iter()
+        .filter(|(folder, _)| folder.contains('/'))
+        .count();
+    let mut summary = format!("Adds these folders: {}", top.join(", "));
+    if subfolders > 0 {
+        summary.push_str(&format!(
+            ", with {subfolders} subfolder{}",
+            if subfolders == 1 { "" } else { "s" }
+        ));
+    }
+    summary.push_str(&match structure.typed() {
+        0 => ". None of them have fields.".to_string(),
+        typed if typed == structure.folders.len() => ". Each has its own note fields.".into(),
+        typed => format!(". {typed} of them have note fields."),
+    });
+    summary
+}
+
+/// The "Open campaign" dialog: the campaigns opened before, the one opened last first,
+/// and a button to find another.
+fn open_campaign_dialog<'a>(c: Colors, open: &'a OpenCampaign) -> Element<'a, Message> {
+    let today = chrono::Local::now().date_naive();
+    let rows: Vec<Element<'a, Message>> = open
+        .shown()
+        .map(|campaign| {
+            let found = campaign.path.is_dir();
+            let detail = if found {
+                format!("Opened {}", campaign.when(today))
+            } else {
+                "Can't be found".into()
+            };
+            row![
+                button(
+                    column![
+                        text(campaign.name()).size(15).color(if found {
+                            c.text
+                        } else {
+                            c.text_muted
+                        }),
+                        text(campaign.path.display().to_string())
+                            .size(12)
+                            .color(c.text_muted),
+                    ]
+                    .spacing(2)
+                    .width(Fill),
+                )
+                .width(Fill)
+                .padding([6, 10])
+                .style(style::flat(c, false))
+                .on_press(Message::OpenKnown(campaign.path.clone())),
+                text(detail)
+                    .size(12)
+                    .color(if found { c.text_muted } else { c.danger }),
+                tooltip(
+                    button(text("×").size(16))
+                        .padding([2, 8])
+                        .style(style::flat(c, false))
+                        .on_press(Message::ForgetCampaign(campaign.path.clone())),
+                    container(text("Take off this list (the folder stays)").size(12))
+                        .padding(6)
+                        .style(style::dropdown(c)),
+                    tooltip::Position::Left,
+                ),
+            ]
+            .spacing(8)
+            .align_y(Center)
+            .into()
+        })
+        .collect();
+
+    let list: Element<'a, Message> = if rows.is_empty() {
+        text("No campaign's name or folder has that in it.")
+            .size(13)
+            .color(c.text_muted)
+            .into()
+    } else {
+        scrollable(column(rows).spacing(2)).height(Fill).into()
+    };
+
+    let content = column![
+        text("Open campaign").size(22).color(c.text),
+        text_input("Find a campaign", &open.filter)
+            .id(OPEN_FILTER)
+            .on_input(Message::OpenFilter)
+            .on_submit(Message::OpenFirstCampaign)
+            .padding(8)
+            .style(style::input(c)),
+        container(list).height(360),
+        row![
+            text("Campaigns you open or make show up here.")
+                .size(12)
+                .color(c.text_muted)
+                .width(Fill),
+            button("Cancel")
+                .style(style::secondary(c))
+                .on_press(Message::CancelOpenCampaign),
+            button("Browse for a Folder...")
+                .style(style::primary(c))
+                .on_press(Message::BrowseCampaign),
+        ]
+        .spacing(8)
+        .align_y(Center),
+    ]
+    .spacing(16);
+
+    container(content)
+        .width(600)
         .padding(24)
         .style(style::dialog(c))
         .into()
@@ -6392,6 +6815,44 @@ async fn pick_folder(title: &'static str) -> Option<PathBuf> {
         .pick_folder()
         .await
         .map(|handle| handle.path().to_path_buf())
+}
+
+/// Asks for a campaign template (`.zip`) or a saved type (`.yaml`) to import.
+async fn pick_import() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Import a template or type")
+        .add_filter("Templates and types", &["zip", "yaml", "yml"])
+        .pick_file()
+        .await
+        .map(|handle| handle.path().to_path_buf())
+}
+
+/// Asks where to save an exported template or type, starting in `folder` with `name`.
+/// Returns where it was saved, `None` if the save dialog was cancelled.
+async fn save_export(
+    folder: Option<PathBuf>,
+    name: String,
+    bytes: Vec<u8>,
+) -> Result<Option<PathBuf>, String> {
+    let (title, filter, extensions): (_, _, &[&str]) = if name.ends_with(".zip") {
+        ("Export campaign structure", "Campaign template", &["zip"])
+    } else {
+        ("Export type", "Dungeon Elements type", &["yaml"])
+    };
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title(title)
+        .add_filter(filter, extensions)
+        .set_file_name(&name);
+    if let Some(folder) = folder {
+        let _ = std::fs::create_dir_all(&folder);
+        dialog = dialog.set_directory(folder);
+    }
+    let Some(handle) = dialog.save_file().await else {
+        return Ok(None);
+    };
+    let path = handle.path().to_path_buf();
+    std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+    Ok(Some(path))
 }
 
 async fn pick_picture() -> Option<PathBuf> {
@@ -6449,6 +6910,20 @@ const SHOW_IN_FILE_MANAGER: &str = "Show in Explorer";
 const SHOW_IN_FILE_MANAGER: &str = "Show in Finder";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 const SHOW_IN_FILE_MANAGER: &str = "Show in File Manager";
+
+/// Opens `folder` in the system's file manager.
+fn open_folder(folder: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let program = "explorer";
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let program = "xdg-open";
+    std::process::Command::new(program)
+        .arg(folder)
+        .spawn()
+        .map(|_| ())
+}
 
 /// Opens the system's file manager at `path`: in the folder, or selecting the file where
 /// the file manager can.

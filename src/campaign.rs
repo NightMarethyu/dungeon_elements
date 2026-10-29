@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::templates::Structure;
 use crate::types;
 
 /// The optional starter folders for a new campaign.
@@ -20,10 +21,9 @@ pub const TEMPLATE_FOLDERS: &[&str] = &[
     "quests",
 ];
 
-/// Creates a folder named `title` inside `parent` and returns its path.
-///
-/// If `with_template` is true, also creates the [`TEMPLATE_FOLDERS`] inside it, each with its content type.
-pub fn create(parent: &Path, title: &str, with_template: bool) -> Result<PathBuf, String> {
+/// Creates a folder named `title` inside `parent` and returns its path, with the folders
+/// and types of `template` inside it.
+pub fn create(parent: &Path, title: &str, template: &Structure) -> Result<PathBuf, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("Give the campaign a title".into());
@@ -41,17 +41,7 @@ pub fn create(parent: &Path, title: &str, with_template: bool) -> Result<PathBuf
 
     fs::create_dir(&root).map_err(|error| error.to_string())?;
 
-    if with_template {
-        for folder in TEMPLATE_FOLDERS {
-            let path = root.join(folder);
-            fs::create_dir(&path).map_err(|error| error.to_string())?;
-
-            if let Some((_, yaml)) = types::STARTER_TYPES.iter().find(|(name, _)| name == folder) {
-                fs::write(path.join(types::TYPE_FILE), yaml).map_err(|error| error.to_string())?;
-            }
-        }
-    }
-
+    template.create_in(&root)?;
     Ok(root)
 }
 
@@ -347,7 +337,7 @@ mod tests {
     #[test]
     fn creates_campaign_with_template() {
         let parent = temp_folder("template");
-        let root = create(&parent, "  Curse of the Lich  ", true).unwrap();
+        let root = create(&parent, "  Curse of the Lich  ", &Structure::starter()).unwrap();
 
         assert_eq!(root, parent.join("Curse of the Lich"));
         for folder in TEMPLATE_FOLDERS {
@@ -355,7 +345,7 @@ mod tests {
             let ty = types::load(&root.join(folder)).expect("has a type");
             assert!(ty.is_ok(), "{folder}: {ty:?}");
         }
-        assert!(create(&parent, "Curse of the Lich", true).is_err());
+        assert!(create(&parent, "Curse of the Lich", &Structure::starter()).is_err());
 
         fs::remove_dir_all(parent).unwrap();
     }
@@ -381,7 +371,7 @@ mod tests {
     #[test]
     fn creates_empty_campaign() {
         let parent = temp_folder("empty");
-        let root = create(&parent, "Solo Run", false).unwrap();
+        let root = create(&parent, "Solo Run", &Structure::default()).unwrap();
 
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
 

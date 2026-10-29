@@ -264,10 +264,15 @@ pub fn secondary(c: Colors) -> impl Fn(&Theme, button::Status) -> button::Style 
             button::Status::Hovered | button::Status::Pressed => c.hover,
             _ => c.selection,
         };
+        // A button that can't be pressed now has dim text.
+        let text_color = match status {
+            button::Status::Disabled => c.text_muted,
+            _ => c.text,
+        };
 
         button::Style {
             background: Some(Background::Color(background)),
-            text_color: c.text,
+            text_color,
             border: Border::default()
                 .color(c.border)
                 .width(edge(c))

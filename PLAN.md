@@ -95,19 +95,28 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - [x] Basic how-tos (Help > How-To Guides, F1): getting started, notes and fields, links, reading and formatting, dice, and your files. Each guide is a Markdown file in `help/en/` built into the app, so a new guide only takes a new file (see `help/README.md`); guides link to each other with `[text](guide:id)`
   - [x] What's New (this version's part of the changelog), Report a Problem (opens a GitHub issue), and a link to the project on GitHub
   - Grows with the app: each new feature adds its shortcuts to the list and a guide (or a section of one) when it needs explaining
-- [ ] Content types grow up (see [Content types](#content-types))
+- [x] Content types grow up (see [Content types](#content-types))
   - [x] Subfolders inherit their parent's type, like child classes: a subfolder with its own `_type.yaml` is a kind of its parent's type (Weapons in Items, Enemies in NPCs), with the parent's fields and its own, and can change or remove inherited fields for itself. Right-click a folder for **New Subfolder...** and a new note of each kind; Edit > Types shows the inherited fields
   - [x] A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note, saved as a `- [ ]` task list under its `## ` heading. Tab and Shift+Tab move between a form's fields
   - [x] A `dice` field kind: pick the die, how many, and modifiers (`+2`, advantage, disadvantage) instead of typing an expression, and roll it from the note (builds on Phase 1's dice expressions)
-  - [ ] Types can be saved for reuse in other campaigns from the Edit > Types dialog
+  - [x] Types can be saved for reuse in other campaigns from the Edit > Types dialog
+    - **Export Type...** saves a folder's type, with what it inherits, as `<Name>.type.yaml`; saved types start new folders in any campaign. **Export Campaign Structure...** saves the folders and types as a template (pulled forward from Phase 5, at Ammon's ask, with Open Campaign listing known campaigns)
   - [x] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
     - Date fields pick from a calendar (or are plain text with the calendar off), tags have tag notes listing links to the tagged notes, and a "links to notes" field holds many links
-- [ ] Player management
-  - [ ] The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types
-  - [ ] Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)
+  - [x] Edit > Types has an **Add New** button at the bottom of its list: a new type with a new folder for its notes
+- [ ] Adjust the default folders and types: go over the starter folders (`templates/default/`) and each type's fields now that fields can do much more (dates, tags, links to notes, steps, dice, subfolders as kinds), and change what a new campaign starts with to match
+
+**Player Management Excluded**
+The items in Player Management are all things that will just be built as templates, these can be based off character sheets for different TTRPGs. These items are all already included as fields and types
+
+- [x] ~~Player management~~
+  - [x] ~~The players type holds everything about a player and their character: player notes, backstory, and a character sheet built from the type's fields (numbers, choices, tags), so any system's sheet can be made in Edit > Types~~
+  - [x] ~~Fields with dice in them (like `1d8+2` or `+3`) can be rolled from the note (builds on Phase 1's dice expressions)~~
 - [ ] NPC management
-  - [ ] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
+  - [x] Link fields for where an NPC lives, who they serve, and who they know; backlinks show where they appear
+    - This was completed when we ensured links and backlinks were working properly
   - [ ] A status field (alive, dead, missing...) and filtering the folder by a field, so the GM can find "every NPC in this town"
+    - This might just need to be the foundation of a search feature. The search wouldn't need to be fancy, but some sort of search would be useful
 - [ ] Quest tracker
   - [x] The Quest type uses `steps`, so a step can be another quest, building quest lines (a big quest made of smaller quests)
   - [ ] A quest view: open quests and their progress, ticking off steps, and the quest line as a tree
@@ -146,9 +155,14 @@ Maps. They come after the notes and panes are settled, so a map can be one more 
 Sharing and reference: everything that leaves the campaign folder or comes in from outside it. It comes last because templates and settings should hold everything the earlier phases add (types, roll tables, dice presets, journals, maps).
 
 - [ ] Campaign templates (see [Campaign templates](#campaign-templates))
-  - [ ] New Campaign, and opening an Obsidian vault for the first time, offer a template
-  - [ ] Save a campaign's setup as a template, and share it as a file
+  - [x] New Campaign offers a template: the starter folders, empty, or one of the user's own
+  - [ ] Opening an Obsidian vault for the first time offers a template, without changing existing notes
+  - [x] Save a campaign's setup as a template, and share it as a file (Edit > Types > Export Campaign Structure; Import... adds one)
+  - [x] Open Campaign lists the campaigns opened or made before, newest first, with a search box, instead of only a folder picker
   - [ ] Templates can set dice presets and suggest a game system
+  - [ ] Built-in templates for specific systems and uses, offered by New Campaign beside the starter folders (for example D&D 5e, Shadowdark, Cairn and Cyberpunk, and uses beyond TTRPGs like a novel or a setting bible)
+  - Made in the same format as the user's own templates (a zip of folders and `_type.yaml` files), so they show what a template can do and can be exported, changed and shared like any other
+  - Player and character types come from these: each system's character sheet as fields (see Player Management Excluded below)
   - Once this exists, Ammon builds templates for a few systems to find where it's awkward before the format settles
 - [ ] Settings: reuse a world in another campaign or book (see [Settings](#settings))
   - [ ] Mark folders as setting and export them, or start a new campaign from an existing setting (a copy)
@@ -205,16 +219,19 @@ Phase 3. Customization is a big part of the app, so the window's layout should b
   - Subfolders inherit their parent's type, like child classes. A subfolder with no `_type.yaml` has its parent's type. One with its own `_type.yaml` is a kind of its parent's type: its own `type:` id, the parent's fields in the parent's order, then its own. A field with the same key as an inherited one changes it in place, and `removed_fields: [key]` leaves an inherited field out (never `name`). Only what the subfolder adds or changes is saved in its `_type.yaml`, so changes to the parent show up in it. Folders in the campaign folder itself don't inherit the campaign folder's type.
   - A note is read with its folder's type when its `type:` is that type or one it is a kind of, so a note that says `type: item` in Weapons is a Weapon (and becomes `type: weapon` when saved).
   - A `steps` field kind: an ordered checklist where each step is text or a `[[link]]` to another note. The Quest type uses it so a step can be another quest, building quest lines (a Big Quest made of smaller quests).
-  - Types can be saved for reuse in other campaigns from the Edit > Types dialog.
+  - Types can be saved for reuse in other campaigns from the Edit > Types dialog, as `<Name>.type.yaml` files in the config folder's `types` folder. A saved type holds every field it inherits, so it works on its own.
 - Phase 5: campaign templates, see [Campaign templates](#campaign-templates).
 
 ### Campaign templates
 
 Phase 5. Templates put the power in the user's hands: the app ships a few, and users build their own for their systems (or for things that aren't TTRPGs at all, like a novel).
 
-- A template is a shareable folder or file holding starter folders, their `_type.yaml` content types, note templates, and optionally dice presets and a suggested game system (`system: Shadowdark`). `templates/default/` is the first one.
+- A template is an ordinary `.zip` file of folders and their `_type.yaml` files, and nothing else: no notes, so it is small, has no spoilers, and can be made or changed with any zip tool (a folder zipped by the file manager works too; the one folder around everything is left out). The app's starter folders (`templates/default/`) are the built-in one.
+- Templates live in the config folder's `templates` folder, and every `.zip` there is offered by New Campaign, by its file name. Import... (in New Campaign and Edit > Types) checks a template and copies it there.
+- Later, maybe: note templates, dice presets and a suggested game system (`system: Shadowdark`), as extra files in the zip that older versions ignore.
 - New Campaign offers a template. Opening a folder (such as an Obsidian vault) that Dungeon Elements has never opened offers one too, without changing existing notes.
-- A campaign's current setup can be saved as a template from the app, to reuse or give to friends.
+- A campaign's current setup can be saved as a template from the app, to reuse or give to friends (Edit > Types > Export Campaign Structure).
+- Open Campaign lists the campaigns opened or made in the app (`campaigns.yaml` in the config folder), so they don't have to be found in the file browser.
 - Templates and manuals stay separate. A template's `system:` only decides which manuals the [PDF library](#pdf-library) shows first, and the user can change it or leave it out.
 - The format isn't fixed until real templates for a few systems have been built and tried.
 
