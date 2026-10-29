@@ -7,6 +7,7 @@
 //! like `1d8+3 slashing` or `+5` can be rolled from the note.
 
 use std::fmt;
+use std::ops::Range;
 
 use iced::font::{self, Font};
 use iced::widget::{
@@ -16,6 +17,7 @@ use iced::widget::{
 use iced::{Center, Element, Fill, padding};
 
 use crate::style;
+use crate::tables;
 use crate::theme::{self, Colors};
 
 /// The button that opens the dice roller, drawn in black on white like the logo.
@@ -31,7 +33,7 @@ const EARLIER: usize = 5;
 /// The size of each die's button, in pixels.
 const DIE_SIZE: f32 = 64.0;
 /// Shown when an expression can't be read.
-const EXAMPLES: &str = "Try something like 2d6+3, d20-1 or 4d6kh3.";
+const EXAMPLES: &str = "Try something like 2d6+3, d20-1 or 4d6kh3, or the name of a roll table.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Die {
@@ -199,6 +201,72 @@ impl Expression {
             at += next.len_utf8();
         }
         found
+    }
+
+    /// The expressions with dice in `text`, like `1d4` in "1d4 goblins", and where each
+    /// is. Unlike [`Self::find`], a bare modifier like `+2` isn't one.
+    pub fn spans(text: &str) -> Vec<(Range<usize>, Self)> {
+        let mut found = Vec::new();
+        let mut at = 0;
+        let mut previous: Option<char> = None;
+        while let Some(next) = text[at..].chars().next() {
+            let starts = matches!(next, '0'..='9' | 'd' | 'D')
+                && !previous.is_some_and(|c| c.is_alphanumeric() || c == '.');
+            if starts && let Some((expression, end)) = scan(&text[at..]) {
+                if let Ok(expression) = expression
+                    && text[at..at + end].contains(['d', 'D'])
+                {
+                    found.push((at..at + end, expression));
+                }
+                previous = text[..at + end].chars().next_back();
+                at += end;
+                continue;
+            }
+            previous = Some(next);
+            at += next.len_utf8();
+        }
+        found
+    }
+
+    /// The lowest and highest totals it can roll.
+    pub fn bounds(&self) -> (i64, i64) {
+        let (mut low, mut high) = (0, 0);
+        for term in &self.terms {
+            let (least, most) = match *term {
+                Term::Dice {
+                    negative,
+                    count,
+                    sides,
+                    keep,
+                } => {
+                    let kept = match keep {
+                        Some(Keep::Highest(kept) | Keep::Lowest(kept)) => kept,
+                        None => count,
+                    };
+                    let (least, most) = (i64::from(kept), i64::from(kept) * i64::from(sides));
+                    if negative {
+                        (-most, -least)
+                    } else {
+                        (least, most)
+                    }
+                }
+                Term::Number(number) => (number, number),
+            };
+            low += least;
+            high += most;
+        }
+        (low, high)
+    }
+
+    /// Rolls it with `rng` and gives its total.
+    pub fn total(&self, rng: &mut fastrand::Rng) -> i64 {
+        Roll {
+            label: None,
+            expression: self.clone(),
+            mode: Mode::Normal,
+            parts: roll_parts(self, rng),
+        }
+        .total()
     }
 
     /// How many dice it rolls.
@@ -637,6 +705,46 @@ impl Scanner<'_> {
     }
 }
 
+/// Rolls each die of `rolled`, keeping the ones it keeps.
+fn roll_parts(rolled: &Expression, rng: &mut fastrand::Rng) -> Vec<Part> {
+    rolled
+        .terms
+        .iter()
+        .map(|term| match *term {
+            Term::Dice {
+                negative,
+                count,
+                sides,
+                keep,
+            } => {
+                let mut rolled: Vec<Rolled> = (0..count)
+                    .map(|_| Rolled {
+                        value: rng.u32(1..=sides),
+                        kept: true,
+                    })
+                    .collect();
+                if let Some(keep) = keep {
+                    // The dice from best to worst for this roll; ties keep the first.
+                    let mut order: Vec<usize> = (0..rolled.len()).collect();
+                    let (kept, highest) = match keep {
+                        Keep::Highest(kept) => (kept, true),
+                        Keep::Lowest(kept) => (kept, false),
+                    };
+                    order.sort_by(|&a, &b| {
+                        let (a, b) = (rolled[a].value, rolled[b].value);
+                        if highest { b.cmp(&a) } else { a.cmp(&b) }
+                    });
+                    for &index in &order[kept as usize..] {
+                        rolled[index].kept = false;
+                    }
+                }
+                Part::Dice { negative, rolled }
+            }
+            Term::Number(number) => Part::Number(number),
+        })
+        .collect()
+}
+
 /// Advantage and disadvantage roll each single d20 twice, keeping the higher or the lower.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Mode {
@@ -761,6 +869,22 @@ impl Roll {
     }
 }
 
+/// A roll in the list of rolls: of dice, or on a roll table.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Entry {
+    Dice(Roll),
+    Table(tables::Rolled),
+}
+
+impl Entry {
+    fn line(&self) -> String {
+        match self {
+            Entry::Dice(roll) => roll.line(),
+            Entry::Table(rolled) => rolled.line(),
+        }
+    }
+}
+
 pub struct Roller {
     pub open: bool,
     /// What is typed in each die's count box, in the order of [`Die::ALL`].
@@ -773,7 +897,7 @@ pub struct Roller {
     /// Whether advantage and disadvantage change every die, not only a single d20.
     any_die: bool,
     /// The latest roll first.
-    rolls: Vec<Roll>,
+    rolls: Vec<Entry>,
     rng: fastrand::Rng,
 }
 
@@ -800,6 +924,10 @@ pub enum Message {
     RollExpression,
     Mode(Mode),
     AnyDie(bool),
+    /// Copy a table's result. The workspace does it.
+    Copy(String),
+    /// Make a note named after a table's result. The workspace does it.
+    NewNote(String),
 }
 
 impl Roller {
@@ -826,6 +954,7 @@ impl Roller {
             },
             Message::Mode(mode) => self.mode = mode,
             Message::AnyDie(any_die) => self.any_die = any_die,
+            Message::Copy(_) | Message::NewNote(_) => {}
         }
     }
 
@@ -870,54 +999,39 @@ impl Roller {
             None => (expression.clone(), Mode::Normal),
         };
 
-        let parts = rolled
-            .terms
-            .iter()
-            .map(|term| match *term {
-                Term::Dice {
-                    negative,
-                    count,
-                    sides,
-                    keep,
-                } => {
-                    let mut rolled: Vec<Rolled> = (0..count)
-                        .map(|_| Rolled {
-                            value: self.rng.u32(1..=sides),
-                            kept: true,
-                        })
-                        .collect();
-                    if let Some(keep) = keep {
-                        // The dice from best to worst for this roll; ties keep the first.
-                        let mut order: Vec<usize> = (0..rolled.len()).collect();
-                        let (kept, highest) = match keep {
-                            Keep::Highest(kept) => (kept, true),
-                            Keep::Lowest(kept) => (kept, false),
-                        };
-                        order.sort_by(|&a, &b| {
-                            let (a, b) = (rolled[a].value, rolled[b].value);
-                            if highest { b.cmp(&a) } else { a.cmp(&b) }
-                        });
-                        for &index in &order[kept as usize..] {
-                            rolled[index].kept = false;
-                        }
-                    }
-                    Part::Dice { negative, rolled }
-                }
-                Term::Number(number) => Part::Number(number),
-            })
-            .collect();
+        let parts = roll_parts(&rolled, &mut self.rng);
 
         self.rolls.insert(
             0,
-            Roll {
+            Entry::Dice(Roll {
                 label,
                 expression: expression.clone(),
                 mode,
                 parts,
-            },
+            }),
         );
         self.rolls.truncate(EARLIER + 1);
-        &self.rolls[0]
+        match &self.rolls[0] {
+            Entry::Dice(roll) => roll,
+            Entry::Table(_) => unreachable!("a roll of dice was just added"),
+        }
+    }
+
+    /// What is typed in the expression box.
+    pub fn expression(&self) -> &str {
+        &self.expression
+    }
+
+    /// The roller's random numbers, for rolling tables.
+    pub fn rng(&mut self) -> &mut fastrand::Rng {
+        &mut self.rng
+    }
+
+    /// Shows a roll on a table as the latest roll.
+    pub fn add_table(&mut self, rolled: tables::Rolled) {
+        self.error = None;
+        self.rolls.insert(0, Entry::Table(rolled));
+        self.rolls.truncate(EARLIER + 1);
     }
 
     pub fn view<'a>(&'a self, c: Colors, icons: &Icons) -> Element<'a, Message> {
@@ -1022,6 +1136,7 @@ impl Roller {
         let mut view = column![text("Result:").size(14)].spacing(6);
 
         match self.rolls.first() {
+            Some(Entry::Table(rolled)) => view = view.push(table_result(c, rolled)),
             None => {
                 view = view.push(
                     text("Click a die, or type dice like 2d6+3, to roll.")
@@ -1029,7 +1144,7 @@ impl Roller {
                         .color(c.text_muted),
                 );
             }
-            Some(roll) => {
+            Some(Entry::Dice(roll)) => {
                 // Dice that don't count, like the lower d20 with advantage, are crossed
                 // out, and numbers added are shown with their sign.
                 let mut numbers: Vec<Element<'_, Message>> = Vec::new();
@@ -1100,6 +1215,58 @@ impl Roller {
     }
 }
 
+/// The latest roll on a table: its result, what the die rolled, the tables its result
+/// rolled on, and buttons to copy it or make a note of it.
+fn table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Message> {
+    let values: Vec<String> = rolled.values.iter().map(i64::to_string).collect();
+    let mut view = column![
+        text(format!(
+            "{} ({}: {})",
+            rolled.name,
+            rolled.die,
+            values.join(", ")
+        ))
+        .size(12)
+        .color(c.text_muted),
+    ]
+    .spacing(6);
+    if rolled.results.len() > 1 && !rolled.each_column {
+        for (column, value) in &rolled.results {
+            view = view.push(
+                column![
+                    text(column).size(11).color(c.text_muted),
+                    text(value).size(16).color(c.text),
+                ]
+                .spacing(1),
+            );
+        }
+    } else {
+        view = view.push(text(rolled.text()).size(20).color(c.text));
+    }
+    for inner in &rolled.inner {
+        view = view.push(text(inner.line()).size(11).color(c.text_muted));
+    }
+    let name = rolled.note_name();
+    view.push(
+        row![
+            button(text("Copy").size(12))
+                .padding([3, 10])
+                .style(style::secondary(c))
+                .on_press(Message::Copy(rolled.text())),
+            tip(
+                c,
+                button(text("Create New Note").size(12))
+                    .padding([3, 10])
+                    .style(style::secondary(c))
+                    .on_press_maybe((!name.is_empty()).then(|| Message::NewNote(name.clone()))),
+                format!("Make a note called {name}"),
+            ),
+        ]
+        .spacing(6),
+    )
+    .into()
+}
+
 /// `content` with `label` shown above it on hover.
 fn tip<'a>(
     c: Colors,
@@ -1148,6 +1315,15 @@ pub fn field_button<'a, M: Clone + 'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Roller {
+        fn dice_roll(&self, index: usize) -> &Roll {
+            match &self.rolls[index] {
+                Entry::Dice(roll) => roll,
+                Entry::Table(_) => panic!("not a roll of dice"),
+            }
+        }
+    }
 
     fn parse(text: &str) -> String {
         Expression::parse(text).unwrap().to_string()
@@ -1339,14 +1515,14 @@ mod tests {
         let mut roller = Roller::default();
         roller.update(Message::Count(Die::D20, "2".into()));
         roller.update(Message::Roll(Die::D20));
-        assert_eq!(roller.rolls[0].expression.to_string(), "2d20");
-        assert_eq!(roller.rolls[0].dice().count(), 2);
+        assert_eq!(roller.dice_roll(0).expression.to_string(), "2d20");
+        assert_eq!(roller.dice_roll(0).dice().count(), 2);
 
         for _ in 0..10 {
             roller.update(Message::Roll(Die::D6));
         }
         assert_eq!(roller.rolls.len(), EARLIER + 1);
-        assert_eq!(roller.rolls[0].dice().count(), 1);
+        assert_eq!(roller.dice_roll(0).dice().count(), 1);
     }
 
     #[test]
@@ -1359,10 +1535,10 @@ mod tests {
         roller.update(Message::Expression("2d6+1".into()));
         assert!(roller.error.is_none());
         roller.update(Message::RollExpression);
-        assert_eq!(roller.rolls[0].line().split(':').next(), Some("2d6+1"));
+        assert_eq!(roller.dice_roll(0).line().split(':').next(), Some("2d6+1"));
 
         roller.roll_field("Damage", "1d8+3");
-        assert_eq!(roller.rolls[0].name(), "Damage: 1d8+3");
+        assert_eq!(roller.dice_roll(0).name(), "Damage: 1d8+3");
     }
 
     #[test]
@@ -1429,13 +1605,16 @@ mod tests {
         let mut roller = Roller::default();
         roller.update(Message::Mode(Mode::Disadvantage));
         roller.roll_field("Damage", "2d6+3 advantage");
-        let roll = &roller.rolls[0];
+        let roll = &roller.dice_roll(0);
         assert_eq!(roll.name(), "Damage: 2d6+3 with advantage");
         assert_eq!(roll.dice().count(), 3);
         assert_eq!(roll.dice().filter(|die| die.kept).count(), 2);
 
         // A field without advantage uses the roller's setting, as other fields do.
         roller.roll_field("Attack", "1d20+5");
-        assert_eq!(roller.rolls[0].name(), "Attack: 1d20+5 with disadvantage");
+        assert_eq!(
+            roller.dice_roll(0).name(),
+            "Attack: 1d20+5 with disadvantage"
+        );
     }
 }

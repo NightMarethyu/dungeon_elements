@@ -98,9 +98,14 @@ pub fn file(
     gone: &Gone,
 ) -> Vec<Problem> {
     let folder = path.parent().unwrap_or(root);
+    let name = path.file_stem().unwrap_or_default().to_string_lossy();
+    let tables = crate::tables::problems(text, &name)
+        .into_iter()
+        .map(|message| (message, Issue::Other));
     note(text, folder, types)
         .into_iter()
         .chain(broken_links(text, path, index, gone))
+        .chain(tables)
         .map(|(message, issue)| Problem {
             path: path.to_path_buf(),
             message,

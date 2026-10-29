@@ -109,6 +109,16 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Roll tables",
+        &[
+            (
+                "Ctrl+Shift+T",
+                "Show the Roll Tables list in place of the file tree",
+            ),
+            ("Escape", "Close the Roll Tables list"),
+        ],
+    ),
+    (
         "Reading view",
         &[
             (

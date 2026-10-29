@@ -125,7 +125,11 @@ The items in Player Management are all things that will just be built as templat
     - A Quests list in the sidebar (View > Quests, Ctrl+Shift+Q) in place of the file tree, grouped by Status, with finished groups collapsed. Steps are ticked from the list, and a step that is a Complete quest counts as done. Built as its own piece (`src/quests.rs`) so Layouts can move it into any pane
     - Left out for now: changing a quest's Status from the list, writing a sub-quest's completion into its parent's file, sorting or filtering the list, and adding or reordering steps from it
 - [ ] Generators
-  - [ ] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
+  - [x] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
+    - Rolled from a Roll button above the table in the reading view, the Roll Tables list in the sidebar (View > Roll Tables, Ctrl+Shift+T), or by typing the table's name in the dice roller. Results show in the dice roller with Copy and Create New Note
+    - A result that links to another table (`[[Storms]]`, `[[Weather#Winter]]`) rolls it too, and dice in a result (`1d4 days`) are rolled. A table with several result columns gives a whole row, or rolls each column on its own (a toggle, kept in `.dungeon_elements/tables.yaml`)
+    - File > New Roll Table... makes an empty table (die, columns, rows split evenly) or fills one from a pasted list. Problems lists rows the die can't pick and numbers no row has
+    - Next: built-in name tables and a field's `table:` that rolls into it (Name generators), then story prompts and Inspire me
   - [ ] Name generators, built on roll tables, with a few built-in lists to start from
   - [ ] Story prompts: suggestions for inspiration when building quests and places (drawn from roll tables, never writing the story for the GM)
 - [ ] World-building walkthrough: an optional guide that asks the GM questions one at a time and turns the answers into linked starter notes

@@ -25,6 +25,7 @@ mod recent;
 mod search;
 mod settings;
 mod style;
+mod tables;
 mod tags;
 mod templates;
 mod theme;
@@ -128,6 +129,8 @@ const TITLE_INPUT: &str = "new-campaign-title";
 const OPEN_FILTER: &str = "open-campaign-filter";
 /// The widget id of the name field in the workspace's dialogs.
 const DIALOG_INPUT: &str = "dialog-name";
+/// The folder New Roll Table puts tables in to start with, made when one is.
+const TABLES_FOLDER: &str = "tables";
 /// The widget id of the text editor that shows a file's text.
 const EDITOR: &str = "editor";
 /// The editor for a block of the reading view, and the input for one of its fields.
@@ -242,6 +245,12 @@ struct Workspace {
     search: Search,
     /// The Quests list, shown in the sidebar in place of the file tree when it is open.
     quests: quests::Quests,
+    /// The Roll Tables list, shown in the sidebar in place of the file tree when it is open.
+    tables: tables::List,
+    /// Which roll tables roll each column on their own.
+    table_settings: tables::Settings,
+    /// The folder the last note made from a roll went in.
+    roll_folder: Option<PathBuf>,
 }
 
 /// What the sidebar's search box holds, and the notes it found.
@@ -362,6 +371,24 @@ enum Dialog {
     },
     /// Offers to bring the tag notes up to date with tags changed in another app.
     Tags(Vec<TagChange>),
+    /// File > New Roll Table: makes a note with an empty roll table, or one filled with
+    /// a list pasted in.
+    NewTable {
+        name: String,
+        folder: FolderChoice,
+        die: &'static str,
+        columns: Vec<String>,
+        /// How many rows, as typed; empty for one per number on the die.
+        rows: String,
+        pasted: text_editor::Content,
+        error: Option<String>,
+    },
+    /// Makes a note named after a roll table's result, in a folder picked here.
+    NoteFromRoll {
+        name: String,
+        folder: FolderChoice,
+        error: Option<String>,
+    },
 }
 
 /// How a note's tags differ from its tag notes, after its tags were changed in another app.
@@ -728,6 +755,27 @@ enum Message {
     // Quests
     ShowQuests,
     Quests(quests::Message),
+    // Roll tables
+    ShowTables,
+    Tables(tables::Message),
+    /// The reading view's Roll button above the roll table at this place in the note.
+    RollTable(usize),
+    /// The reading view's toggle for rolling each column of the table at this place.
+    TableEachColumn(usize, bool),
+    /// Opens New Roll Table, in this folder if given.
+    ShowNewTable(Option<PathBuf>),
+    NewTableName(String),
+    NewTableFolder(FolderChoice),
+    NewTableDie(&'static str),
+    NewTableColumn(usize, String),
+    NewTableAddColumn,
+    NewTableRemoveColumn(usize),
+    NewTableRows(String),
+    NewTablePasted(text_editor::Action),
+    CreateTable,
+    NoteFromRollName(String),
+    NoteFromRollFolder(FolderChoice),
+    CreateNoteFromRoll,
     /// Ctrl+Shift+F: puts the cursor in the search box.
     FocusSearch,
     /// Enter in the search box: opens the first note found.
@@ -1008,6 +1056,8 @@ impl App {
                                 workspace.search = Search::default();
                             } else if workspace.quests.open && !editing {
                                 workspace.quests.open = false;
+                            } else if workspace.tables.open && !editing {
+                                workspace.tables.open = false;
                             } else {
                                 workspace.finish_editing();
                             }
@@ -1275,6 +1325,7 @@ impl App {
                     workspace.recheck_active();
                     if workspace.active_tab().is_some_and(|tab| tab.modified) {
                         workspace.refresh_quests();
+                        workspace.refresh_tables();
                     }
                 }
                 workspace.refresh_preview();
@@ -1389,6 +1440,7 @@ impl App {
                 Some(_) => vec![
                     item("New Note", Some(Message::NewNote)).shortcut("Ctrl+N"),
                     item("New Folder...", Some(Message::ShowNewFolder)),
+                    item("New Roll Table...", Some(Message::ShowNewTable(None))),
                     item("Open File...", Some(Message::OpenFile)).shortcut("Ctrl+O"),
                     Entry::Separator,
                     item("Save", when(has_tab, Message::Save)).shortcut("Ctrl+S"),
@@ -1479,6 +1531,18 @@ impl App {
                     .shortcut("Ctrl+Shift+Q")
                     .checked(workspace.is_some_and(|workspace| workspace.quests.open)),
                     item(
+                        "Roll Tables",
+                        workspace.map(|workspace| {
+                            if workspace.tables.open {
+                                Message::Tables(tables::Message::Close)
+                            } else {
+                                Message::ShowTables
+                            }
+                        }),
+                    )
+                    .shortcut("Ctrl+Shift+T")
+                    .checked(workspace.is_some_and(|workspace| workspace.tables.open)),
+                    item(
                         "Refresh File Tree",
                         when(workspace.is_some(), Message::RefreshTree),
                     ),
@@ -1527,6 +1591,7 @@ impl Workspace {
             Some(summary) => format!("Opened {}. {summary}", root.display()),
             None => format!("Opened {}", root.display()),
         };
+        let table_settings = tables::Settings::load(&root);
         Workspace {
             types,
             own_types,
@@ -1557,6 +1622,9 @@ impl Workspace {
             tag_saves: HashMap::new(),
             search: Search::default(),
             quests: quests::Quests::default(),
+            tables: tables::List::default(),
+            table_settings,
+            roll_folder: None,
         }
     }
 
@@ -1725,6 +1793,7 @@ impl Workspace {
         }
         self.refresh_search();
         self.refresh_quests();
+        self.refresh_tables();
     }
 
     /// Reads the quests again for the Quests list, if it is open. Open notes are read as
@@ -1761,6 +1830,249 @@ impl Workspace {
             found.push(quests::read(path, name, &text, ty, &self.index));
         }
         self.quests.set(found, &options);
+    }
+
+    /// The text of the note at `path`: as its tab has it if it is open, or as saved.
+    fn note_text(&self, path: &Path) -> Option<String> {
+        self.tabs
+            .iter()
+            .find(|tab| tab.note_path() == path)
+            .and_then(|tab| tab.text().ok())
+            .or_else(|| std::fs::read_to_string(path).ok())
+    }
+
+    /// Whether the roll table under `heading` in the note at `path` rolls each column.
+    fn rolls_each_column(&self, path: &Path, heading: Option<&str>) -> bool {
+        self.table_settings
+            .each_column
+            .contains(&tables::key(&self.root, path, heading))
+    }
+
+    /// Where the roll tables in `text`, the note at `path`, that roll each column are.
+    fn each_column_tables(&self, path: &Path, text: &str) -> Vec<usize> {
+        tables::find(text)
+            .into_iter()
+            .filter(|table| self.rolls_each_column(path, table.heading.as_deref()))
+            .map(|table| table.range.start)
+            .collect()
+    }
+
+    /// Every roll table in the campaign.
+    fn all_tables(&self) -> Vec<tables::Entry> {
+        let mut found = Vec::new();
+        for path in markdown_files(&self.tree) {
+            let Some(text) = self.note_text(&path) else {
+                continue;
+            };
+            let note = self.tree_name(&path, false);
+            for table in tables::find(&text) {
+                found.push(tables::Entry {
+                    each_column: self.rolls_each_column(&path, table.heading.as_deref()),
+                    path: path.clone(),
+                    note: note.clone(),
+                    table,
+                });
+            }
+        }
+        found
+    }
+
+    /// Reads the roll tables again for the Roll Tables list, if it is open.
+    fn refresh_tables(&mut self) {
+        if self.tables.open {
+            let found = self.all_tables();
+            self.tables.set(found);
+        }
+    }
+
+    /// The table a link to `target` in the note at `from` names: `[[Note]]` is the
+    /// note's first table, `[[Note#Heading]]` the one under that heading.
+    fn linked_table(&self, target: &str, from: &Path) -> Option<(String, tables::Table, bool)> {
+        let (note, heading) = match target.split_once('#') {
+            Some((note, heading)) => (note.trim(), Some(heading.trim())),
+            None => (target.trim(), None),
+        };
+        let path = if note.is_empty() {
+            from.to_path_buf()
+        } else {
+            self.index.resolve(note, from)?.to_path_buf()
+        };
+        let text = self.note_text(&path)?;
+        let table = tables::find(&text)
+            .into_iter()
+            .find(|table| match heading {
+                Some(heading) => table
+                    .heading
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(heading)),
+                None => true,
+            })?;
+        let name = table.name(&self.tree_name(&path, false));
+        let each_column = self.rolls_each_column(&path, table.heading.as_deref());
+        Some((name, table, each_column))
+    }
+
+    /// The table typed into the dice roller's box: by its note's name (or `Note#Heading`),
+    /// or by its own name.
+    fn table_named(&self, typed: &str) -> Option<(PathBuf, String, tables::Table, bool)> {
+        let typed = typed.trim();
+        if typed.is_empty() {
+            return None;
+        }
+        let from = self.root.join("Untitled.md");
+        let note = typed.split('#').next().unwrap_or(typed);
+        if let Some(path) = self.index.resolve(note, &from)
+            && let Some((name, table, each_column)) = self.linked_table(typed, &from)
+        {
+            return Some((path.to_path_buf(), name, table, each_column));
+        }
+        self.all_tables()
+            .into_iter()
+            .find(|entry| entry.name().eq_ignore_ascii_case(typed))
+            .map(|entry| {
+                let name = entry.name();
+                (entry.path, name, entry.table, entry.each_column)
+            })
+    }
+
+    /// Rolls the table that starts at `start` in the note at `path`.
+    fn roll_table(&mut self, path: &Path, start: usize) {
+        let Some(text) = self.note_text(path) else {
+            return;
+        };
+        let Some(table) = tables::find(&text)
+            .into_iter()
+            .find(|table| table.range.start == start)
+        else {
+            return;
+        };
+        let name = table.name(&self.tree_name(path, false));
+        let each_column = self.rolls_each_column(path, table.heading.as_deref());
+        self.roll_found(path, &name, &table, each_column);
+    }
+
+    /// Rolls `table`, from the note at `path`, and shows the result in the dice roller.
+    fn roll_found(&mut self, path: &Path, name: &str, table: &tables::Table, each_column: bool) {
+        let mut rng = self.dice.rng().clone();
+        let rolled = tables::roll(name, table, each_column, &mut rng, &mut |target| {
+            self.linked_table(target, path)
+        });
+        *self.dice.rng() = rng;
+        self.dice.open = true;
+        self.dice.add_table(rolled);
+    }
+
+    /// Sets whether the table that starts at `start` in the note at `path` rolls each
+    /// column on its own, and remembers it in the campaign.
+    fn set_each_column(&mut self, path: &Path, start: usize, on: bool) {
+        let Some(text) = self.note_text(path) else {
+            return;
+        };
+        let Some(table) = tables::find(&text)
+            .into_iter()
+            .find(|table| table.range.start == start)
+        else {
+            return;
+        };
+        let key = tables::key(&self.root, path, table.heading.as_deref());
+        self.table_settings.set(&key, on);
+        if let Err(error) = self.table_settings.save(&self.root) {
+            self.status = format!("Could not remember how the table rolls: {error}");
+        }
+        self.refresh_tables();
+    }
+
+    /// `folder` as a choice in a folder picker.
+    fn folder_choice(&self, folder: &Path) -> FolderChoice {
+        FolderChoice {
+            label: if folder == self.root {
+                "The campaign folder".into()
+            } else if folder.is_dir() {
+                self.relative(folder)
+            } else {
+                format!("{} (new folder)", self.relative(folder))
+            },
+            path: folder.to_path_buf(),
+        }
+    }
+
+    /// The folders a new note can go in: the campaign folder and every folder in it, and
+    /// `extra` if it isn't one yet.
+    fn folder_choices(&self, extra: &Path) -> Vec<FolderChoice> {
+        let mut folders = vec![self.root.clone()];
+        collect_folders(&self.tree, &mut folders);
+        if !folders.iter().any(|folder| folder == extra) {
+            folders.push(extra.to_path_buf());
+        }
+        folders
+            .iter()
+            .map(|folder| self.folder_choice(folder))
+            .collect()
+    }
+
+    /// Makes the note New Roll Table asks for, and opens it to fill in.
+    fn create_table(&mut self) -> Result<(), String> {
+        let Some(Dialog::NewTable {
+            name,
+            folder,
+            die,
+            columns,
+            rows,
+            pasted,
+            ..
+        }) = &self.dialog
+        else {
+            return Ok(());
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err("Give the table a name".into());
+        }
+        campaign::validate_name(&name)?;
+        let blank = tables::Blank {
+            die: (*die).to_string(),
+            columns: columns.clone(),
+            rows: rows.parse().ok().filter(|rows: &i64| *rows > 0),
+            pasted: pasted.text(),
+        };
+        let folder = folder.path.clone();
+        std::fs::create_dir_all(&folder)
+            .map_err(|error| format!("Could not make the folder: {error}"))?;
+        let mut path = folder.join(campaign::note_file_name(&name));
+        path.as_mut_os_string().push(".md");
+        let mut text = tables::markdown(&blank);
+        if campaign::note_file_name(&name) != name {
+            // The file name can't hold the name, so the note keeps it.
+            text = format!(
+                "---\nname: {}\n---\n\n{text}",
+                serde_yaml_ng::to_string(&name).unwrap_or_default().trim()
+            );
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::AlreadyExists => {
+                    format!("{name} is already a note in that folder")
+                }
+                _ => format!("Could not create {}: {error}", path.display()),
+            })?;
+        std::io::Write::write_all(&mut file, text.as_bytes())
+            .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
+        self.dialog = None;
+        self.rescan();
+        self.expanded.insert(folder);
+        self.open_file(path.clone());
+        // It opens as Markdown, ready to fill in.
+        if let Some(tab) = self.active_tab_mut() {
+            tab.preview = None;
+        }
+        self.status = format!(
+            "Created the roll table {}: fill in its rows",
+            self.relative(&path)
+        );
+        Ok(())
     }
 
     /// Ticks or unticks the step of the quest at `path` whose task box is at `at`: in its
@@ -2987,6 +3299,162 @@ impl Workspace {
                         Message::UpdateTagNotes,
                     )
                 }
+                Dialog::NewTable {
+                    name,
+                    folder,
+                    die,
+                    columns,
+                    rows,
+                    pasted,
+                    error,
+                } => {
+                    let faces = tables::markdown(&tables::Blank {
+                        die: (*die).to_string(),
+                        columns: Vec::new(),
+                        rows: None,
+                        pasted: String::new(),
+                    })
+                    .lines()
+                    .count()
+                        - 2;
+                    let mut column_inputs = column![].spacing(4);
+                    for (index, value) in columns.iter().enumerate() {
+                        let mut line = row![
+                            text_input(if index == 0 { "Result" } else { "Another column" }, value)
+                                .on_input(move |value| Message::NewTableColumn(index, value))
+                                .padding(8)
+                                .style(style::input(c)),
+                        ]
+                        .spacing(4)
+                        .align_y(Center);
+                        if columns.len() > 1 {
+                            line = line.push(
+                                button(text("✕").size(11))
+                                    .padding([4, 8])
+                                    .style(style::flat(c, false))
+                                    .on_press(Message::NewTableRemoveColumn(index)),
+                            );
+                        }
+                        column_inputs = column_inputs.push(line);
+                    }
+                    column_inputs = column_inputs.push(
+                        button(text("+ Add column").size(12))
+                            .padding([3, 10])
+                            .style(style::secondary(c))
+                            .on_press(Message::NewTableAddColumn),
+                    );
+                    (
+                        "New roll table".to_string(),
+                        column![
+                            column![
+                                label("Name"),
+                                text_input("Weather", name)
+                                    .id(DIALOG_INPUT)
+                                    .on_input(Message::NewTableName)
+                                    .on_submit(Message::CreateTable)
+                                    .padding(8)
+                                    .style(style::input(c)),
+                            ]
+                            .spacing(4),
+                            column![
+                                label("Folder"),
+                                pick_list(
+                                    self.folder_choices(&folder.path),
+                                    Some(folder.clone()),
+                                    Message::NewTableFolder
+                                )
+                                .padding(8)
+                                .width(Fill)
+                                .style(style::choice(c))
+                                .menu_style(style::choice_menu(c)),
+                            ]
+                            .spacing(4),
+                            row![
+                                column![
+                                    label("Die"),
+                                    pick_list(&tables::DICE[..], Some(*die), Message::NewTableDie)
+                                        .padding(8)
+                                        .width(Fill)
+                                        .style(style::choice(c))
+                                        .menu_style(style::choice_menu(c)),
+                                ]
+                                .spacing(4)
+                                .width(Fill),
+                                column![
+                                    label("Rows"),
+                                    text_input(&faces.to_string(), rows)
+                                        .on_input(Message::NewTableRows)
+                                        .on_submit(Message::CreateTable)
+                                        .padding(8)
+                                        .style(style::input(c)),
+                                ]
+                                .spacing(4)
+                                .width(Fill),
+                            ]
+                            .spacing(12),
+                            column![label("Result columns"), column_inputs].spacing(4),
+                            column![
+                                label("Paste a list (optional)"),
+                                text_editor(pasted)
+                                    .on_action(Message::NewTablePasted)
+                                    .placeholder("One result a line. Numbers like 1. or 3-4 at the start are kept.")
+                                    .height(110)
+                                    .padding(8)
+                                    .size(13)
+                                    .style(style::editor(c)),
+                            ]
+                            .spacing(4),
+                            text("Fewer rows than the die has numbers split them evenly, so a d100 with 20 rows gets 01-05, 06-10 and so on. A pasted list picks the die that fits it.")
+                                .size(12)
+                                .color(c.text_muted),
+                        ]
+                        .spacing(14)
+                        .into(),
+                        error,
+                        "Create",
+                        Message::CreateTable,
+                    )
+                }
+                Dialog::NoteFromRoll {
+                    name,
+                    folder,
+                    error,
+                } => (
+                    "New note from the roll".to_string(),
+                    column![
+                        column![
+                            label("Name"),
+                            text_input("Name", name)
+                                .id(DIALOG_INPUT)
+                                .on_input(Message::NoteFromRollName)
+                                .on_submit(Message::CreateNoteFromRoll)
+                                .padding(8)
+                                .style(style::input(c)),
+                        ]
+                        .spacing(4),
+                        column![
+                            label("Folder"),
+                            pick_list(
+                                self.folder_choices(&folder.path),
+                                Some(folder.clone()),
+                                Message::NoteFromRollFolder
+                            )
+                            .padding(8)
+                            .width(Fill)
+                            .style(style::choice(c))
+                            .menu_style(style::choice_menu(c)),
+                            text("The note gets the folder's fields, like any new note there.")
+                                .size(12)
+                                .color(c.text_muted),
+                        ]
+                        .spacing(4),
+                    ]
+                    .spacing(16)
+                    .into(),
+                    error,
+                    "Create",
+                    Message::CreateNoteFromRoll,
+                ),
                 Dialog::Types(_) | Dialog::Problems | Dialog::Fix(_) => {
                     unreachable!("these dialogs have their own view")
                 }
@@ -3575,6 +4043,36 @@ impl Workspace {
                 self.dice.open = !self.dice.open;
                 Task::none()
             }
+            Message::Dice(dice::Message::Copy(result)) => {
+                self.status = format!("Copied {result}");
+                iced::clipboard::write(result)
+            }
+            Message::Dice(dice::Message::NewNote(name)) => {
+                // The folder picked last time, since rolls of one kind tend to go together.
+                let folder = self
+                    .roll_folder
+                    .clone()
+                    .filter(|folder| folder.is_dir())
+                    .unwrap_or_else(|| self.root.clone());
+                self.dialog = Some(Dialog::NoteFromRoll {
+                    name,
+                    folder: self.folder_choice(&folder),
+                    error: None,
+                });
+                iced::widget::operation::focus(DIALOG_INPUT)
+            }
+            Message::Dice(dice::Message::RollExpression)
+                if dice::Expression::parse(self.dice.expression()).is_err() =>
+            {
+                // A table's name rolls the table.
+                match self.table_named(self.dice.expression()) {
+                    Some((path, name, table, each_column)) => {
+                        self.roll_found(&path, &name, &table, each_column);
+                    }
+                    None => self.dice.update(dice::Message::RollExpression),
+                }
+                Task::none()
+            }
             Message::Dice(message) => {
                 self.dice.update(message);
                 Task::none()
@@ -3606,6 +4104,7 @@ impl Workspace {
             Message::FocusSearch => iced::widget::operation::focus(SEARCH),
             Message::ShowQuests => {
                 self.quests.open = true;
+                self.tables.open = false;
                 self.search = Search::default();
                 self.refresh_quests();
                 Task::none()
@@ -3625,6 +4124,167 @@ impl Workspace {
                     Task::none()
                 }
             },
+            Message::ShowTables => {
+                self.tables.open = true;
+                self.quests.open = false;
+                self.search = Search::default();
+                self.refresh_tables();
+                Task::none()
+            }
+            Message::Tables(message) => match message {
+                tables::Message::Open(path) => self.update(Message::OpenEntry(path)),
+                tables::Message::Roll(path, start) => {
+                    self.roll_table(&path, start);
+                    Task::none()
+                }
+                tables::Message::EachColumn(path, start, on) => {
+                    self.set_each_column(&path, start, on);
+                    Task::none()
+                }
+                tables::Message::New => self.update(Message::ShowNewTable(None)),
+                tables::Message::Close => {
+                    self.tables.open = false;
+                    Task::none()
+                }
+            },
+            Message::RollTable(start) => {
+                if let Some(path) = self.active_tab().map(Tab::note_path) {
+                    self.roll_table(&path, start);
+                }
+                Task::none()
+            }
+            Message::TableEachColumn(start, on) => {
+                if let Some(path) = self.active_tab().map(Tab::note_path) {
+                    self.set_each_column(&path, start, on);
+                }
+                Task::none()
+            }
+            Message::ShowNewTable(folder) => {
+                let folder = folder.unwrap_or_else(|| self.root.join(TABLES_FOLDER));
+                self.dialog = Some(Dialog::NewTable {
+                    name: String::new(),
+                    folder: self.folder_choice(&folder),
+                    die: "d6",
+                    columns: vec!["Result".into()],
+                    rows: String::new(),
+                    pasted: text_editor::Content::new(),
+                    error: None,
+                });
+                iced::widget::operation::focus(DIALOG_INPUT)
+            }
+            Message::NewTableName(value) => {
+                if let Some(Dialog::NewTable { name, error, .. }) = &mut self.dialog {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::NewTableFolder(choice) => {
+                if let Some(Dialog::NewTable { folder, .. }) = &mut self.dialog {
+                    *folder = choice;
+                }
+                Task::none()
+            }
+            Message::NewTableDie(value) => {
+                if let Some(Dialog::NewTable { die, .. }) = &mut self.dialog {
+                    *die = value;
+                }
+                Task::none()
+            }
+            Message::NewTableColumn(index, value) => {
+                if let Some(Dialog::NewTable { columns, .. }) = &mut self.dialog
+                    && let Some(column) = columns.get_mut(index)
+                {
+                    *column = value;
+                }
+                Task::none()
+            }
+            Message::NewTableAddColumn => {
+                if let Some(Dialog::NewTable { columns, .. }) = &mut self.dialog {
+                    columns.push(String::new());
+                }
+                Task::none()
+            }
+            Message::NewTableRemoveColumn(index) => {
+                if let Some(Dialog::NewTable { columns, .. }) = &mut self.dialog
+                    && columns.len() > 1
+                    && index < columns.len()
+                {
+                    columns.remove(index);
+                }
+                Task::none()
+            }
+            Message::NewTableRows(value) => {
+                if let Some(Dialog::NewTable { rows, .. }) = &mut self.dialog {
+                    *rows = value.chars().filter(char::is_ascii_digit).take(3).collect();
+                }
+                Task::none()
+            }
+            Message::NewTablePasted(action) => {
+                if let Some(Dialog::NewTable { pasted, die, .. }) = &mut self.dialog {
+                    let edits = action.is_edit();
+                    pasted.perform(action);
+                    // The die follows what is pasted, so the list fits it.
+                    if edits && let Some(fits) = tables::die_for_pasted(&pasted.text()) {
+                        *die = fits;
+                    }
+                }
+                Task::none()
+            }
+            Message::CreateTable => {
+                let result = self.create_table();
+                if let Err(message) = result {
+                    self.dialog_result(Err(message));
+                }
+                Task::none()
+            }
+            Message::NoteFromRollName(value) => {
+                if let Some(Dialog::NoteFromRoll { name, error, .. }) = &mut self.dialog {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::NoteFromRollFolder(choice) => {
+                if let Some(Dialog::NoteFromRoll { folder, .. }) = &mut self.dialog {
+                    *folder = choice;
+                }
+                Task::none()
+            }
+            Message::CreateNoteFromRoll => {
+                let Some(Dialog::NoteFromRoll { name, folder, .. }) = &self.dialog else {
+                    return Task::none();
+                };
+                let (name, folder) = (name.trim().to_string(), folder.path.clone());
+                if let Err(error) = campaign::validate_name(&name) {
+                    self.dialog_result(Err(error));
+                    return Task::none();
+                }
+                let ty = self
+                    .types
+                    .get(&folder)
+                    .and_then(|ty| ty.as_ref().ok())
+                    .cloned();
+                match create_linked_note(&self.root, &name, Some(&folder), ty.as_ref()) {
+                    Ok(path) => {
+                        self.dialog = None;
+                        self.roll_folder = Some(folder.clone());
+                        self.rescan();
+                        self.expanded.insert(folder);
+                        self.open_file(path.clone());
+                        // A new note is empty, so it opens ready to write in.
+                        if let Some(tab) = self.active_tab_mut() {
+                            tab.preview = None;
+                        }
+                        self.status = format!("Created {}", self.relative(&path));
+                    }
+                    Err(_) if path_taken(&folder, &name) => {
+                        self.dialog_result(Err(format!("{name} is already a note in that folder")));
+                    }
+                    Err(error) => self.dialog_result(Err(error)),
+                }
+                Task::none()
+            }
             Message::OpenFirstHit => match self.search.hits.first() {
                 Some(hit) => {
                     let path = hit.path.clone();
@@ -4736,6 +5396,10 @@ impl Workspace {
                         "New Subfolder...",
                         Some(Message::ShowNewFolderIn(path.clone())),
                     ),
+                    item(
+                        "New Roll Table...",
+                        Some(Message::ShowNewTable(Some(path.clone()))),
+                    ),
                     Entry::Separator,
                     item("Search in Folder", Some(Message::SearchIn(path.clone()))),
                 ]);
@@ -4998,6 +5662,9 @@ impl Workspace {
         } else if self.quests.open {
             let selected = self.active_tab().and_then(|tab| tab.path.as_deref());
             self.quests.view(c, selected).map(Message::Quests)
+        } else if self.tables.open {
+            let selected = self.active_tab().and_then(|tab| tab.path.as_deref());
+            self.tables.view(c, selected).map(Message::Tables)
         } else if self.tree.is_empty() {
             text("This campaign has no folders or Markdown files yet.")
                 .size(13)
@@ -6115,6 +6782,8 @@ impl Workspace {
                     Dialog::Rename { error, .. }
                     | Dialog::Move { error, .. }
                     | Dialog::NewFolder { error, .. }
+                    | Dialog::NewTable { error, .. }
+                    | Dialog::NoteFromRoll { error, .. }
                     | Dialog::AddField { error, .. },
                 ),
             ) => *error = Some(message),
@@ -6241,6 +6910,9 @@ impl Workspace {
                 on_field: Message::EditField,
                 on_roll: Message::RollField,
                 roll_icon: dice.field.clone(),
+                on_roll_table: Message::RollTable,
+                on_each_column: Message::TableEachColumn,
+                each_column: self.each_column_tables(&tab.note_path(), preview.source()),
                 on_add: Message::AddText,
                 on_page: Message::FinishEditing,
                 block: None,
@@ -6596,6 +7268,13 @@ fn create_linked_note(
     Ok(path)
 }
 
+/// Whether `folder` already has a note called `name`.
+fn path_taken(folder: &Path, name: &str) -> bool {
+    let mut path = folder.join(campaign::note_file_name(name));
+    path.as_mut_os_string().push(".md");
+    path.exists()
+}
+
 /// Lists every folder in the tree, parents before their subfolders.
 fn collect_folders(entries: &[Entry], folders: &mut Vec<PathBuf>) {
     for entry in entries {
@@ -6836,6 +7515,7 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
         "o" => Some(Message::OpenFile),
         "f" if modifiers.shift() => Some(Message::FocusSearch),
         "q" if modifiers.shift() => Some(Message::ShowQuests),
+        "t" if modifiers.shift() => Some(Message::ShowTables),
         "s" if modifiers.alt() => Some(Message::SaveAll),
         "s" if modifiers.shift() => Some(Message::SaveAs),
         "s" => Some(Message::Save),
