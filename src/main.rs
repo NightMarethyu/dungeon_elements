@@ -770,7 +770,7 @@ enum Message {
     /// The reading view's Roll button above the roll table at this place in the note.
     RollTable(usize),
     /// The reading view's roll button of the field with this key, which rolls on its table.
-    RollIntoField(String),
+    RollIntoField(String, String),
     /// Puts the roll waiting in the Replace dialog into its field: in place of what is
     /// there, or on a new line after it (true).
     FillField(bool),
@@ -1932,14 +1932,7 @@ impl Workspace {
             let each_column = self.rolls_each_column(&path, table.heading.as_deref());
             Some((name, table, each_column))
         });
-        found.or_else(|| {
-            let built_in = tables::built_in(note).filter(|_| heading.is_none())?;
-            Some((
-                built_in.name.to_string(),
-                built_in.table()?,
-                built_in.each_column,
-            ))
-        })
+        found.or_else(|| tables::built_in_link(target))
     }
 
     /// The table typed into the dice roller's box: by its note's name (or `Note#Heading`),
@@ -2004,20 +1997,19 @@ impl Workspace {
 
     /// Rolls on the table field `index` of the active tab's form names, and puts the
     /// result in the field: straight away if it is empty, or after asking if it isn't.
-    fn roll_into_field(&mut self, index: usize) {
+    fn roll_into_field(&mut self, index: usize, table_name: &str) {
         let Some(tab) = self.active_tab().filter(|tab| !tab.source) else {
             return;
         };
         let Some(form) = &tab.form else {
             return;
         };
-        let (Some(table_name), Some((current, long)), Some(label)) =
-            (form.table(index), form.text_value(index), form.label(index))
+        let (Some((current, long)), Some(label)) = (form.text_value(index), form.label(index))
         else {
             return;
         };
         let path = tab.note_path();
-        let Some((name, table, each_column)) = self.linked_table(&table_name, &path) else {
+        let Some((name, table, each_column)) = self.linked_table(table_name, &path) else {
             self.status = format!(
                 "There is no roll table called {table_name}. Make one, or change the field's Rolls on in Edit > Types"
             );
@@ -2126,10 +2118,12 @@ impl Workspace {
                     table.name,
                     self.relative(&path)
                 );
-                // It rolls each column like the built-in one did.
+                // Its tables roll each column like the built-in ones did.
                 if table.each_column {
-                    let key = tables::key(&self.root, &path, None);
-                    self.table_settings.set(&key, true);
+                    for found in tables::find(table.text) {
+                        let key = tables::key(&self.root, &path, found.heading.as_deref());
+                        self.table_settings.set(&key, true);
+                    }
                     let _ = self.table_settings.save(&self.root);
                 }
             }
@@ -4816,18 +4810,18 @@ impl Workspace {
                 }
                 Task::none()
             }
-            Message::Form(form::Message::RollTable(index)) => {
-                self.roll_into_field(index);
+            Message::Form(form::Message::RollTable(index, table)) => {
+                self.roll_into_field(index, &table);
                 Task::none()
             }
-            Message::RollIntoField(key) => {
+            Message::RollIntoField(key, table) => {
                 let index = self
                     .active_tab()
                     .and_then(|tab| tab.form.as_ref())
                     .and_then(|form| form.short_field(&key))
                     .map(|(index, _, _)| index);
                 if let Some(index) = index {
-                    self.roll_into_field(index);
+                    self.roll_into_field(index, &table);
                 }
                 Task::none()
             }

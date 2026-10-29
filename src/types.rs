@@ -201,12 +201,17 @@ impl Field {
         self.label.clone().unwrap_or_else(|| title_case(&self.key))
     }
 
-    /// The roll table a die button beside the field rolls on, if it has one.
-    pub fn table(&self) -> Option<&str> {
-        self.table
-            .as_deref()
-            .map(str::trim)
-            .filter(|table| !table.is_empty() && self.kind.rolls_tables())
+    /// The roll tables the field's die buttons roll on, one button each. Several are
+    /// written with commas between them, like `Female names, Male names`.
+    pub fn tables(&self) -> Vec<&str> {
+        match &self.table {
+            Some(tables) if self.kind.rolls_tables() => tables
+                .split(',')
+                .map(str::trim)
+                .filter(|table| !table.is_empty())
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// Whether a date field picks its date from a calendar, rather than being plain text.
@@ -581,7 +586,7 @@ mod tests {
             parse(yaml).unwrap_or_else(|error| panic!("{folder}: {error}"));
             // The roll tables fields roll on are built in.
             for field in &parse(yaml).unwrap().fields {
-                if let Some(table) = field.table() {
+                for table in field.tables() {
                     assert!(
                         crate::tables::built_in(table).is_some(),
                         "{folder}: {table}"

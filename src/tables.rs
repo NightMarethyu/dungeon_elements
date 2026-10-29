@@ -518,8 +518,10 @@ macro_rules! built_in {
 }
 
 /// The tables built into the app, in the order the Roll Tables list shows them.
-pub const BUILT_IN: [BuiltIn; 18] = [
+pub const BUILT_IN: [BuiltIn; 21] = [
     built_in!("Names", false),
+    built_in!("Female names", false),
+    built_in!("Male names", false),
     built_in!("English names", true),
     built_in!("Norse names", true),
     built_in!("Celtic names", true),
@@ -528,6 +530,7 @@ pub const BUILT_IN: [BuiltIn; 18] = [
     built_in!("Arabic names", true),
     built_in!("Slavic names", true),
     built_in!("Japanese names", true),
+    built_in!("Fantasy names", true),
     built_in!("Place names", true),
     built_in!("Inn and shop names", true),
     built_in!("Group names", true),
@@ -548,8 +551,32 @@ pub fn built_in(name: &str) -> Option<BuiltIn> {
 
 impl BuiltIn {
     pub fn table(&self) -> Option<Table> {
-        find(self.text).into_iter().next()
+        self.table_at(None)
     }
+
+    /// The table under `heading`, or the first one when there is no heading.
+    pub fn table_at(&self, heading: Option<&str>) -> Option<Table> {
+        find(self.text).into_iter().find(|table| {
+            heading.is_none_or(|heading| {
+                table
+                    .heading
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(heading.trim()))
+            })
+        })
+    }
+}
+
+/// The built-in table a link names, like `Norse names` or `Norse names#Male`: its name,
+/// the table, and whether it rolls each column.
+pub fn built_in_link(target: &str) -> Option<(String, Table, bool)> {
+    let (note, heading) = match target.split_once('#') {
+        Some((note, heading)) => (note, Some(heading)),
+        None => (target, None),
+    };
+    let built_in = built_in(note)?;
+    let table = built_in.table_at(heading)?;
+    Some((table.name(built_in.name), table, built_in.each_column))
 }
 
 /// A table in the Tables list.
@@ -1147,9 +1174,7 @@ mod tests {
     fn built_in_tables_read_and_roll() {
         let mut rng = fastrand::Rng::with_seed(5);
         for table in BUILT_IN {
-            let read = table
-                .table()
-                .unwrap_or_else(|| panic!("{} isn't a table", table.name));
+            assert!(table.table().is_some(), "{} isn't a table", table.name);
             assert!(
                 problems(table.text, table.name).is_empty(),
                 "{}",
@@ -1157,20 +1182,37 @@ mod tests {
             );
             // Every table it links to is built in too.
             for link in links::targets(table.text) {
-                assert!(built_in(&link).is_some(), "{} links to {link}", table.name);
+                assert!(
+                    built_in_link(&link).is_some(),
+                    "{} links to {link}",
+                    table.name
+                );
             }
-            let mut lookup = |target: &str| {
-                let found = built_in(target)?;
-                Some((found.name.to_string(), found.table()?, found.each_column))
-            };
-            let rolled = roll(table.name, &read, table.each_column, &mut rng, &mut lookup);
-            assert!(
-                !rolled.text().is_empty() && !rolled.text().contains("[["),
-                "{}",
-                table.name
-            );
+            for read in find(table.text) {
+                let rolled = roll(
+                    table.name,
+                    &read,
+                    table.each_column,
+                    &mut rng,
+                    &mut built_in_link,
+                );
+                assert!(
+                    !rolled.text().trim().is_empty() && !rolled.text().contains("[["),
+                    "{}",
+                    table.name
+                );
+            }
         }
         assert!(built_in("names").is_some());
+        // Names are built from parts: a Norse man is his father's son.
+        let (name, male, each_column) = built_in_link("Male names").unwrap();
+        for _ in 0..20 {
+            let rolled = roll(&name, &male, each_column, &mut rng, &mut built_in_link);
+            assert!(rolled.text().contains(' '), "{}", rolled.text());
+        }
+        let (name, norse, each_column) = built_in_link("Norse names#Male").unwrap();
+        let rolled = roll(&name, &norse, each_column, &mut rng, &mut built_in_link);
+        assert!(rolled.text().ends_with("sson"), "{}", rolled.text());
     }
 
     #[test]

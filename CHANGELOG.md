@@ -11,8 +11,8 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ### Name generators
 
-- Built-in roll tables, under **Built in** in the Roll Tables list: **Names** (any of the others), names by culture (**English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese**), **Place names**, **Inn and shop names** and **Group names**. Link to them from your own tables or type their names in the dice roller. **Copy** puts one in your **tables** folder to change it, and your copy is used in its place.
-- A text or long text field can roll on a table: set its **Rolls on** in **Edit > Types...**, and it gets a die button in the form and the reading view. An empty field is filled in; a filled one asks before replacing what's there (or adding the roll on a new line). New campaigns roll NPC names on Names, locations on Place names and factions on Group names.
+- Built-in roll tables, under **Built in** in the Roll Tables list: **Names**, **Female names** and **Male names** (any of the cultures), names by culture (**English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese**, each with Female and Male tables), **Fantasy names**, **Place names**, **Inn and shop names** and **Group names**. Norse family names are built from the father's name and -sdottir or -sson, and fantasy names from a start and an ending. Link to them from your own tables or type their names in the dice roller. **Copy** puts one in your **tables** folder to change it, and your copy is used in its place.
+- A text or long text field can roll on a table: set its **Rolls on** in **Edit > Types...** (several tables with commas between them), and it gets a die button for each in the form and the reading view. An empty field is filled in; a filled one asks before replacing what's there (or adding the roll on a new line). New campaigns roll NPC names on Female names or Male names, locations on Place names and factions on Group names.
 - Rolling each column joins a result that starts with a hyphen to the one before it, so `Ash` and `-ford` make "Ashford".
 
 ### Roll tables

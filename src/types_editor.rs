@@ -941,7 +941,7 @@ impl Editor {
                 block = block.push(
                     row![
                         text("Rolls on").size(13).color(c.text_muted),
-                        input("A roll table, like Names", &field.table)
+                        input("Roll tables, like Female names, Male names", &field.table)
                             .on_input(move |value| Message::FieldTable(index, value))
                             .width(220),
                         text("Gives the field a die button that rolls on the table and fills the field in.")
