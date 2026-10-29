@@ -1,0 +1,232 @@
+# The questions of the built-in world-building walkthrough, for the starter folders.
+#
+# `notes` are the notes the walkthrough makes, each with a short name the questions use:
+# the folder it goes in, its name if it has a set one (`{title}` is the campaign's),
+# whether a list answer makes several (`many`), values filled in when it is made (`set`;
+# a value naming another of these notes links to it), and a field of another of these
+# notes that links to it (`add_to`).
+#
+# Each question fills the `field` (its key in the folder's type) of its `note`, or with no
+# field asks for the note's name, or the names of a `many` note. A field question on a
+# `many` note is asked once for each of them, with `{name}` filled in. `table` is what
+# Inspire me rolls on. Questions whose folder or field a campaign doesn't have are left out.
+notes:
+  campaign:
+    folder: campaign
+    name: "{title}"
+  world:
+    folder: locations
+    set: { kind: World }
+  regions:
+    folder: locations
+    many: true
+    set: { kind: Region, part_of: world }
+  peoples:
+    folder: lore/peoples
+    many: true
+  event:
+    folder: lore/history
+  factions:
+    folder: factions
+    many: true
+  religions:
+    folder: factions/religions
+    many: true
+  magic:
+    folder: lore/magic
+  start:
+    folder: locations/settlements
+    set: { part_of: world }
+    add_to: { note: campaign, field: home_base }
+  locals:
+    folder: npcs
+    many: true
+    set: { location: start }
+  danger:
+    folder: locations/sites
+    set: { part_of: world }
+  rumors:
+    folder: quests
+    many: true
+    set: { status: Rumored, where: start }
+  heroes:
+    folder: players
+    many: true
+    set: { status: Active, home: start }
+    add_to: { note: campaign, field: players }
+  first_session:
+    folder: sessions
+    name: Session 1
+    set: { session: 1, status: Planned, present: heroes, where: start }
+
+chapters:
+  - id: campaign
+    title: The campaign
+    intro: The big picture first. Short answers are fine; you can change any of them later in the notes.
+    questions:
+      - ask: What is your campaign called?
+        note: campaign
+      - ask: Sum it up in one sentence.
+        note: campaign
+        field: pitch
+        table: Action and Theme
+      - ask: What game or rules will you use?
+        note: campaign
+        field: system
+      - ask: What is the big conflict, and what happens if the heroes do nothing?
+        note: campaign
+        field: big_picture
+        table: Trouble
+      - ask: "What should it feel like: grim, heroic, funny, eerie...?"
+        note: campaign
+        field: themes
+        table: Action and Theme
+      - ask: A few words to tag it with?
+        hint: Tags help you find notes later, like "horror" or "sandbox".
+        note: campaign
+        field: tags
+
+  - id: world
+    title: The world
+    intro: Where the story takes place, from far away.
+    questions:
+      - ask: What is the world called?
+        note: world
+        table: Place names
+      - ask: What is it like at first sight?
+        note: world
+        field: first_impression
+        table: Feel of a place
+      - ask: Name its main regions or nations.
+        hint: One on each line. Each becomes a location that is part of the world.
+        note: regions
+        table: Place names
+      - ask: Which peoples live there?
+        note: peoples
+      - ask: Where do the {name} live?
+        note: peoples
+        field: homelands
+      - ask: What event in its history do people still talk about?
+        hint: A name for it, like "The Long Winter".
+        note: event
+      - ask: What came of it?
+        note: event
+        field: consequences
+        table: Twists
+
+  - id: power
+    title: Power
+    intro: Who is in charge, and who wants to be.
+    questions:
+      - ask: Who holds power? Name two or three groups.
+        note: factions
+        table: Group names
+      - ask: What do the {name} want?
+        note: factions
+        field: goal
+        table: Wants
+      - ask: What will the {name} do next if no one stops them?
+        hint: A few steps. Each can be a link to a quest.
+        note: factions
+        field: plan
+        table: Trouble
+      - ask: Who leads the {name}?
+        hint: Type a name to make an NPC for them.
+        note: factions
+        field: leader
+        table: Female names, Male names
+      - ask: Which faiths matter?
+        note: religions
+        table: Group names
+      - ask: What do the {name} worship?
+        hint: Each one becomes a deity.
+        note: religions
+        field: deities
+
+  - id: extraordinary
+    title: The extraordinary
+    intro: Magic, strange technology, or whatever else makes this world unlike ours. Skip the chapter if there is none.
+    questions:
+      - ask: Is there magic, strange technology, or something else? What is it called?
+        note: magic
+      - ask: Where does it come from?
+        note: magic
+        field: source
+        table: Action and Theme
+      - ask: What does it cost, and what can it not do?
+        note: magic
+        field: cost
+        table: Action and Theme
+      - ask: Who can use it?
+        note: magic
+        field: users
+
+  - id: start
+    title: Where it starts
+    intro: The place the heroes call home at the start, and what is going on there.
+    questions:
+      - ask: Where do the heroes begin?
+        note: start
+        table: Place names
+      - ask: Who rules {name}?
+        note: start
+        field: ruled_by
+        table: Group names
+      - ask: Name three people the heroes will meet there.
+        note: locals
+        table: Female names, Male names
+      - ask: What does {name} want?
+        note: locals
+        field: wants
+        table: Wants
+      - ask: What dangerous place lies nearby?
+        note: danger
+        table: Place names
+      - ask: What waits there?
+        note: danger
+        field: description
+        table: What's here
+      - ask: What rumors are going around?
+        hint: One on each line, as a short name like "The Missing Miller". Each becomes a quest.
+        note: rumors
+      - ask: What is the hook of {name}?
+        note: rumors
+        field: hook
+        table: Trouble
+
+  - id: heroes
+    title: The heroes
+    intro: The players' characters, and what ties them to the world.
+    questions:
+      - ask: Who are the players' characters?
+        note: heroes
+        table: Female names, Male names
+      - ask: Who plays {name}?
+        note: heroes
+        field: player
+      - ask: Who does {name} know or care about?
+        hint: Type names to link NPCs, or make new ones.
+        note: heroes
+        field: bonds
+
+  - id: first_session
+    title: The first session
+    intro: Enough to sit down and play.
+    questions:
+      - ask: How does the first session open?
+        hint: Start in the middle of something happening.
+        note: first_session
+        field: strong_start
+        table: Twists
+      - ask: When does it take place in the world?
+        note: first_session
+        field: world_date
+      - ask: What secrets could the heroes learn?
+        note: first_session
+        field: secrets
+        table: Twists
+      - ask: What first quest pulls them in?
+        hint: A link to a quest, like one of the rumors.
+        note: first_session
+        field: follow_ups
+        table: Trouble

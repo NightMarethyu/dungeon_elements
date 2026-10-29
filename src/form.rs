@@ -546,6 +546,28 @@ enum Input {
 }
 
 impl Input {
+    /// The input for `field`, holding `value` from the front matter, or for long text and
+    /// steps fields the text of their `section`.
+    fn read(field: &Field, value: Option<&Value>, section: Option<String>) -> Self {
+        let text = value.map(note::value_to_text).unwrap_or_default();
+        let section = section.unwrap_or_default();
+        match field.kind {
+            Kind::Longtext => Input::Long(text_editor::Content::with_text(&section)),
+            Kind::Steps => Input::Steps(Steps::parse(&section)),
+            Kind::Checkbox => Input::Check(match value {
+                Some(Value::Bool(checked)) => *checked,
+                _ => matches!(text.to_lowercase().as_str(), "true" | "yes"),
+            }),
+            Kind::Choice => Input::Choice((!text.is_empty()).then_some(text)),
+            Kind::Link => Input::Text(note::unlink(&text).to_string()),
+            Kind::Dice => Input::Dice(DiceInput::parse(&text)),
+            Kind::Tags => Input::List(List::parse(value, false)),
+            Kind::Links => Input::List(List::parse(value, true)),
+            Kind::Date => Input::Date(DateInput { text, month: None }),
+            Kind::Text | Kind::Number => Input::Text(text),
+        }
+    }
+
     fn empty(kind: Kind) -> Self {
         match kind {
             Kind::Longtext => Input::Long(text_editor::Content::new()),
@@ -650,11 +672,8 @@ impl Form {
         let mut inputs: Vec<Input> = fields
             .iter()
             .map(|field| {
-                let value = note.front.get(field.key.as_str());
-                let text = value.map(note::value_to_text).unwrap_or_default();
-
                 // Long text and steps fields are the `## ` section with their name.
-                let mut section = || {
+                let section = field.kind.is_section().then(|| {
                     let label = field.label();
                     let section = sections.iter_mut().find(|section| {
                         section.as_ref().is_some_and(|section| {
@@ -666,22 +685,8 @@ impl Form {
                         .and_then(Option::take)
                         .map(|section| section.body)
                         .unwrap_or_default()
-                };
-                match field.kind {
-                    Kind::Longtext => Input::Long(text_editor::Content::with_text(&section())),
-                    Kind::Steps => Input::Steps(Steps::parse(&section())),
-                    Kind::Checkbox => Input::Check(match value {
-                        Some(Value::Bool(checked)) => *checked,
-                        _ => matches!(text.to_lowercase().as_str(), "true" | "yes"),
-                    }),
-                    Kind::Choice => Input::Choice((!text.is_empty()).then_some(text)),
-                    Kind::Link => Input::Text(note::unlink(&text).to_string()),
-                    Kind::Dice => Input::Dice(DiceInput::parse(&text)),
-                    Kind::Tags => Input::List(List::parse(value, false)),
-                    Kind::Links => Input::List(List::parse(value, true)),
-                    Kind::Date => Input::Date(DateInput { text, month: None }),
-                    Kind::Text | Kind::Number => Input::Text(text),
-                }
+                });
+                Input::read(field, note.front.get(field.key.as_str()), section)
             })
             .collect();
 
@@ -1304,6 +1309,45 @@ impl Form {
         Some((index, &self.fields[index], value))
     }
 
+    /// The field with `key`, if the note has it.
+    #[allow(dead_code)] // Used by the walkthrough tab, which comes next.
+    pub fn field(&self, key: &str) -> Option<&Field> {
+        self.fields.iter().find(|field| field.key == key)
+    }
+
+    /// What the field with `key` holds, as it is stored: its front matter value, or for a
+    /// long text or steps field the text of its section. `None` if it is empty (an
+    /// unticked box counts as empty) or the note has no such field.
+    #[allow(dead_code)] // Used by the walkthrough tab, which comes next.
+    pub fn value(&self, key: &str) -> Result<Option<Value>, String> {
+        let Some(index) = self.fields.iter().position(|field| field.key == key) else {
+            return Ok(None);
+        };
+        let value = match &self.inputs[index] {
+            Input::Long(content) => Some(Value::String(content.text())),
+            Input::Steps(steps) => Some(Value::String(steps.to_markdown())),
+            Input::Check(checked) => checked.then_some(Value::Bool(true)),
+            _ => self.front_value(index)?,
+        };
+        Ok(value.filter(|value| !is_empty_value(value)))
+    }
+
+    /// Sets the field with `key` to `value`, given as [`Form::value`] gives it. Returns
+    /// whether the note has the field.
+    #[allow(dead_code)] // Used by the walkthrough tab, which comes next.
+    pub fn set_value(&mut self, key: &str, value: Option<&Value>) -> bool {
+        let Some(index) = self.fields.iter().position(|field| field.key == key) else {
+            return false;
+        };
+        let field = &self.fields[index];
+        let section = field
+            .kind
+            .is_section()
+            .then(|| value.map(note::value_to_text).unwrap_or_default());
+        self.inputs[index] = Input::read(field, value, section);
+        true
+    }
+
     /// The index of the field stored under front matter `key`, if there is one.
     fn front_field(&self, key: &str) -> Option<usize> {
         self.fields
@@ -1465,192 +1509,23 @@ impl Form {
         roll_icon: &'a svg::Handle,
         known_tags: &'a KnownTags,
     ) -> Element<'a, M> {
-        // Every editor sees every key press, so only the focused one handles shortcuts.
-        let accept_tab = accept.clone();
-        let key_binding = move |key_press: text_editor::KeyPress| {
-            if let Some(binding) = links::tab_binding(&key_press, &accept_tab) {
-                return Some(binding);
-            }
-            if key_press.modifiers.command()
-                && matches!(key_press.status, text_editor::Status::Focused { .. })
-                && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
-            {
-                return Some(text_editor::Binding::Custom(message));
-            }
-            text_editor::Binding::from_key_press(key_press)
-        };
+        // The Other box takes the same shortcuts as the fields.
+        let key_binding = key_binding(accept.clone(), shortcut);
 
-        // A field's label, with a button to remove the field from this note and one to roll
-        // on each table it rolls on.
-        let label = move |index: usize, label: String| -> Element<'a, M> {
-            let label = text(label).size(14).color(c.text);
-            let tables = self.fields[index].tables();
-            if !self.can_remove(index) && tables.is_empty() {
-                return label.into();
-            }
-            // A long text field with one table is filled with ideas from it.
-            let inspire = tables.len() == 1 && self.fields[index].kind == Kind::Longtext;
-            row![label, space::horizontal()]
-                .push(self.can_remove(index).then(|| {
-                    button(text("Remove").size(12))
-                        .padding([0, 6])
-                        .style(style::flat(c, false))
-                        .on_press(map(Message::Remove(index)))
-                }))
-                .extend(tables.into_iter().map(|table| {
-                    dice::table_button(
-                        c,
-                        roll_icon,
-                        table,
-                        inspire,
-                        map(Message::RollTable(index, table.to_string())),
-                    )
-                }))
-                .spacing(6)
-                .align_y(Center)
-                .into()
-        };
-
-        let fields =
-            self.fields
-                .iter()
-                .zip(&self.inputs)
-                .enumerate()
-                .map(|(index, (field, input))| {
-                    let widget: Element<'a, M> = match input {
-                        Input::Text(value) => {
-                            let placeholder = match field.kind {
-                                Kind::Number => "0",
-                                Kind::Tags => "comma, separated, tags",
-                                Kind::Link => "Name of another note",
-                                _ => "",
-                            };
-                            let mut input = text_input(placeholder, value)
-                                .id(field_id(index))
-                                .on_input(move |value| map(Message::Text(index, value)))
-                                .size(14)
-                                .padding(8)
-                                .style(style::input(c));
-                            if field.kind == Kind::Link
-                                && self.focus == Some(index)
-                                && let Some(accept) = &accept
-                            {
-                                input = input.on_submit(accept.clone());
-                            }
-
-                            // The input is always first in a row, so the Open button
-                            // showing up as the first letter is typed doesn't make iced
-                            // build a new input, which would lose the focus.
-                            let open =
-                                (field.kind == Kind::Link && !value.trim().is_empty()).then(|| {
-                                    button(text("Open").size(13))
-                                        .padding([8, 10])
-                                        .style(style::secondary(c))
-                                        .on_press(map(Message::FollowLink(index)))
-                                });
-                            // A button for each roll in the field, like `1d8+3` or `+5`.
-                            let rolls = (field.kind != Kind::Link).then(|| {
-                                row(Expression::find(value).iter().map(|expression| {
-                                    dice::field_button(c, roll_icon, expression, move |dice| {
-                                        map(Message::Roll(index, dice))
-                                    })
-                                }))
-                                .spacing(6)
-                            });
-                            let input = row![input]
-                                .push(open)
-                                .push(rolls)
-                                .spacing(6)
-                                .align_y(Center);
-
-                            column![label(index, field.label()), input]
-                                .spacing(6)
-                                .into()
-                        }
-                        Input::Choice(choice) => {
-                            let pick = pick_list(
-                                field.options.as_slice(),
-                                choice.as_ref(),
-                                move |value| map(Message::Choice(index, value)),
-                            )
-                            .placeholder("Choose...")
-                            .text_size(14)
-                            .padding(8)
-                            .style(style::choice(c))
-                            .menu_style(style::choice_menu(c))
-                            .width(Fill);
-                            // A choice of dice, like a hit die, can be rolled too.
-                            let rolls = choice.as_deref().map(Expression::find).map(|found| {
-                                row(found.iter().map(|expression| {
-                                    dice::field_button(c, roll_icon, expression, move |dice| {
-                                        map(Message::Roll(index, dice))
-                                    })
-                                }))
-                                .spacing(6)
-                            });
-                            column![
-                                label(index, field.label()),
-                                row![pick].push(rolls).spacing(6).align_y(Center),
-                            ]
-                            .spacing(6)
-                            .into()
-                        }
-                        Input::Check(checked) => {
-                            let check = checkbox(*checked)
-                                .label(field.label())
-                                .on_toggle(move |value| map(Message::Check(index, value)))
-                                .style(style::check(c));
-                            let header = label(index, String::new());
-                            column![header, check].spacing(6).into()
-                        }
-                        Input::Dice(_) => column![
-                            label(index, field.label()),
-                            self.dice_view(c, map, index, Some(roll_icon)),
-                        ]
-                        .spacing(6)
-                        .into(),
-                        Input::List(_) => column![
-                            label(index, field.label()),
-                            self.list_view(c, map, index, accept.clone(), known_tags),
-                        ]
-                        .spacing(6)
-                        .into(),
-                        Input::Date(_) => {
-                            column![label(index, field.label()), self.date_view(c, map, index),]
-                                .spacing(6)
-                                .into()
-                        }
-                        Input::Steps(steps) => column![
-                            label(index, field.label()),
-                            self.steps_view(c, map, index, steps, &accept),
-                        ]
-                        .spacing(6)
-                        .into(),
-                        Input::Long(content) => column![
-                            label(index, field.label()),
-                            context_menu::area(
-                                text_editor(content)
-                                    .id(field_id(index))
-                                    .on_action(move |action| map(Message::Long(index, action)))
-                                    .key_binding(key_binding.clone())
-                                    .highlight_with::<links::Highlighter>(
-                                        link_colors.clone(),
-                                        links::format,
-                                    )
-                                    .min_height(140)
-                                    .size(14)
-                                    .padding(8)
-                                    .style(style::field_editor(c)),
-                                on_menu,
-                            )
-                            .click_first(content.selection().is_none()),
-                        ]
-                        .spacing(6)
-                        .into(),
-                    };
-
-                    (field.width, widget)
-                });
+        let fields = (0..self.fields.len()).map(|index| {
+            let widget = self.field_view(
+                index,
+                c,
+                map,
+                shortcut,
+                link_colors.clone(),
+                accept.clone(),
+                on_menu,
+                roll_icon,
+                known_tags,
+            );
+            (self.fields[index].width, widget)
+        });
 
         // Half-width fields pair up side by side; full-width fields take a row each.
         let mut rows: Vec<Element<'a, M>> = Vec::new();
@@ -1711,6 +1586,180 @@ impl Form {
             .id(SCROLL)
             .height(Fill)
             .into()
+    }
+
+    /// Shows field `index` of the form on its own, with its label: the same input the
+    /// form shows for it, so it can be edited outside the form too.
+    #[allow(clippy::too_many_arguments)]
+    pub fn field_view<'a, M: Clone + 'a>(
+        &'a self,
+        index: usize,
+        c: Colors,
+        map: fn(Message) -> M,
+        shortcut: fn(&Key, Modifiers) -> Option<M>,
+        link_colors: links::Colors,
+        accept: Option<M>,
+        on_menu: fn(Point) -> M,
+        roll_icon: &'a svg::Handle,
+        known_tags: &'a KnownTags,
+    ) -> Element<'a, M> {
+        let key_binding = key_binding(accept.clone(), shortcut);
+
+        // A field's label, with a button to remove the field from this note and one to roll
+        // on each table it rolls on.
+        let label = move |index: usize, label: String| -> Element<'a, M> {
+            let label = text(label).size(14).color(c.text);
+            let tables = self.fields[index].tables();
+            if !self.can_remove(index) && tables.is_empty() {
+                return label.into();
+            }
+            // A long text field with one table is filled with ideas from it.
+            let inspire = tables.len() == 1 && self.fields[index].kind == Kind::Longtext;
+            row![label, space::horizontal()]
+                .push(self.can_remove(index).then(|| {
+                    button(text("Remove").size(12))
+                        .padding([0, 6])
+                        .style(style::flat(c, false))
+                        .on_press(map(Message::Remove(index)))
+                }))
+                .extend(tables.into_iter().map(|table| {
+                    dice::table_button(
+                        c,
+                        roll_icon,
+                        table,
+                        inspire,
+                        map(Message::RollTable(index, table.to_string())),
+                    )
+                }))
+                .spacing(6)
+                .align_y(Center)
+                .into()
+        };
+
+        let field = &self.fields[index];
+        match &self.inputs[index] {
+            Input::Text(value) => {
+                let placeholder = match field.kind {
+                    Kind::Number => "0",
+                    Kind::Tags => "comma, separated, tags",
+                    Kind::Link => "Name of another note",
+                    _ => "",
+                };
+                let mut input = text_input(placeholder, value)
+                    .id(field_id(index))
+                    .on_input(move |value| map(Message::Text(index, value)))
+                    .size(14)
+                    .padding(8)
+                    .style(style::input(c));
+                if field.kind == Kind::Link
+                    && self.focus == Some(index)
+                    && let Some(accept) = &accept
+                {
+                    input = input.on_submit(accept.clone());
+                }
+
+                // The input is always first in a row, so the Open button
+                // showing up as the first letter is typed doesn't make iced
+                // build a new input, which would lose the focus.
+                let open = (field.kind == Kind::Link && !value.trim().is_empty()).then(|| {
+                    button(text("Open").size(13))
+                        .padding([8, 10])
+                        .style(style::secondary(c))
+                        .on_press(map(Message::FollowLink(index)))
+                });
+                // A button for each roll in the field, like `1d8+3` or `+5`.
+                let rolls = (field.kind != Kind::Link).then(|| {
+                    row(Expression::find(value).iter().map(|expression| {
+                        dice::field_button(c, roll_icon, expression, move |dice| {
+                            map(Message::Roll(index, dice))
+                        })
+                    }))
+                    .spacing(6)
+                });
+                let input = row![input]
+                    .push(open)
+                    .push(rolls)
+                    .spacing(6)
+                    .align_y(Center);
+
+                column![label(index, field.label()), input]
+                    .spacing(6)
+                    .into()
+            }
+            Input::Choice(choice) => {
+                let pick = pick_list(field.options.as_slice(), choice.as_ref(), move |value| {
+                    map(Message::Choice(index, value))
+                })
+                .placeholder("Choose...")
+                .text_size(14)
+                .padding(8)
+                .style(style::choice(c))
+                .menu_style(style::choice_menu(c))
+                .width(Fill);
+                // A choice of dice, like a hit die, can be rolled too.
+                let rolls = choice.as_deref().map(Expression::find).map(|found| {
+                    row(found.iter().map(|expression| {
+                        dice::field_button(c, roll_icon, expression, move |dice| {
+                            map(Message::Roll(index, dice))
+                        })
+                    }))
+                    .spacing(6)
+                });
+                column![
+                    label(index, field.label()),
+                    row![pick].push(rolls).spacing(6).align_y(Center),
+                ]
+                .spacing(6)
+                .into()
+            }
+            Input::Check(checked) => {
+                let check = checkbox(*checked)
+                    .label(field.label())
+                    .on_toggle(move |value| map(Message::Check(index, value)))
+                    .style(style::check(c));
+                let header = label(index, String::new());
+                column![header, check].spacing(6).into()
+            }
+            Input::Dice(_) => column![
+                label(index, field.label()),
+                self.dice_view(c, map, index, Some(roll_icon)),
+            ]
+            .spacing(6)
+            .into(),
+            Input::List(_) => column![
+                label(index, field.label()),
+                self.list_view(c, map, index, accept.clone(), known_tags),
+            ]
+            .spacing(6)
+            .into(),
+            Input::Date(_) => column![label(index, field.label()), self.date_view(c, map, index),]
+                .spacing(6)
+                .into(),
+            Input::Steps(steps) => column![
+                label(index, field.label()),
+                self.steps_view(c, map, index, steps, &accept),
+            ]
+            .spacing(6)
+            .into(),
+            Input::Long(content) => column![
+                label(index, field.label()),
+                context_menu::area(
+                    text_editor(content)
+                        .id(field_id(index))
+                        .on_action(move |action| map(Message::Long(index, action)))
+                        .key_binding(key_binding.clone())
+                        .highlight_with::<links::Highlighter>(link_colors.clone(), links::format,)
+                        .min_height(140)
+                        .size(14)
+                        .padding(8)
+                        .style(style::field_editor(c)),
+                    on_menu,
+                )
+                .click_first(content.selection().is_none()),
+            ]
+            .spacing(6)
+            .into(),
+        }
     }
 
     /// The inputs of dice field `index`: how many dice, which die, the modifier, and a
@@ -2261,6 +2310,17 @@ pub fn tab(ids: Vec<String>, back: bool) -> impl Operation<usize> {
     }
 }
 
+/// Whether a stored value holds nothing: null, blank text or an empty list.
+#[allow(dead_code)] // Used by the walkthrough tab, which comes next.
+pub fn is_empty_value(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.trim().is_empty(),
+        Value::Sequence(items) => items.iter().all(is_empty_value),
+        _ => false,
+    }
+}
+
 /// The kind of field that can edit a front matter value, or `None` for nested values.
 pub fn kind_of(value: &Value) -> Option<Kind> {
     match value {
@@ -2293,6 +2353,27 @@ pub fn kind_of(value: &Value) -> Option<Kind> {
 
 /// The tags that have notes, by the folder (inside the campaign) their notes are in.
 pub type KnownTags = std::collections::HashMap<String, Vec<String>>;
+
+/// The keys of a text editor in a form: Tab (or Enter in a link) sends `accept` to finish
+/// the link being typed, and shortcuts work while it is focused. Every editor sees every
+/// key press, so only the focused one handles shortcuts.
+fn key_binding<M: Clone>(
+    accept: Option<M>,
+    shortcut: fn(&Key, Modifiers) -> Option<M>,
+) -> impl Fn(text_editor::KeyPress) -> Option<text_editor::Binding<M>> + Clone {
+    move |key_press: text_editor::KeyPress| {
+        if let Some(binding) = links::tab_binding(&key_press, &accept) {
+            return Some(binding);
+        }
+        if key_press.modifiers.command()
+            && matches!(key_press.status, text_editor::Status::Focused { .. })
+            && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
+        {
+            return Some(text_editor::Binding::Custom(message));
+        }
+        text_editor::Binding::from_key_press(key_press)
+    }
+}
 
 fn pair<'a, M: 'a>(left: Element<'a, M>, right: Element<'a, M>) -> Element<'a, M> {
     row![container(left).width(Fill), container(right).width(Fill)]

@@ -20,6 +20,7 @@ TTRPGs stay the focus, but nothing about the app should be locked to them. With 
   - There should be an export for GMs to give "handouts" to their players that work within this system as well
 - Windows and Linux, GitHub actions builds the MacOS version
 - System agnostic, not tied to D&D, Shadowdark, etc. Any System, any playstyle
+- Friendly for non-technical people and creatives who don't want to deal with anything coding-adjacent. The files stay plain Markdown and YAML, but everything kept in them can be done from the app, without ever editing Markdown or YAML by hand
 
 ## Phases
 
@@ -138,10 +139,11 @@ The items in Player Management are all things that will just be built as templat
   - Offered when a new campaign is made (a *Start the walkthrough* box in New Campaign) and any time from **File > Campaign Walkthrough...**
   - Opens as a tab: chapters on the left (the campaign, the world, power, the extraordinary, where it starts, the heroes, the first session), one question at a time on the right with Back, Skip and Next. Every question can be skipped, and chapters can be done in any order
   - Each answer uses the input of the field it fills (a calendar for a date, the dice picker for dice) and is saved into its note right away, so nothing is lost and the notes stay the truth. A list answer ("name the factions") makes a note for each, and follow-up questions go through them; links fill themselves (a region is Part of the world, the starting town is the campaign's Home base)
-  - Remembers where the GM left off in `.dungeon_elements/walkthrough.yaml` in the campaign: which questions were answered or skipped and which note each answer went to (hidden, so the file tree, templates and Obsidian ignore it)
-  - The questions are data, in a `walkthrough.yaml` beside the types: the default one is built in, and a template can carry its own (so the built-in system templates can ask their own questions)
-  - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators): a question names its table with `table:`, like a field does, falling back to Action and Theme
-  - Built in three steps: the question format, progress file and writing answers into notes; the walkthrough tab and menu items, with a help guide; templates' own questions and Inspire me
+  - Remembers where the GM left off in `.dungeon_elements/walkthrough.yaml` in the campaign: which note each answer went to, what was skipped and where the GM was. Whether a question is answered is read from the note itself (hidden, so the file tree, templates and Obsidian ignore it)
+  - The questions are data: the default set is built in, and a campaign or template can have its own in `_walkthrough.yaml` at the campaign root (so the built-in system templates can ask their own questions)
+  - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators): a question names its table with `table:`, like a field does, falling back to its field's own table, then Action and Theme
+  - A walkthrough editor (**Edit > Walkthrough Questions...**), so no one has to write YAML: chapters and question cards with pick lists for the note, field and table, the notes it makes, Start from the default questions, and Try it
+  - Built in four steps: the question format, progress file and writing answers into notes; the walkthrough tab with Inspire me, menu items and a help guide; templates' own questions; the walkthrough editor
 
 ### Phase 3: climax
 

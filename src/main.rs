@@ -31,6 +31,7 @@ mod templates;
 mod theme;
 mod types;
 mod types_editor;
+mod walkthrough;
 mod watch;
 mod web;
 
@@ -6352,25 +6353,7 @@ impl Workspace {
     /// The folder link field `field` links to: the one its type names, or else a folder
     /// whose type has the field's name (so a `location` field links to Locations).
     fn link_folder(&self, field: &types::Field) -> Option<PathBuf> {
-        if let Some(folder) = &field.folder {
-            let path = self.root.join(folder.trim_matches('/'));
-            return path.is_dir().then_some(path);
-        }
-
-        let names = [field.key.to_lowercase(), field.label().to_lowercase()];
-        let mut matches: Vec<&PathBuf> = self
-            .types
-            .iter()
-            .filter(|(_, ty)| {
-                ty.as_ref().is_ok_and(|ty| {
-                    names.contains(&ty.id.to_lowercase())
-                        || names.contains(&ty.label().to_lowercase())
-                })
-            })
-            .map(|(folder, _)| folder)
-            .collect();
-        matches.sort();
-        matches.first().map(|folder| folder.to_path_buf())
+        types::link_folder(&self.root, &self.types, field)
     }
 
     /// The colors `[[links]]` are shown in, in text editors.
@@ -6626,6 +6609,12 @@ impl Workspace {
         let mut changed_links = 0;
         let mut changed_notes = 0;
         let mut problems = Vec::new();
+
+        // The walkthrough keeps track of the notes it made.
+        let mut progress = walkthrough::Progress::load(&self.root);
+        if progress.renamed(&self.root, moved) && progress.save(&self.root).is_err() {
+            problems.push(".dungeon_elements/walkthrough.yaml".to_string());
+        }
 
         for path in &notes {
             let tab = self
