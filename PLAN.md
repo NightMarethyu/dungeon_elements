@@ -104,7 +104,8 @@ The campaign's people and plots. Everything here is notes, types and links, buil
   - [x] Improve built-in fields (make Date fields that use the system date but can be overridden with an "in universe" date (like Star Trek's Stardate), Make tags selectable in addition to comma separated lists, add multiple linked notes in a single field (like a magic system might have a list of Users that are linked notes) add new fields to improve QoL)
     - Date fields pick from a calendar (or are plain text with the calendar off), tags have tag notes listing links to the tagged notes, and a "links to notes" field holds many links
   - [x] Edit > Types has an **Add New** button at the bottom of its list: a new type with a new folder for its notes
-- [ ] Adjust the default folders and types: go over the starter folders (`templates/default/`) and each type's fields now that fields can do much more (dates, tags, links to notes, steps, dice, subfolders as kinds), and change what a new campaign starts with to match
+- [x] Adjust the default folders and types: go over the starter folders (`templates/default/`) and each type's fields now that fields can do much more (dates, tags, links to notes, steps, dice, subfolders as kinds), and change what a new campaign starts with to match
+  - Nine system-neutral folders built to answer the common world-building questions: Campaign, Sessions (prep and recap, replacing Journal), Players, Quests, NPCs (Enemies, Deities), Factions (Religions), Locations (Settlements, Sites), Lore (History, Peoples, Magic and Technology, Creatures) and Items (Weapons, Armor, Gear). World notes have Known to players and Secrets; factions have a Plan of steps. Existing campaigns are unchanged
 
 **Player Management Excluded**
 The items in Player Management are all things that will just be built as templates, these can be based off character sheets for different TTRPGs. These items are all already included as fields and types
@@ -124,6 +125,14 @@ The items in Player Management are all things that will just be built as templat
   - [ ] Roll tables as notes (a Markdown table with a die column), rolled from the dice pane or a link, with results that can roll on other tables
   - [ ] Name generators, built on roll tables, with a few built-in lists to start from
   - [ ] Story prompts: suggestions for inspiration when building quests and places (drawn from roll tables, never writing the story for the GM)
+- [ ] World-building walkthrough: an optional guide that asks the GM questions one at a time and turns the answers into linked starter notes
+  - Offered when a new campaign is made (a *Start the walkthrough* box in New Campaign) and any time from **File > Campaign Walkthrough...**
+  - Opens as a tab: chapters on the left (the campaign, the world, power, the extraordinary, where it starts, the heroes, the first session), one question at a time on the right with Back, Skip and Next. Every question can be skipped, and chapters can be done in any order
+  - Each answer uses the input of the field it fills (a calendar for a date, the dice picker for dice) and is saved into its note right away, so nothing is lost and the notes stay the truth. A list answer ("name the factions") makes a note for each, and follow-up questions go through them; links fill themselves (a region is Part of the world, the starting town is the campaign's Home base)
+  - Remembers where the GM left off in `.dungeon_elements/walkthrough.yaml` in the campaign: which questions were answered or skipped and which note each answer went to (hidden, so the file tree, templates and Obsidian ignore it)
+  - The questions are data, in a `walkthrough.yaml` beside the types: the default one is built in, and a template can carry its own (so the built-in system templates can ask their own questions)
+  - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators)
+  - Built in three steps: the question format, progress file and writing answers into notes; the walkthrough tab and menu items, with a help guide; templates' own questions and Inspire me
 
 ### Phase 3: climax
 

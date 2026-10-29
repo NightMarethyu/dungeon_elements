@@ -1,0 +1,22 @@
+type: magic
+label: Magic and Technology
+fields:
+  - key: source
+    label: Source
+  - key: users
+    label: Users
+    kind: links
+    folder: npcs
+  - key: found_in
+    label: Found in
+    kind: links
+    folder: locations
+  - key: effect
+    label: Effect
+    kind: dice
+  - key: cost
+    label: Cost and limits
+    kind: longtext
+  - key: signs
+    label: Signs
+    kind: longtext

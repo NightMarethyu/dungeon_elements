@@ -1067,7 +1067,7 @@ mod tests {
 
     #[test]
     fn adds_a_new_type_with_its_folder() {
-        let (root, mut dialog) = editor(types::STARTER_TYPES[0].1);
+        let (root, mut dialog) = editor(types::TEST_ITEM);
         dialog.update(Message::AddNew);
         assert!(dialog.has_changes());
         // Nothing is made until it has a name.
@@ -1082,7 +1082,7 @@ mod tests {
         assert_eq!((ty.id.as_str(), ty.fields.len()), ("deity", 2));
 
         // A folder that's there already can't be a new type's.
-        let (other, mut dialog) = editor(types::STARTER_TYPES[0].1);
+        let (other, mut dialog) = editor(types::TEST_ITEM);
         dialog.update(Message::AddNew);
         dialog.update(Message::Label("Item".into()));
         dialog.update(Message::FolderName("items".into()));
@@ -1124,7 +1124,7 @@ mod tests {
 
     #[test]
     fn exports_types_and_uses_saved_ones() {
-        let (root, mut editor) = editor(types::STARTER_TYPES[0].1);
+        let (root, mut editor) = editor(types::TEST_ITEM);
         let (name, yaml) = editor.export_type().unwrap();
         assert_eq!(name, "Item.type.yaml");
         assert_eq!(types::parse(&yaml).unwrap().id, "item");
@@ -1132,7 +1132,7 @@ mod tests {
         // Notes has no type, so it has nothing to export, and can start from a saved one.
         editor.update(Message::Select(1));
         assert!(editor.export_type().is_err());
-        editor.set_saved(vec![types::parse(types::STARTER_TYPES[4].1).unwrap()]);
+        editor.set_saved(vec![types::parse(types::starter_yaml("npcs")).unwrap()]);
         let saved = editor.saved[0].clone();
         editor.update(Message::UseSaved(saved));
         assert!(editor.has_changes());
@@ -1144,7 +1144,7 @@ mod tests {
 
     #[test]
     fn edits_and_saves_a_type() {
-        let (root, mut editor) = editor(types::STARTER_TYPES[0].1);
+        let (root, mut editor) = editor(types::TEST_ITEM);
 
         editor.update(Message::RemoveField(1)); // Value
         editor.update(Message::AddField);
@@ -1190,12 +1190,12 @@ mod tests {
 
     #[test]
     fn makes_a_subfolder_a_kind_of_its_parent() {
-        let (root, _) = editor(types::STARTER_TYPES[0].1);
+        let (root, _) = editor(types::TEST_ITEM);
         let items = root.join("items");
         let weapons = items.join("weapons");
         fs::create_dir_all(&weapons).unwrap();
         let mut own = Types::new();
-        own.insert(items.clone(), types::parse(types::STARTER_TYPES[0].1));
+        own.insert(items.clone(), types::parse(types::TEST_ITEM));
         let mut editor = Editor::new(&root, &[items, weapons.clone()], &own);
 
         editor.update(Message::Select(1));

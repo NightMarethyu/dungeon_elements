@@ -3,16 +3,12 @@ label: Lore
 fields:
   - key: name
     label: Name
-  - key: category
-    label: Category
-    kind: choice
-    options: [History, Faction, Religion, Culture, Magic, Creature, Other]
-  - key: tags
-    label: Tags
-    kind: tags
   - key: related
     label: Related
     kind: links
+  - key: tags
+    label: Tags
+    kind: tags
   - key: known_to_players
     label: Known to players
     kind: checkbox
@@ -24,3 +20,6 @@ fields:
     label: Details
     kind: longtext
     width: full
+  - key: secrets
+    label: Secrets
+    kind: longtext

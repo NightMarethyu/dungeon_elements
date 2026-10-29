@@ -1,0 +1,6 @@
+type: gear
+label: Gear
+fields:
+  - key: quantity
+    label: Quantity
+    kind: number

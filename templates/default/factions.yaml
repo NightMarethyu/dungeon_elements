@@ -1,0 +1,62 @@
+type: faction
+label: Faction
+fields:
+  - key: name
+    label: Name
+  - key: kind
+    label: Kind
+    kind: choice
+    options: [Government, Guild, Military, Criminal, Cult, Company, Family, Secret society, Other]
+  - key: status
+    label: Status
+    kind: choice
+    options: [Rising, Stable, Declining, Destroyed]
+  - key: disposition
+    label: Attitude
+    kind: choice
+    options: [Friendly, Neutral, Hostile, Unknown]
+  - key: leader
+    label: Leader
+    kind: link
+    folder: npcs
+  - key: members
+    label: Members
+    kind: links
+    folder: npcs
+  - key: headquarters
+    label: Headquarters
+    kind: link
+    folder: locations
+  - key: territory
+    label: Territory
+    kind: links
+    folder: locations
+  - key: allies
+    label: Allies
+    kind: links
+    folder: factions
+  - key: rivals
+    label: Rivals
+    kind: links
+    folder: factions
+  - key: goal
+    label: Goal
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: known_to_players
+    label: Known to players
+    kind: checkbox
+  - key: plan
+    label: Plan
+    kind: steps
+    folder: quests
+  - key: resources
+    label: Resources
+    kind: longtext
+  - key: methods
+    label: Methods
+    kind: longtext
+  - key: secrets
+    label: Secrets
+    kind: longtext

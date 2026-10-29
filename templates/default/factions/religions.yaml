@@ -1,0 +1,18 @@
+type: religion
+label: Religion
+removed_fields: [kind]
+fields:
+  - key: deities
+    label: Deities
+    kind: links
+    folder: npcs/deities
+  - key: holy_sites
+    label: Holy sites
+    kind: links
+    folder: locations
+  - key: tenets
+    label: Tenets
+    kind: longtext
+  - key: rites
+    label: Rites and holy days
+    kind: longtext

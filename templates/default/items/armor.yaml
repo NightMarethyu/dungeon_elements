@@ -1,0 +1,5 @@
+type: armor
+label: Armor
+fields:
+  - key: protection
+    label: Protection

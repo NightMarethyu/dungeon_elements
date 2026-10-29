@@ -2498,9 +2498,10 @@ impl Workspace {
     fn templates(&self) -> Vec<Template> {
         let mut templates = vec![Template::plain()];
 
-        let starters = types::STARTER_TYPES.iter().filter_map(|(_, yaml)| {
-            let ty = types::parse(yaml).ok()?;
-            Some((ty.id.clone(), ty.label(), yaml.to_string()))
+        // A starter subfolder's type comes with everything it inherits, like the campaign's own.
+        let starters = types::STARTER_TYPES.iter().filter_map(|(folder, _)| {
+            let ty = types::starter(folder)?;
+            Some((ty.id.clone(), ty.label(), templates::standalone(&ty).ok()?))
         });
 
         let mut folders: Vec<_> = self.own_types.keys().collect();
@@ -7346,7 +7347,7 @@ mod tests {
             "type: lore\nfields:\n  - key: name\n  - key: category\n    kind: choice\n    options: [Myth]\n",
         )
         .unwrap();
-        let item = types::parse(types::STARTER_TYPES[0].1).unwrap();
+        let item = types::parse(types::TEST_ITEM).unwrap();
         assert_eq!(item.id, "item");
 
         let text = "---\ntype: lore\nname: The Tide Crown\ncategory: Myth\nremoved_fields:\n- secrets\n---\n\nIntro.\n\n## History\n\nSunk.\n";

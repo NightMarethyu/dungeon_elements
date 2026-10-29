@@ -1,0 +1,26 @@
+type: event
+label: Event
+fields:
+  - key: when
+    label: When
+    kind: date
+    calendar: false
+  - key: era
+    label: Era
+    kind: link
+    folder: lore/history
+  - key: where
+    label: Where
+    kind: links
+    folder: locations
+  - key: who
+    label: Who
+    kind: links
+    folder: npcs
+  - key: factions
+    label: Factions
+    kind: links
+    folder: factions
+  - key: consequences
+    label: Consequences
+    kind: longtext

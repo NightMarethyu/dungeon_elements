@@ -1,0 +1,23 @@
+type: enemy
+label: Enemy
+fields:
+  - key: threat
+    label: Threat
+    kind: choice
+    options: [Minion, Standard, Elite, Boss]
+  - key: attack
+    label: Attack
+    kind: dice
+  - key: damage
+    label: Damage
+    kind: dice
+  - key: creature
+    label: Creature
+    kind: link
+    folder: lore/creatures
+  - key: tactics
+    label: Tactics
+    kind: longtext
+  - key: stats
+    label: Stats
+    kind: longtext

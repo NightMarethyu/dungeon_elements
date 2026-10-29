@@ -7,12 +7,45 @@ fields:
     label: Player
   - key: concept
     label: Concept
-  - key: level
-    label: Level
-    kind: number
+  - key: status
+    label: Status
+    kind: choice
+    options: [Active, Inactive, Retired, Dead]
+  - key: joined
+    label: Joined
+    kind: date
+  - key: home
+    label: Home
+    kind: link
+    folder: locations
+  - key: bonds
+    label: Bonds
+    kind: links
+    folder: npcs
+  - key: factions
+    label: Faction ties
+    kind: links
+    folder: factions
+  - key: inventory
+    label: Inventory
+    kind: links
+    folder: items
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: goals
+    label: Goals
+    kind: steps
+    folder: quests
   - key: backstory
     label: Backstory
     kind: longtext
-  - key: notes
-    label: Notes
+  - key: hooks
+    label: Hooks
+    kind: longtext
+  - key: player_notes
+    label: Player notes
+    kind: longtext
+  - key: sheet
+    label: Sheet
     kind: longtext

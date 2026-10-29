@@ -42,18 +42,13 @@ pub struct Structure {
 }
 
 impl Structure {
-    /// The starter folders of the default template, each with its type.
+    /// The starter folders of the default template, each with its type. They are plain
+    /// folders, so a campaign also works as an Obsidian vault.
     pub fn starter() -> Self {
         Structure {
-            folders: campaign::TEMPLATE_FOLDERS
+            folders: types::STARTER_TYPES
                 .iter()
-                .map(|folder| {
-                    let yaml = types::STARTER_TYPES
-                        .iter()
-                        .find(|(name, _)| name == folder)
-                        .map(|(_, yaml)| yaml.to_string());
-                    (folder.to_string(), yaml)
-                })
+                .map(|(folder, yaml)| (folder.to_string(), Some(yaml.to_string())))
                 .collect(),
         }
     }
@@ -482,20 +477,20 @@ mod tests {
             "type: weapon\nfields:\n  - key: damage\n    kind: dice\n",
         )
         .unwrap();
-        fs::create_dir_all(root.join("sessions")).unwrap();
+        fs::create_dir_all(root.join("maps")).unwrap();
         fs::create_dir_all(root.join(".obsidian")).unwrap();
         fs::write(root.join("npcs/Mira.md"), "# Mira").unwrap();
 
         let structure = Structure::read(&root);
         assert!(structure.folders.iter().all(|(f, _)| !f.starts_with('.')));
-        assert_eq!(structure.top_folders().len(), 8);
+        assert_eq!(structure.top_folders().len(), 10);
         let (back, skipped) = Structure::from_zip(&structure.to_zip().unwrap()).unwrap();
         assert_eq!(back, structure);
         assert_eq!(skipped, 0);
 
         let copy = temp_folder("round_trip_copy");
         back.create_in(&copy).unwrap();
-        assert!(copy.join("sessions").is_dir());
+        assert!(copy.join("maps").is_dir());
         assert!(!copy.join("npcs/Mira.md").exists());
         assert!(types::load(&copy.join("items/weapons")).unwrap().is_ok());
         assert_eq!(Structure::read(&copy), structure);
@@ -576,7 +571,7 @@ mod tests {
             Structure::starter()
         );
 
-        let ty = types::parse(types::STARTER_TYPES[0].1).unwrap();
+        let ty = types::parse(types::TEST_ITEM).unwrap();
         let file = folder.join("whatever.yaml");
         fs::write(&file, standalone(&ty).unwrap()).unwrap();
         let imported = import_into(&file, &templates, &types_folder).unwrap();
@@ -595,7 +590,7 @@ mod tests {
         let root = Path::new("campaign");
         let folders = [root.join("items"), root.join("items/weapons")];
         let mut own = types::Types::new();
-        own.insert(folders[0].clone(), types::parse(types::STARTER_TYPES[0].1));
+        own.insert(folders[0].clone(), types::parse(types::TEST_ITEM));
         own.insert(
             folders[1].clone(),
             types::parse("type: weapon\nremoved_fields: [owner]\nfields:\n  - key: damage\n"),

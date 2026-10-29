@@ -1,0 +1,22 @@
+type: settlement
+label: Settlement
+removed_fields: [kind]
+fields:
+  - key: size
+    label: Size
+    kind: choice
+    options: [Hamlet, Village, Town, City, Metropolis]
+  - key: population
+    label: Population
+  - key: government
+    label: Government
+  - key: notable_places
+    label: Notable places
+    kind: links
+    folder: locations
+  - key: trade
+    label: Trade
+    kind: longtext
+  - key: laws
+    label: Laws and customs
+    kind: longtext

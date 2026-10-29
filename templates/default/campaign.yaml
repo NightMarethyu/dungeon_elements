@@ -1,0 +1,40 @@
+type: campaign
+label: Campaign
+fields:
+  - key: name
+    label: Name
+  - key: pitch
+    label: Pitch
+  - key: system
+    label: System
+  - key: status
+    label: Status
+    kind: choice
+    options: [Planning, Running, On hiatus, Finished]
+  - key: started
+    label: Started
+    kind: date
+  - key: players
+    label: Players
+    kind: links
+    folder: players
+  - key: home_base
+    label: Home base
+    kind: link
+    folder: locations
+  - key: tags
+    label: Tags
+    kind: tags
+  - key: big_picture
+    label: Big picture
+    kind: longtext
+  - key: arcs
+    label: Arcs
+    kind: steps
+    folder: quests
+  - key: themes
+    label: Themes and tone
+    kind: longtext
+  - key: house_rules
+    label: House rules
+    kind: longtext

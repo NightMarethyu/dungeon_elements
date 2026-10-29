@@ -22,7 +22,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 
 **Campaigns and notes**
 
-- Open a campaign folder, or make a new one with starter folders (items, journal, locations, lore, NPCs, players, quests). The file tree on the left lists its folders and notes, and each note opens in a tab.
+- Open a campaign folder, or make a new one with starter folders (campaign, sessions, players, quests, NPCs, factions, locations, lore, items, and subfolders like Enemies and Settlements). The file tree on the left lists its folders and notes, and each note opens in a tab.
 - Everything is in the **File**, **Edit**, **View**, and **Help** menus, with the usual shortcuts: **New Note** (Ctrl+N), **Open File...** (Ctrl+O), **Save** (Ctrl+S), **Save As...** (Ctrl+Shift+S), **Save All** (Ctrl+Alt+S), and **Close Tab** (Ctrl+W). **Help > How-To Guides** (F1) explains the basics, and **Help > Keyboard Shortcuts** (Ctrl+/) lists every shortcut.
 - A folder can give its notes fields in a `_type.yaml` (each starter folder has one). Its notes open as a form, like Name, Value, History, and Stats for an item, and are saved as Markdown with YAML front matter that Obsidian can read. Subfolders are kinds of their folder, like child classes: Weapons in Items has every Item field and its own. **Edit > Types** changes a folder's fields, and the round **+** on a form adds a field to just that note. **Form**, **Markdown**, and **Read** at the top right switch between the form, the Markdown text, and the reading view.
 - Right-click the file tree, tabs, editors, and forms to rename, move, or delete notes and folders (deleted ones go to the Recycle Bin or Trash), make new ones, copy a link, and more. Drag a note onto another folder to move it; it takes that folder's type and keeps what you filled in.
@@ -32,7 +32,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 - Link notes the Obsidian way: type `[[` and pick a note from the suggestions, or select some text and press **Edit > Insert Link** (Ctrl+K). Links can show other text (`[[Mira|the smuggler]]`) or point to a heading (`[[Mira#Appearance]]`), and notes can have aliases, so the BBEG can also go by `[[Jerry]]`.
 - Ctrl+click a link to open the note; a link to a note that doesn't exist yet makes it. Link fields point at a folder, so typing a new place in an NPC's Location offers to make it in your locations folder.
 - Rename a note (in the app or outside it) and every link to it follows. Note names can hold any characters (`Chapter 1: The Inn`, `John's Long Johns`); the file gets a name that works everywhere.
-- At the end of each note, **Linked from** lists the notes that link to it, so an NPC shows every quest, place, and journal entry they turn up in.
+- At the end of each note, **Linked from** lists the notes that link to it, so an NPC shows every quest, place, and session they turn up in.
 
 **Reading and writing**
 
@@ -68,15 +68,22 @@ Each campaign is just a folder. Open the folder and your campaign is there:
 
 ```text
 my-campaign/
-├── locations/
-│   └── the-sunken-keep.md
-├── npcs/
-│   └── mira-the-innkeeper.md
+├── campaign/
+├── sessions/
+│   └── session-1.md
 ├── players/
 ├── quests/
-├── items/
-├── journal/
-└── lore/
+├── npcs/
+│   ├── enemies/
+│   └── mira-the-innkeeper.md
+├── factions/
+├── locations/
+│   ├── settlements/
+│   ├── sites/
+│   │   └── the-sunken-keep.md
+│   └── ...
+├── lore/
+└── items/
 ```
 
 Every note is a Markdown file with its fields in YAML front matter, and `[[links]]` tie them together the way Obsidian does, so the same folder opens in Obsidian too. Over time, your notes grow into a connected wiki of your world.
