@@ -530,6 +530,29 @@ pub fn named<'a>(
     found.first().map(|(_, ty)| *ty)
 }
 
+/// The folder link field `field` links to in the campaign at `root`: the one its type
+/// names, or else a folder whose type has the field's name (so a `location` field links
+/// to Locations).
+pub fn link_folder(root: &Path, types: &Types, field: &Field) -> Option<PathBuf> {
+    if let Some(folder) = &field.folder {
+        let path = root.join(folder.trim_matches('/'));
+        return path.is_dir().then_some(path);
+    }
+
+    let names = [field.key.to_lowercase(), field.label().to_lowercase()];
+    let mut matches: Vec<&PathBuf> = types
+        .iter()
+        .filter(|(_, ty)| {
+            ty.as_ref().is_ok_and(|ty| {
+                names.contains(&ty.id.to_lowercase()) || names.contains(&ty.label().to_lowercase())
+            })
+        })
+        .map(|(folder, _)| folder)
+        .collect();
+    matches.sort();
+    matches.first().map(|folder| folder.to_path_buf())
+}
+
 /// A name for one note of a folder: "Weapons" makes "Weapon", "Enemies" makes "Enemy".
 pub fn singular(folder: &str) -> String {
     let name = title_case(folder);
