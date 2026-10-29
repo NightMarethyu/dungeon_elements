@@ -4,6 +4,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Search your notes
+
+- A search box at the top of the file tree (**Edit > Search Notes**, Ctrl+Shift+F) finds notes as you type. Notes whose name or alias matches come first, then notes that mention it, each with its folder and the line that matched. Click one to open it, or press Enter for the first. Clear the box or press Escape to see the file tree again.
+- Type `field:value` to find notes by a field, like `status:alive`, `location:Saltmarsh` (a link field matches the note it links to) or `factions:"Thieves Guild"` (a list matches any of its items). Fields go by their key or label, checkboxes by `yes` and `no`, and long text fields by the text under their heading. Words and fields can be mixed: `cook status:alive`.
+- Right-click a folder and pick **Search in Folder** to search only it and its subfolders, so `location:Saltmarsh` in NPCs finds every NPC in Saltmarsh. With the box empty, it lists every note in the folder.
+- New guide in **Help > How-To Guides**: Searching your notes.
+
 ### New starter folders
 
 - New campaigns start with nine folders built to answer the questions world-building asks: **Campaign** (the pitch, the big picture, arcs and house rules), **Sessions** (prep and recap, in place of Journal), **Players**, **Quests**, **NPCs**, **Factions**, **Locations**, **Lore** and **Items**. They aren't tied to any game system.

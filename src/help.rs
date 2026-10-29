@@ -91,6 +91,14 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Search",
+        &[
+            ("Ctrl+Shift+F", "Search your notes"),
+            ("Enter", "In the search box, open the first note found"),
+            ("Escape", "Leave the search and show the file tree again"),
+        ],
+    ),
+    (
         "Reading view",
         &[
             (
