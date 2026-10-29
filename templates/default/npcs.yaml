@@ -3,7 +3,7 @@ label: NPC
 fields:
   - key: name
     label: Name
-    table: Names
+    table: Female names, Male names
   - key: role
     label: Role
   - key: status
@@ -36,6 +36,7 @@ fields:
     folder: sessions
   - key: wants
     label: Wants
+    table: Wants
   - key: tags
     label: Tags
     kind: tags

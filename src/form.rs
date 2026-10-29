@@ -76,7 +76,7 @@ pub enum Message {
     /// Rolls the dice in field `index`, like `1d8+3`.
     Roll(usize, String),
     /// Rolls on the roll table field `index` names, to fill it in.
-    RollTable(usize),
+    RollTable(usize, String),
     /// The text of step `.1` of steps field `.0`; the step after the last is a new one
     /// being typed.
     StepText(usize, usize, String),
@@ -829,7 +829,7 @@ impl Form {
             }
             Message::FollowLink(_)
             | Message::Roll(..)
-            | Message::RollTable(_)
+            | Message::RollTable(..)
             | Message::FollowStep(..) => return false,
             Message::StepText(index, step, value) => {
                 let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
@@ -1030,11 +1030,6 @@ impl Form {
         self.fields.push(Field::for_note(label, kind));
         self.inputs.push(Input::empty(kind));
         Ok(())
-    }
-
-    /// The roll table field `index` rolls on, if it has one.
-    pub fn table(&self, index: usize) -> Option<String> {
-        self.fields.get(index)?.table().map(String::from)
     }
 
     /// What text or long text field `index` holds, and whether it is a long one.
@@ -1485,22 +1480,35 @@ impl Form {
             text_editor::Binding::from_key_press(key_press)
         };
 
-        // A field's label, with a button to remove the field from this note.
+        // A field's label, with a button to remove the field from this note and one to roll
+        // on each table it rolls on.
         let label = move |index: usize, label: String| -> Element<'a, M> {
             let label = text(label).size(14).color(c.text);
-            if !self.can_remove(index) {
+            let tables = self.fields[index].tables();
+            if !self.can_remove(index) && tables.is_empty() {
                 return label.into();
             }
-            row![
-                label,
-                space::horizontal(),
-                button(text("Remove").size(12))
-                    .padding([0, 6])
-                    .style(style::flat(c, false))
-                    .on_press(map(Message::Remove(index))),
-            ]
-            .align_y(Center)
-            .into()
+            // A long text field with one table is filled with ideas from it.
+            let inspire = tables.len() == 1 && self.fields[index].kind == Kind::Longtext;
+            row![label, space::horizontal()]
+                .push(self.can_remove(index).then(|| {
+                    button(text("Remove").size(12))
+                        .padding([0, 6])
+                        .style(style::flat(c, false))
+                        .on_press(map(Message::Remove(index)))
+                }))
+                .extend(tables.into_iter().map(|table| {
+                    dice::table_button(
+                        c,
+                        roll_icon,
+                        table,
+                        inspire,
+                        map(Message::RollTable(index, table.to_string())),
+                    )
+                }))
+                .spacing(6)
+                .align_y(Center)
+                .into()
         };
 
         let fields =
@@ -1549,18 +1557,9 @@ impl Form {
                                 }))
                                 .spacing(6)
                             });
-                            let table = field.table().map(|table| {
-                                dice::table_button(
-                                    c,
-                                    roll_icon,
-                                    table,
-                                    map(Message::RollTable(index)),
-                                )
-                            });
                             let input = row![input]
                                 .push(open)
                                 .push(rolls)
-                                .push(table)
                                 .spacing(6)
                                 .align_y(Center);
 
@@ -1628,21 +1627,7 @@ impl Form {
                         .spacing(6)
                         .into(),
                         Input::Long(content) => column![
-                            match field.table() {
-                                Some(table) => row![
-                                    container(label(index, field.label())).width(Fill),
-                                    dice::table_button(
-                                        c,
-                                        roll_icon,
-                                        table,
-                                        map(Message::RollTable(index)),
-                                    ),
-                                ]
-                                .spacing(8)
-                                .align_y(Center)
-                                .into(),
-                                None => label(index, field.label()),
-                            },
+                            label(index, field.label()),
                             context_menu::area(
                                 text_editor(content)
                                     .id(field_id(index))
@@ -2337,9 +2322,9 @@ mod tests {
     #[test]
     fn fills_fields_from_rolls() {
         let mut ty = item_type();
-        ty.fields[0].table = Some("Names".into());
+        ty.fields[0].table = Some("Female names, Male names,".into());
+        assert_eq!(ty.fields[0].tables(), ["Female names", "Male names"]);
         let mut form = Form::blank(ty.clone());
-        assert_eq!(form.table(0).as_deref(), Some("Names"));
         assert!(form.set_text_value(0, "Wren Ash", false));
         assert_eq!(form.name().as_deref(), Some("Wren Ash"));
         // A long text field takes a roll on a new line, or in place of what it has.
@@ -2359,7 +2344,7 @@ mod tests {
         // Only text fields can name a table.
         let mut check = ty.fields[0].clone();
         check.kind = Kind::Checkbox;
-        assert_eq!(check.table(), None);
+        assert!(check.tables().is_empty());
     }
 
     #[test]

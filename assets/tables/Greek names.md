@@ -1,22 +1,54 @@
+| d2 | Greek names |
+| --- | --- |
+| 1 | [[Greek names#Female]] |
+| 2 | [[Greek names#Male]] |
+
+## Female
+
+| d20 | First | Family |
+| --- | --- | --- |
+| 1 | Agathe | Andreou |
+| 2 | Daphne | Christou |
+| 3 | Eirene | Dimitriou |
+| 4 | Helena | Georgiou |
+| 5 | Ione | Ioannou |
+| 6 | Kalliope | Konstantinou |
+| 7 | Melina | Theodorou |
+| 8 | Phaedra | Stavrou |
+| 9 | Thalia | Nikolaou |
+| 10 | Zoe | Pavlou |
+| 11 | Chloe | Petrou |
+| 12 | Theodora | Antoniou |
+| 13 | Sophia | Vasiliou |
+| 14 | Xanthe | Charalambous |
+| 15 | Iris | Kyriakou |
+| 16 | Lydia | Panagiotou |
+| 17 | Nefeli | Loizou |
+| 18 | Penelope | Markou |
+| 19 | Danae | Lambrou |
+| 20 | Ariadne | Iakovou |
+
+## Male
+
 | d20 | First | Family |
 | --- | --- | --- |
 | 1 | Alexios | Andreou |
-| 2 | Andreas | Angelopoulos |
-| 3 | Damon | Christou |
-| 4 | Demetrios | Dimitriou |
-| 5 | Dion | Georgiou |
-| 6 | Kallias | Ioannou |
-| 7 | Leandros | Karras |
-| 8 | Nikias | Konstantinou |
-| 9 | Philon | Kostopoulos |
-| 10 | Theron | Laskaris |
-| 11 | Agathe | Makris |
-| 12 | Daphne | Nikolaidis |
-| 13 | Eirene | Pappas |
-| 14 | Helena | Petrakis |
-| 15 | Ione | Raptis |
-| 16 | Kalliope | Samaras |
-| 17 | Melina | Theodorou |
-| 18 | Phaedra | Vlachos |
-| 19 | Thalia | Zervas |
-| 20 | Zoe | Stavrou |
+| 2 | Andreas | Christou |
+| 3 | Damon | Dimitriou |
+| 4 | Demetrios | Georgiou |
+| 5 | Dion | Ioannou |
+| 6 | Kallias | Konstantinou |
+| 7 | Leandros | Theodorou |
+| 8 | Nikias | Stavrou |
+| 9 | Philon | Nikolaou |
+| 10 | Theron | Pavlou |
+| 11 | Kosmas | Petrou |
+| 12 | Lysandros | Antoniou |
+| 13 | Markos | Vasiliou |
+| 14 | Nikandros | Charalambous |
+| 15 | Orestes | Kyriakou |
+| 16 | Petros | Panagiotou |
+| 17 | Stavros | Loizou |
+| 18 | Timon | Markou |
+| 19 | Yiannis | Lambrou |
+| 20 | Konstantinos | Iakovou |

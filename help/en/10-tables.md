@@ -64,17 +64,25 @@ Rolling each column puts the results together with spaces. A result that starts 
 
 Some tables come with the app, listed under **Built in** in the Roll Tables list:
 
-- **Names**, which picks one of the name tables below at random.
-- Names by culture: **English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese names**, each with a first and a family name.
+- **Names**, which picks one of the name tables below at random, and **Female names** and **Male names**, which do the same for women's or men's names.
+- Names by culture: **English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese names**. Each has a **Female** and a **Male** table, with a first and a family name, so `[[Celtic names#Female]]` rolls a woman's name. Norse family names are built from the father's name and -sdottir or -sson, like Sigrid Haraldsdottir.
+- **Fantasy names**, made-up names built from a start and an ending, like Aelwen or Kaeldor.
 - **Place names** (like Ashford or Ravenmoor), **Inn and shop names** (The Crooked Lantern) and **Group names**, for factions, crews and ships (The Silent Hand).
+- Story prompts, a few words to spark an idea, never the whole story: **Wants** (what someone is after), **Trouble** (what's going wrong), **Twists**, **What's here** (details for a room or site) and **Feel of a place**.
+- **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each.
 
-Roll them like any other table, link to them from your own (`[[Norse names]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled.
+Roll them like any other table, link to them from your own (`[[Norse names]]`, `[[Norse names#Male]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled.
 
 ## Fields that roll on a table
 
-A text or long text field can roll on a table to fill itself in. In **Edit > Types...**, type the table's name in the field's **Rolls on** box. The field then has a die button with the table's name, in the form and in the reading view.
+A text or long text field can roll on a table to fill itself in. In **Edit > Types...**, type the table's name in the field's **Rolls on** box. The field then has a die button with the table's name, in the form and in the reading view. On a long text field the button reads **Inspire me**. For a button for each of several tables, put commas between them: `Female names, Male names`.
 
 - An empty field is filled with the result.
 - A field with something in it asks first: **Replace** what's there, or **Cancel**. A long text field can also **Add on a New Line**.
 
-The result shows in the dice roller too, so you can copy it or roll again. In new campaigns, an NPC's Name rolls on **Names**, a location's on **Place names**, and a faction's on **Group names**.
+The result shows in the dice roller too, so you can copy it or roll again. In new campaigns:
+
+- An NPC's Name has a button for **Female names** and one for **Male names**, and Wants rolls on **Wants**.
+- A location's Name rolls on **Place names**, First impression on **Feel of a place**, and Description on **What's here**.
+- A faction's Name rolls on **Group names**, and Goal on **Wants**.
+- A quest's Hook rolls on **Trouble**.

@@ -33,9 +33,11 @@ fields:
   - key: first_impression
     label: First impression
     kind: longtext
+    table: Feel of a place
   - key: description
     label: Description
     kind: longtext
+    table: What's here
   - key: history
     label: History
     kind: longtext
