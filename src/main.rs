@@ -383,6 +383,15 @@ enum Dialog {
         pasted: text_editor::Content,
         error: Option<String>,
     },
+    /// Asks before putting a roll into a field that has something in it already.
+    ReplaceField {
+        /// The field's index in the active tab's form.
+        index: usize,
+        label: String,
+        value: String,
+        /// Whether it is a long text field, which can take the roll on a new line.
+        long: bool,
+    },
     /// Makes a note named after a roll table's result, in a folder picked here.
     NoteFromRoll {
         name: String,
@@ -760,6 +769,11 @@ enum Message {
     Tables(tables::Message),
     /// The reading view's Roll button above the roll table at this place in the note.
     RollTable(usize),
+    /// The reading view's roll button of the field with this key, which rolls on its table.
+    RollIntoField(String),
+    /// Puts the roll waiting in the Replace dialog into its field: in place of what is
+    /// there, or on a new line after it (true).
+    FillField(bool),
     /// The reading view's toggle for rolling each column of the table at this place.
     TableEachColumn(usize, bool),
     /// Opens New Roll Table, in this folder if given.
@@ -1881,35 +1895,51 @@ impl Workspace {
     fn refresh_tables(&mut self) {
         if self.tables.open {
             let found = self.all_tables();
-            self.tables.set(found);
+            let from = self.root.join("Untitled.md");
+            // A note named like a built-in table is used in its place.
+            let built_in = tables::BUILT_IN
+                .into_iter()
+                .filter(|table| self.index.resolve(table.name, &from).is_none())
+                .collect();
+            self.tables.set(found, built_in);
         }
     }
 
     /// The table a link to `target` in the note at `from` names: `[[Note]]` is the
-    /// note's first table, `[[Note#Heading]]` the one under that heading.
+    /// note's first table, `[[Note#Heading]]` the one under that heading. A name no note
+    /// has can be a built-in table's.
     fn linked_table(&self, target: &str, from: &Path) -> Option<(String, tables::Table, bool)> {
         let (note, heading) = match target.split_once('#') {
             Some((note, heading)) => (note.trim(), Some(heading.trim())),
             None => (target.trim(), None),
         };
-        let path = if note.is_empty() {
-            from.to_path_buf()
-        } else {
-            self.index.resolve(note, from)?.to_path_buf()
+        let path = match note {
+            "" => Some(from.to_path_buf()),
+            note => self.index.resolve(note, from).map(Path::to_path_buf),
         };
-        let text = self.note_text(&path)?;
-        let table = tables::find(&text)
-            .into_iter()
-            .find(|table| match heading {
-                Some(heading) => table
-                    .heading
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(heading)),
-                None => true,
-            })?;
-        let name = table.name(&self.tree_name(&path, false));
-        let each_column = self.rolls_each_column(&path, table.heading.as_deref());
-        Some((name, table, each_column))
+        let found = path.and_then(|path| {
+            let text = self.note_text(&path)?;
+            let table = tables::find(&text)
+                .into_iter()
+                .find(|table| match heading {
+                    Some(heading) => table
+                        .heading
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(heading)),
+                    None => true,
+                })?;
+            let name = table.name(&self.tree_name(&path, false));
+            let each_column = self.rolls_each_column(&path, table.heading.as_deref());
+            Some((name, table, each_column))
+        });
+        found.or_else(|| {
+            let built_in = tables::built_in(note).filter(|_| heading.is_none())?;
+            Some((
+                built_in.name.to_string(),
+                built_in.table()?,
+                built_in.each_column,
+            ))
+        })
     }
 
     /// The table typed into the dice roller's box: by its note's name (or `Note#Heading`),
@@ -1921,10 +1951,12 @@ impl Workspace {
         }
         let from = self.root.join("Untitled.md");
         let note = typed.split('#').next().unwrap_or(typed);
-        if let Some(path) = self.index.resolve(note, &from)
-            && let Some((name, table, each_column)) = self.linked_table(typed, &from)
-        {
-            return Some((path.to_path_buf(), name, table, each_column));
+        if let Some((name, table, each_column)) = self.linked_table(typed, &from) {
+            let path = self
+                .index
+                .resolve(note, &from)
+                .map_or(from, Path::to_path_buf);
+            return Some((path, name, table, each_column));
         }
         self.all_tables()
             .into_iter()
@@ -1952,14 +1984,75 @@ impl Workspace {
     }
 
     /// Rolls `table`, from the note at `path`, and shows the result in the dice roller.
-    fn roll_found(&mut self, path: &Path, name: &str, table: &tables::Table, each_column: bool) {
+    fn roll_found(
+        &mut self,
+        path: &Path,
+        name: &str,
+        table: &tables::Table,
+        each_column: bool,
+    ) -> String {
         let mut rng = self.dice.rng().clone();
         let rolled = tables::roll(name, table, each_column, &mut rng, &mut |target| {
             self.linked_table(target, path)
         });
         *self.dice.rng() = rng;
+        let text = rolled.text();
         self.dice.open = true;
         self.dice.add_table(rolled);
+        text
+    }
+
+    /// Rolls on the table field `index` of the active tab's form names, and puts the
+    /// result in the field: straight away if it is empty, or after asking if it isn't.
+    fn roll_into_field(&mut self, index: usize) {
+        let Some(tab) = self.active_tab().filter(|tab| !tab.source) else {
+            return;
+        };
+        let Some(form) = &tab.form else {
+            return;
+        };
+        let (Some(table_name), Some((current, long)), Some(label)) =
+            (form.table(index), form.text_value(index), form.label(index))
+        else {
+            return;
+        };
+        let path = tab.note_path();
+        let Some((name, table, each_column)) = self.linked_table(&table_name, &path) else {
+            self.status = format!(
+                "There is no roll table called {table_name}. Make one, or change the field's Rolls on in Edit > Types"
+            );
+            return;
+        };
+        let value = self.roll_found(&path, &name, &table, each_column);
+        if current.trim().is_empty() {
+            self.fill_field(index, &value, false);
+        } else {
+            self.dialog = Some(Dialog::ReplaceField {
+                index,
+                label,
+                value,
+                long,
+            });
+        }
+    }
+
+    /// Puts `value` in field `index` of the active tab's form, in place of what is there
+    /// or on a new line after it.
+    fn fill_field(&mut self, index: usize, value: &str, add_line: bool) {
+        let root = self.root.clone();
+        let links = self.index.clone();
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let Some(form) = &mut tab.form else {
+            return;
+        };
+        if form.set_text_value(index, value, add_line) {
+            tab.modified = true;
+            if tab.preview.is_some() {
+                tab.preview = Some(tab.make_preview(&root, &links));
+            }
+        }
     }
 
     /// Sets whether the table that starts at `start` in the note at `path` rolls each
@@ -2008,6 +2101,49 @@ impl Workspace {
             .iter()
             .map(|folder| self.folder_choice(folder))
             .collect()
+    }
+
+    /// Copies the built-in table `name` into the campaign's tables folder and opens it.
+    /// The copy is used in its place from then on.
+    fn copy_built_in(&mut self, name: &str) {
+        let Some(table) = tables::built_in(name) else {
+            return;
+        };
+        let folder = self.root.join(TABLES_FOLDER);
+        let mut path = folder.join(campaign::note_file_name(table.name));
+        path.as_mut_os_string().push(".md");
+        let made = std::fs::create_dir_all(&folder).and_then(|()| {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            std::io::Write::write_all(&mut file, table.text.as_bytes())
+        });
+        match made {
+            Ok(()) => {
+                self.status = format!(
+                    "Copied {} to {}: change it there, and it is used in place of the built-in one",
+                    table.name,
+                    self.relative(&path)
+                );
+                // It rolls each column like the built-in one did.
+                if table.each_column {
+                    let key = tables::key(&self.root, &path, None);
+                    self.table_settings.set(&key, true);
+                    let _ = self.table_settings.save(&self.root);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                self.status = format!("{} is already in {}", table.name, self.relative(&folder));
+            }
+            Err(error) => {
+                self.status = format!("Could not copy {}: {error}", table.name);
+                return;
+            }
+        }
+        self.rescan();
+        self.expanded.insert(folder);
+        self.open_file(path);
     }
 
     /// Makes the note New Roll Table asks for, and opens it to fill in.
@@ -3107,6 +3243,47 @@ impl Workspace {
         if let Dialog::Fix(path) = dialog {
             return self.fix_dialog(c, path);
         }
+        if let Dialog::ReplaceField {
+            label, value, long, ..
+        } = dialog
+        {
+            let mut buttons = row![
+                space::horizontal(),
+                button("Cancel")
+                    .style(style::secondary(c))
+                    .on_press(Message::CloseDialog),
+            ]
+            .spacing(8);
+            if *long {
+                buttons = buttons.push(
+                    button("Add on a New Line")
+                        .style(style::secondary(c))
+                        .on_press(Message::FillField(true)),
+                );
+            }
+            buttons = buttons.push(
+                button("Replace")
+                    .style(style::primary(c))
+                    .on_press(Message::FillField(false)),
+            );
+            return container(
+                column![
+                    text(format!("Replace {label}?")).size(22).color(c.text),
+                    text(format!(
+                        "{label} has something in it already. The roll gave:"
+                    ))
+                    .size(13)
+                    .color(c.text_muted),
+                    text(value.clone()).size(16).color(c.text),
+                    buttons,
+                ]
+                .spacing(14),
+            )
+            .width(440)
+            .padding(24)
+            .style(style::dialog(c))
+            .into();
+        }
 
         let label = |label| text(label).size(13).color(c.text_muted);
 
@@ -3455,7 +3632,10 @@ impl Workspace {
                     "Create",
                     Message::CreateNoteFromRoll,
                 ),
-                Dialog::Types(_) | Dialog::Problems | Dialog::Fix(_) => {
+                Dialog::Types(_)
+                | Dialog::Problems
+                | Dialog::Fix(_)
+                | Dialog::ReplaceField { .. } => {
                     unreachable!("these dialogs have their own view")
                 }
             };
@@ -4141,6 +4321,17 @@ impl Workspace {
                     self.set_each_column(&path, start, on);
                     Task::none()
                 }
+                tables::Message::RollBuiltIn(name) => {
+                    let from = self.root.join("Untitled.md");
+                    if let Some((name, table, each_column)) = self.linked_table(&name, &from) {
+                        self.roll_found(&from, &name, &table, each_column);
+                    }
+                    Task::none()
+                }
+                tables::Message::CopyBuiltIn(name) => {
+                    self.copy_built_in(&name);
+                    Task::none()
+                }
                 tables::Message::New => self.update(Message::ShowNewTable(None)),
                 tables::Message::Close => {
                     self.tables.open = false;
@@ -4622,6 +4813,27 @@ impl Workspace {
             Message::FieldTabbed(position) => {
                 if let Some(form) = self.active_tab_mut().and_then(|tab| tab.form.as_mut()) {
                     form.tabbed_to(position);
+                }
+                Task::none()
+            }
+            Message::Form(form::Message::RollTable(index)) => {
+                self.roll_into_field(index);
+                Task::none()
+            }
+            Message::RollIntoField(key) => {
+                let index = self
+                    .active_tab()
+                    .and_then(|tab| tab.form.as_ref())
+                    .and_then(|form| form.short_field(&key))
+                    .map(|(index, _, _)| index);
+                if let Some(index) = index {
+                    self.roll_into_field(index);
+                }
+                Task::none()
+            }
+            Message::FillField(add_line) => {
+                if let Some(Dialog::ReplaceField { index, value, .. }) = self.dialog.take() {
+                    self.fill_field(index, &value, add_line);
                 }
                 Task::none()
             }
@@ -6911,6 +7123,7 @@ impl Workspace {
                 on_roll: Message::RollField,
                 roll_icon: dice.field.clone(),
                 on_roll_table: Message::RollTable,
+                on_roll_into: Message::RollIntoField,
                 on_each_column: Message::TableEachColumn,
                 each_column: self.each_column_tables(&tab.note_path(), preview.source()),
                 on_add: Message::AddText,

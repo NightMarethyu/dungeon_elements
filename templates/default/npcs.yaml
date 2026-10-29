@@ -3,6 +3,7 @@ label: NPC
 fields:
   - key: name
     label: Name
+    table: Names
   - key: role
     label: Role
   - key: status

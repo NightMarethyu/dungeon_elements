@@ -37,6 +37,8 @@ pub enum Message {
     TagFolder(usize, String),
     /// Whether a date field picks its date from a calendar.
     FieldCalendar(usize, bool),
+    /// The roll table a text field rolls on, as typed.
+    FieldTable(usize, String),
     MoveUp(usize),
     MoveDown(usize),
     RemoveField(usize),
@@ -151,6 +153,8 @@ struct FieldDraft {
     folder: Option<String>,
     /// Whether a date field picks its date from a calendar.
     calendar: bool,
+    /// The roll table a text field rolls on, as typed.
+    table: String,
 }
 
 impl FieldDraft {
@@ -163,6 +167,7 @@ impl FieldDraft {
             options: field.options.join(", "),
             folder: field.folder.clone(),
             calendar: field.calendar != Some(false),
+            table: field.table.clone().unwrap_or_default(),
         }
     }
 
@@ -193,6 +198,8 @@ impl FieldDraft {
                 .filter(|_| self.kind.links() || self.kind == Kind::Tags)
                 .filter(|folder| !folder.trim().is_empty()),
             calendar: (self.kind == Kind::Date && !self.calendar).then_some(false),
+            table: Some(self.table.trim().to_string())
+                .filter(|table| !table.is_empty() && self.kind.rolls_tables()),
         }
     }
 }
@@ -446,6 +453,11 @@ impl Editor {
             Message::FieldCalendar(index, value) => {
                 if let Some(field) = fields.get_mut(index) {
                     field.calendar = value;
+                }
+            }
+            Message::FieldTable(index, value) => {
+                if let Some(field) = fields.get_mut(index) {
+                    field.table = value;
                 }
             }
             Message::MoveUp(index) => {
@@ -922,6 +934,21 @@ impl Editor {
                         .color(c.text_muted),
                     ]
                     .spacing(12)
+                    .align_y(Center),
+                );
+            }
+            if field.kind.rolls_tables() {
+                block = block.push(
+                    row![
+                        text("Rolls on").size(13).color(c.text_muted),
+                        input("A roll table, like Names", &field.table)
+                            .on_input(move |value| Message::FieldTable(index, value))
+                            .width(220),
+                        text("Gives the field a die button that rolls on the table and fills the field in.")
+                            .size(12)
+                            .color(c.text_muted),
+                    ]
+                    .spacing(8)
                     .align_y(Center),
                 );
             }
