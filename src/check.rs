@@ -1,8 +1,9 @@
 //! Checks a campaign's files for formatting the app can't read as intended.
 //!
 //! Notes are plain Markdown, so they can be edited in Obsidian or any text editor.
-//! When a campaign opens (and when it is refreshed), every note and `_type.yaml`
-//! is checked, and anything that would show up wrong in a form is listed as a problem.
+//! When a campaign opens (and when it is refreshed), every note and `_type.yaml`, and
+//! `_walkthrough.yaml`, is checked, and anything that would show up wrong in a form is
+//! listed as a problem.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use crate::form::{self, REMOVED_KEY};
 use crate::links::{self, Index};
 use crate::note;
 use crate::types::{self, ContentType, Kind};
+use crate::walkthrough;
 
 /// Something wrong with one file.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,7 +49,7 @@ pub enum Issue {
 /// notes that were never made.
 pub type Gone = HashSet<String>;
 
-/// Checks every note and type file in the campaign.
+/// Checks every note and type file in the campaign, and its walkthrough questions.
 pub fn campaign(
     root: &Path,
     tree: &[Entry],
@@ -66,6 +68,18 @@ pub fn campaign(
         problems.push(Problem {
             path: folder.join(types::TYPE_FILE),
             message: error.clone(),
+            issue: Issue::Other,
+        });
+    }
+
+    // Questions the walkthrough can't read stop it from opening.
+    let questions = root.join(walkthrough::FILE);
+    if let Ok(yaml) = std::fs::read_to_string(&questions)
+        && let Err(error) = walkthrough::parse(&yaml)
+    {
+        problems.push(Problem {
+            path: questions,
+            message: error,
             issue: Issue::Other,
         });
     }
@@ -482,6 +496,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(root.join("items").join("Cup.md"), "---\nvalue: 2\n---\n").unwrap();
+        std::fs::write(root.join(walkthrough::FILE), "chapters: [").unwrap();
 
         let tree = campaign::scan(&root);
         let mut types = HashMap::new();
@@ -500,6 +515,7 @@ mod tests {
             paths,
             [
                 root.join("broken").join(types::TYPE_FILE),
+                root.join(walkthrough::FILE),
                 root.join("items").join("Ring.md")
             ]
         );

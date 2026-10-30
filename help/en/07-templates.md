@@ -8,11 +8,13 @@ The folders and fields you build for one game can start your next campaign, and 
 2. Choose **Export Campaign Structure...** at the bottom.
 3. Save it. The save window starts in your templates folder: save it there to start new campaigns from it, or anywhere else to share it.
 
-A template is an ordinary **.zip** file holding the campaign's folders and the **_type.yaml** file of each folder that has fields, subfolders and all. It never holds your notes, so it's small and has no spoilers in it.
+A template is an ordinary **.zip** file holding the campaign's folders and the **_type.yaml** file of each folder that has fields, subfolders and all. If the campaign has walkthrough questions of its own, in **_walkthrough.yaml**, they go in the template too. It never holds your notes, so it's small and has no spoilers in it.
 
 ## Start a campaign from a template
 
-In **New Campaign...**, pick the template under **Start from**. The line under it lists the folders it makes. Every template in your templates folder is listed, by its file name. **Show my templates folder** opens that folder, to rename or delete templates.
+In **New Campaign...**, pick the template under **Start from**. The line under it lists the folders it makes, and says when the template has walkthrough questions of its own. Every template in your templates folder is listed, by its file name. **Show my templates folder** opens that folder, to rename or delete templates.
+
+**Start the walkthrough** is shown when the walkthrough has questions for the template's folders: the template's own questions, or the built-in ones, which are made for the starter folders. A campaign made from the starter folders always uses the built-in questions, so it gets the better questions each new version of the app brings.
 
 ## Share a single type
 
@@ -30,7 +32,7 @@ Save your changes in **Edit > Types...** before exporting: the export buttons wa
 
 Choose **Import...** in **Edit > Types...** or in **New Campaign...**, and pick the file.
 
-- A **.zip** becomes a template for new campaigns. A folder zipped with your file manager works too, even with notes in it: only its folders and **_type.yaml** files are used.
+- A **.zip** becomes a template for new campaigns. A folder zipped with your file manager works too, even with notes in it: only its folders, **_type.yaml** files and **_walkthrough.yaml** are used.
 - A **.yaml** type becomes a saved type.
 
 Each is checked first, so a broken file is refused with a message saying what's wrong with it.
