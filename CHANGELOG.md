@@ -4,6 +4,20 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Campaign walkthrough
+
+- A walkthrough that builds your world with you, one question at a time, in seven chapters: the campaign, the world, power, the extraordinary, where it starts, the heroes and the first session. Each answer goes into a note, and the notes it needs are made for you and linked: name the factions and each gets a note, then questions about each one; name a faction's leader and an NPC is made.
+- **Start the walkthrough** in New Campaign opens it once the campaign is made. **File > Campaign Walkthrough...** and **Build your world with the walkthrough**, shown when no note is open, open it later, at the question you were on.
+- **Next**, **Back**, **Skip** and **Skip Chapter** move through it, and **Enter** (or **Ctrl+Enter** in a long answer) goes to the next question. The chapters are listed on the side with how many questions are answered, and each ends with a summary of the notes it made.
+- **Inspire me** rolls on a roll table for an idea: names from the name generators, and wants, trouble and twists from the story prompts.
+- Questions that ask for a list of names, like the regions or the factions, have a box for each name and **Add Another**. Pasting a list (one name a line, as name generator websites give them, or with commas between) fills a box for each, with capital letters added.
+- Answers that link to other notes show the notes you've made to pick from, and a new name can be made there and then. Who rules the starting town can be a faction or an NPC, and who can use magic any people, faction or NPC.
+- Notes the walkthrough makes show in the file tree, with their folders opened.
+- **Add Characters from Files...** on the heroes question (or dragging files onto the window) copies characters your players wrote up in Markdown into the players folder and adds them to the heroes.
+- Answers are ordinary fields, so changing them in a note changes them in the walkthrough. A note open with unsaved changes gets the answer in its tab.
+- Questions about folders or fields a campaign doesn't have are left out.
+- New guide in **Help > How-To Guides**: The campaign walkthrough.
+
 ### Story prompts
 
 - Built-in story prompts, a few words each to spark an idea: **Wants**, **Trouble**, **Twists**, **What's here** and **Feel of a place**, plus **Action and Theme**, two words to read into, like *Betray* and *Harvest*.

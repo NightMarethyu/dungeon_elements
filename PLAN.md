@@ -144,6 +144,10 @@ The items in Player Management are all things that will just be built as templat
   - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators): a question names its table with `table:`, like a field does, falling back to its field's own table, then Action and Theme
   - A walkthrough editor (**Edit > Walkthrough Questions...**), so no one has to write YAML: chapters and question cards with pick lists for the note, field and table, the notes it makes, Start from the default questions, and Try it
   - Built in four steps: the question format, progress file and writing answers into notes; the walkthrough tab with Inspire me, menu items and a help guide; templates' own questions; the walkthrough editor
+- [ ] More generators, so every walkthrough question has a table of its own to roll on (in theory, a GM could fill in the whole walkthrough from the tables alone; no "fill it all in" button is planned)
+  - Religions and faiths, and deities (names and what they hold sway over)
+  - Rumors, plot hooks and quest names, for "What rumors are going around?" and quest notes
+  - Peoples and races, historic events, magic and strange technology (name, source, cost), and anything else the walkthrough asks that falls back to Action and Theme today
 
 ### Phase 3: climax
 

@@ -10,9 +10,6 @@
 //! walkthrough made, which questions were skipped, and where the GM was. Whether a
 //! question is answered is read from its note, so the notes stay the truth.
 
-// The walkthrough tab, which uses all of this, comes next.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,6 +65,15 @@ pub struct NoteSpec {
     pub add_to: Option<AddTo>,
 }
 
+impl NoteSpec {
+    /// The set name the note gets, with the campaign's title filled in. A list of notes
+    /// has none.
+    pub fn set_name(&self, campaign: &Campaign) -> Option<String> {
+        let name = self.name.as_ref().filter(|_| !self.many)?;
+        Some(name.replace("{title}", &campaign.title()))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AddTo {
@@ -103,9 +109,19 @@ pub struct Question {
     /// (or, for a `many` note, the names of the notes to make).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
-    /// The roll tables Inspire me rolls on, with commas between them, like a field's.
+    /// The roll tables Inspire me rolls on, with commas between them, like a field's. An
+    /// empty one leaves Inspire me out, for answers no table could give, like who plays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<String>,
+    /// For an answer that links to notes: the folders whose notes are offered to pick
+    /// from, and where a new name can be made. With none, the field's own link folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pick: Vec<String>,
+    /// For a question that asks for a list of names: the label of a button that adds
+    /// notes from Markdown files, like characters the players wrote up. Files dropped on
+    /// the window are added too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<String>,
 }
 
 impl Question {
@@ -120,6 +136,12 @@ impl Question {
     /// The question about the note called `name`, with `{name}` filled in.
     pub fn ask_about(&self, name: Option<&str>) -> String {
         match name {
+            // "What do the {name} want?" about The Pale Court shouldn't say "the The".
+            Some(name) if name.to_lowercase().starts_with("the ") => self
+                .ask
+                .replace("the {name}", name)
+                .replace("The {name}", name)
+                .replace("{name}", name),
             Some(name) => self.ask.replace("{name}", name),
             None => self.ask.replace("{name}", "it"),
         }
@@ -221,6 +243,14 @@ impl Questions {
         }
     }
 
+    /// Whether any of the questions would be asked in a campaign with these typed
+    /// folders (inside the campaign, like `locations/settlements`).
+    pub fn asks_about(&self, typed: &[&str]) -> bool {
+        self.notes
+            .values()
+            .any(|spec| typed.contains(&spec.folder.trim_matches('/')))
+    }
+
     /// The questions in order, with the chapter each is in.
     pub fn all(&self) -> impl Iterator<Item = (&Chapter, &Question)> {
         self.chapters.iter().flat_map(|chapter| {
@@ -300,7 +330,7 @@ impl Campaign<'_> {
         self.root.join(spec.folder.trim_matches('/'))
     }
 
-    fn type_of(&self, spec: &NoteSpec) -> Option<&ContentType> {
+    pub fn type_of(&self, spec: &NoteSpec) -> Option<&ContentType> {
         self.types.get(&self.folder(spec))?.as_ref().ok()
     }
 
@@ -452,10 +482,8 @@ impl Progress {
             }
         }
         if found.is_empty()
-            && !spec.many
-            && let Some(set) = &spec.name
+            && let Some(name) = spec.set_name(campaign)
         {
-            let name = set.replace("{title}", &campaign.title());
             found.extend(in_folder(&note_file(&name)));
         }
         found
@@ -518,12 +546,12 @@ impl Progress {
         let Some(field) = &question.field else {
             let mut names: Vec<String> = notes.iter().map(|path| name_of(path)).collect();
             if names.is_empty()
-                && let Some(set) = questions
+                && let Some(name) = questions
                     .notes
                     .get(&question.note)
-                    .and_then(|spec| spec.name.as_ref())
+                    .and_then(|spec| spec.set_name(campaign))
             {
-                names.push(set.replace("{title}", &campaign.title()));
+                names.push(name);
             }
             return Ok(Current::Names(names));
         };
@@ -612,9 +640,30 @@ impl Progress {
             }
             (Some(key), Answer::Value(value)) => {
                 let notes = self.subjects(campaign, questions, question);
-                let path = notes
-                    .get(which)
-                    .ok_or_else(|| format!("There is no {} to write this into yet", ty.label()))?;
+                let path = match notes.get(which) {
+                    Some(path) => path.clone(),
+                    // A note with a set name is made by its first answer.
+                    None => match spec.set_name(campaign) {
+                        Some(name) if which == 0 => {
+                            let path =
+                                self.make(campaign, questions, spec, &ty, &name, &mut written)?;
+                            self.record(
+                                campaign,
+                                questions,
+                                &question.note,
+                                std::slice::from_ref(&path),
+                            );
+                            path
+                        }
+                        _ => {
+                            return Err(format!(
+                                "There is no {} to write this into yet",
+                                ty.label()
+                            ));
+                        }
+                    },
+                };
+                let path = &path;
                 let mut form = read_form(campaign, &ty, path)?;
                 if !form.set_value(key, value.as_ref()) {
                     return Err(format!("{} has no field {key}", ty.label()));
@@ -646,16 +695,30 @@ impl Progress {
         campaign::validate_name(name)?;
         let folder = campaign.folder(spec);
         let path = folder.join(note_file(name));
-        if path.is_file() {
-            // A note of that name is used rather than making a second.
-            return Ok(path);
-        }
-        let path = crate::create_linked_note(campaign.root, name, Some(&folder), Some(ty))?;
-        written.made.push(path.clone());
+        // A note of that name, like a player's character the GM imported, is used rather
+        // than making a second, and only its empty fields get set values.
+        let made = !path.is_file();
+        let path = if made {
+            let path = crate::create_linked_note(campaign.root, name, Some(&folder), Some(ty))?;
+            written.made.push(path.clone());
+            path
+        } else {
+            path
+        };
 
         let mut form = read_form(campaign, ty, &path)?;
+        let mut changed = false;
         for (key, value) in &spec.set {
             let key = note::value_to_text(key);
+            if !made
+                && form
+                    .value(&key)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|value| !crate::form::is_empty_value(&value))
+            {
+                continue;
+            }
             let value = match value {
                 Value::String(other) if questions.notes.contains_key(other) => {
                     let linked = self.notes(campaign, questions, other);
@@ -669,9 +732,14 @@ impl Progress {
                 }
                 value => value.clone(),
             };
-            form.set_value(&key, Some(&value));
+            changed |= form.set_value(&key, Some(&value));
         }
-        write_form(&form, &path)?;
+        if made || changed {
+            write_form(&form, &path)?;
+            if !made {
+                written.changed.push(path.clone());
+            }
+        }
 
         if let Some(add_to) = &spec.add_to
             && let Some(target) = self.notes(campaign, questions, &add_to.note).first()
@@ -748,7 +816,7 @@ fn link_value(kind: Kind, paths: &[PathBuf]) -> Option<Value> {
 
 /// Makes a note for each `[[link]]` in `value`, the new value of `field` in the note at
 /// `from`, that names no note yet, in the folder the field links to.
-fn make_linked(
+pub fn make_linked(
     campaign: &Campaign,
     field: &Field,
     value: Option<&Value>,
@@ -804,7 +872,7 @@ fn stem(path: &Path) -> String {
 }
 
 /// The name of the note at `path`: its name field, or else its file name.
-fn name_of(path: &Path) -> String {
+pub fn name_of(path: &Path) -> String {
     fs::read_to_string(path)
         .ok()
         .and_then(|text| note::parse(&text).ok())
@@ -815,6 +883,56 @@ fn name_of(path: &Path) -> String {
 }
 
 /// The note at `path` read as a form of type `ty`.
+/// Copies the Markdown file at `source`, like a character a player wrote up, into the
+/// folder of the walkthrough's note `spec` as a note of its type, and returns the new
+/// note's name. The file is left where it was.
+pub fn import_note(
+    campaign: &Campaign,
+    spec: &NoteSpec,
+    ty: &ContentType,
+    source: &Path,
+) -> Result<String, String> {
+    let file = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !campaign::is_markdown(source) {
+        return Err(format!("{file} isn't a Markdown (.md) file"));
+    }
+    let text =
+        fs::read_to_string(source).map_err(|error| format!("{file} can't be read: {error}"))?;
+    let note = note::parse(&text).map_err(|error| format!("{file} can't be read: {error}"))?;
+    let name = note
+        .front
+        .get("name")
+        .map(note::value_to_text)
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| stem(source));
+    campaign::validate_name(&name)?;
+    let folder = campaign.folder(spec);
+    let target = folder.join(note_file(&name));
+    if target.exists() {
+        return Err(format!(
+            "There is already a {} called {name} in {}",
+            ty.label(),
+            campaign.relative(&folder)
+        ));
+    }
+    let mut form = Form::from_note(ty.clone(), note);
+    if form
+        .value("name")
+        .ok()
+        .flatten()
+        .is_none_or(|value| crate::form::is_empty_value(&value))
+    {
+        form.set_value("name", Some(&Value::String(name.clone())));
+    }
+    fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    write_form(&form, &target)?;
+    Ok(name)
+}
+
 fn read_form(campaign: &Campaign, ty: &ContentType, path: &Path) -> Result<Form, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("{} can't be read: {error}", campaign.relative(path)))?;
@@ -965,6 +1083,17 @@ mod tests {
                 assert!(target.fields.iter().any(|field| field.key == add_to.field));
             }
         }
+
+        // Every folder offered to pick from is a starter folder.
+        for (_, question) in questions.all() {
+            for folder in &question.pick {
+                assert!(
+                    test.root.join(folder).is_dir(),
+                    "{} picks {folder}",
+                    question.key()
+                );
+            }
+        }
     }
 
     #[test]
@@ -1102,6 +1231,10 @@ mod tests {
             goal.ask_about(Some("Iron Guild")),
             "What do the Iron Guild want?"
         );
+        assert_eq!(
+            goal.ask_about(Some("The Pale Court")),
+            "What do The Pale Court want?"
+        );
 
         progress
             .answer(&campaign, &questions, goal, 1, text("The crown"))
@@ -1209,6 +1342,90 @@ mod tests {
         assert!(text.contains("- '[[Kestrel]]'\n- '[[Odo]]'"), "{text}");
         // Heroes are from the starting town.
         assert!(test.read("players/Odo.md").contains("home: '[[Brindle]]'"));
+    }
+
+    #[test]
+    fn a_note_with_a_set_name_is_made_by_its_first_answer() {
+        let test = Test::new("set_name");
+        let index = test.index();
+        let campaign = Campaign {
+            root: &test.root,
+            types: &test.types,
+            index: &index,
+        };
+        let questions = Questions::built_in();
+        let mut progress = Progress::default();
+        let opening = question(&questions, "first_session.strong_start");
+        assert_eq!(
+            progress.current(&campaign, &questions, opening, 0),
+            Ok(Current::NoNote)
+        );
+
+        let written = progress
+            .answer(&campaign, &questions, opening, 0, text("An ambush"))
+            .unwrap();
+        assert_eq!(written.made, [test.root.join("sessions/Session 1.md")]);
+        let text = test.read("sessions/Session 1.md");
+        assert!(text.contains("status: Planned"), "{text}");
+        assert!(text.contains("An ambush"), "{text}");
+        assert!(progress.answered(&campaign, &questions, opening));
+    }
+
+    #[test]
+    fn a_character_file_is_imported_and_joins_the_heroes() {
+        let test = Test::new("import");
+        let index = test.index();
+        let campaign = Campaign {
+            root: &test.root,
+            types: &test.types,
+            index: &index,
+        };
+        let questions = Questions::built_in();
+        let mut progress = Progress::default();
+        progress
+            .answer(
+                &campaign,
+                &questions,
+                question(&questions, "campaign"),
+                0,
+                names(&["Ashes"]),
+            )
+            .unwrap();
+
+        // A player's write-up, with a field of their own filled in and no type.
+        let file = test.root.parent().unwrap().join("Kestrel.md");
+        fs::write(
+            &file,
+            "---\nstatus: Retired\n---\n\nA ranger from the north.\n",
+        )
+        .unwrap();
+        let spec = &questions.notes["heroes"];
+        let ty = campaign.type_of(spec).unwrap().clone();
+        let name = import_note(&campaign, spec, &ty, &file).unwrap();
+        assert_eq!(name, "Kestrel");
+        let text = test.read("players/Kestrel.md");
+        assert!(text.contains("type: player"), "{text}");
+        assert!(text.contains("A ranger from the north."), "{text}");
+        assert!(file.is_file(), "the file is copied, not moved");
+        // A second copy isn't made over the first.
+        assert!(import_note(&campaign, spec, &ty, &file).is_err());
+
+        // Naming it in the walkthrough keeps it, sets only its empty fields, and adds it
+        // to the campaign's Players.
+        let written = progress
+            .answer(
+                &campaign,
+                &questions,
+                question(&questions, "heroes"),
+                0,
+                names(&["Kestrel"]),
+            )
+            .unwrap();
+        assert!(written.made.is_empty());
+        let text = test.read("players/Kestrel.md");
+        assert!(text.contains("status: Retired"), "{text}");
+        assert!(text.contains("A ranger from the north."), "{text}");
+        assert!(test.read("campaign/Ashes.md").contains("[[Kestrel]]"));
     }
 
     #[test]
@@ -1321,6 +1538,8 @@ mod tests {
         assert_eq!(ask.tables(Some(wants), &npc), ["Wants"]);
         assert_eq!(ask.tables(Some(notes), &npc), [FALLBACK_TABLE]);
         assert!(ask.tables(Some(status), &npc).is_empty());
+        ask.table = Some(String::new());
+        assert!(ask.tables(Some(notes), &npc).is_empty());
     }
 
     #[test]

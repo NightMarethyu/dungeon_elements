@@ -99,6 +99,13 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Walkthrough",
+        &[
+            ("Enter", "In a one-line answer, go to the next question"),
+            ("Ctrl+Enter", "In a long answer, go to the next question"),
+        ],
+    ),
+    (
         "Quests",
         &[
             (

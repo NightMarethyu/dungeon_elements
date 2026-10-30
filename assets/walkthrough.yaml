@@ -9,7 +9,10 @@
 # Each question fills the `field` (its key in the folder's type) of its `note`, or with no
 # field asks for the note's name, or the names of a `many` note. A field question on a
 # `many` note is asked once for each of them, with `{name}` filled in. `table` is what
-# Inspire me rolls on. Questions whose folder or field a campaign doesn't have are left out.
+# Inspire me rolls on, and an empty one (`table: ""`) leaves Inspire me out. An answer that
+# links to notes offers the notes of its field's folder to pick from, or of the `pick`
+# folders, where a new name can be made too. A list of names with `import` has a button
+# of that label that adds notes from Markdown files. Questions whose folder or field a campaign doesn't have are left out.
 notes:
   campaign:
     folder: campaign
@@ -98,16 +101,20 @@ chapters:
         field: first_impression
         table: Feel of a place
       - ask: Name its main regions or nations.
-        hint: One on each line. Each becomes a location that is part of the world.
+        hint: Each becomes a location that is part of the world. Click Add Another for more, or paste a list.
         note: regions
         table: Place names
-      - ask: Which peoples live there?
+      - ask: Which peoples or races live in this world?
+        hint: Humans, elves and dwarves, or peoples of your own. Each gets a note to describe them.
         note: peoples
       - ask: Where do the {name} live?
         note: peoples
         field: homelands
       - ask: What event in its history do people still talk about?
-        hint: A name for it, like "The Long Winter".
+        hint: >-
+          A war, a disaster, the founding of a nation, or the life of a prophet the calendar
+          counts from. In our world that might be World War II; in The Wheel of Time, the
+          Trolloc Wars. Give it the name people know it by, like "The Long Winter".
         note: event
       - ask: What came of it?
         note: event
@@ -158,8 +165,10 @@ chapters:
         field: cost
         table: Action and Theme
       - ask: Who can use it?
+        hint: Pick peoples, factions or people you've made, or type new names.
         note: magic
         field: users
+        pick: [lore/peoples, factions, npcs]
 
   - id: start
     title: Where it starts
@@ -169,10 +178,12 @@ chapters:
         note: start
         table: Place names
       - ask: Who rules {name}?
+        hint: Pick a faction you've made, or type a name to make a faction or an NPC.
         note: start
         field: ruled_by
         table: Group names
-      - ask: Name three people the heroes will meet there.
+        pick: [factions, npcs]
+      - ask: Name some people the heroes will meet there.
         note: locals
         table: Female names, Male names
       - ask: What does {name} want?
@@ -187,7 +198,7 @@ chapters:
         field: description
         table: What's here
       - ask: What rumors are going around?
-        hint: One on each line, as a short name like "The Missing Miller". Each becomes a quest.
+        hint: Short names, like "The Missing Miller". Each becomes a quest.
         note: rumors
       - ask: What is the hook of {name}?
         note: rumors
@@ -199,11 +210,14 @@ chapters:
     intro: The players' characters, and what ties them to the world.
     questions:
       - ask: Who are the players' characters?
+        hint: Type their names, or add characters your players wrote up in Markdown files.
         note: heroes
         table: Female names, Male names
+        import: Add Characters from Files...
       - ask: Who plays {name}?
         note: heroes
         field: player
+        table: ""
       - ask: Who does {name} know or care about?
         hint: Type names to link NPCs, or make new ones.
         note: heroes
@@ -230,3 +244,4 @@ chapters:
         note: first_session
         field: follow_ups
         table: Trouble
+        pick: [quests]
