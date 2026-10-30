@@ -1,8 +1,8 @@
 //! Campaign templates and saved types, kept in the user's config folder so every campaign
 //! can use them.
 //!
-//! A template is a campaign's structure: its folders and their `_type.yaml` files, with no
-//! notes. It is shared as an ordinary `.zip` file, so it can be opened, made or changed
+//! A template is a campaign's structure: its folders and their `_type.yaml` files, and its
+//! own walkthrough questions in `_walkthrough.yaml` if it has them, with no notes. It is shared as an ordinary `.zip` file, so it can be opened, made or changed
 //! with any zip tool. A saved type is one folder's type on its own, as a `<Name>.type.yaml`
 //! file.
 
@@ -14,6 +14,7 @@ use chrono::{Datelike, Timelike};
 
 use crate::campaign;
 use crate::types::{self, ContentType};
+use crate::walkthrough;
 
 /// What a saved type's file name ends with.
 pub const TYPE_EXTENSION: &str = ".type.yaml";
@@ -39,22 +40,27 @@ pub struct Structure {
     /// Each folder's path in the campaign, like `items/weapons` (empty for the campaign
     /// folder itself), parents first, with its `_type.yaml` if it has one.
     pub folders: Vec<(String, Option<String>)>,
+    /// The campaign's own walkthrough questions, from `_walkthrough.yaml` in the campaign
+    /// folder. Without them, the walkthrough asks the built-in questions.
+    pub walkthrough: Option<String>,
 }
 
 impl Structure {
     /// The starter folders of the default template, each with its type. They are plain
-    /// folders, so a campaign also works as an Obsidian vault.
+    /// folders, so a campaign also works as an Obsidian vault. They have no walkthrough
+    /// file: the built-in questions are made for them, and get better as the app does.
     pub fn starter() -> Self {
         Structure {
             folders: types::STARTER_TYPES
                 .iter()
                 .map(|(folder, yaml)| (folder.to_string(), Some(yaml.to_string())))
                 .collect(),
+            walkthrough: None,
         }
     }
 
-    /// Reads the folders and `_type.yaml` files of the campaign at `root`. Hidden folders
-    /// (like `.obsidian`) are left out, and so is every note.
+    /// Reads the folders, `_type.yaml` files and `_walkthrough.yaml` of the campaign at
+    /// `root`. Hidden folders (like `.obsidian`) are left out, and so is every note.
     pub fn read(root: &Path) -> Self {
         fn walk(root: &Path, folder: &Path, folders: &mut Vec<(String, Option<String>)>) {
             let Ok(entries) = fs::read_dir(folder) else {
@@ -83,7 +89,10 @@ impl Structure {
             folders.push((String::new(), Some(yaml)));
         }
         walk(root, root, &mut folders);
-        Structure { folders }
+        Structure {
+            folders,
+            walkthrough: fs::read_to_string(root.join(walkthrough::FILE)).ok(),
+        }
     }
 
     /// The folders in the campaign folder itself, like `items` and `npcs`.
@@ -103,8 +112,9 @@ impl Structure {
             .count()
     }
 
-    /// Makes the folders inside `root`, each with its `_type.yaml`. Folders that are
-    /// there already are kept, and so are their types.
+    /// Makes the folders inside `root`, each with its `_type.yaml`, and the walkthrough
+    /// file. Folders that are there already are kept, and so are their types and a
+    /// walkthrough file that is there.
     pub fn create_in(&self, root: &Path) -> Result<(), String> {
         for (folder, yaml) in &self.folders {
             let path = root.join(folder);
@@ -116,11 +126,17 @@ impl Structure {
                 fs::write(file, yaml).map_err(|error| error.to_string())?;
             }
         }
+        let file = root.join(walkthrough::FILE);
+        if let Some(yaml) = &self.walkthrough
+            && !file.exists()
+        {
+            fs::write(file, yaml).map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
-    /// Writes the structure as a zip file: a folder entry for each folder, and its
-    /// `_type.yaml` inside it.
+    /// Writes the structure as a zip file: a folder entry for each folder, its
+    /// `_type.yaml` inside it, and `_walkthrough.yaml` at the top.
     pub fn to_zip(&self) -> Result<Vec<u8>, String> {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let mut options = zip::write::SimpleFileOptions::default()
@@ -154,22 +170,30 @@ impl Structure {
                     .map_err(|error| error.to_string())?;
             }
         }
+        if let Some(yaml) = &self.walkthrough {
+            zip.start_file(walkthrough::FILE, options).map_err(error)?;
+            zip.write_all(yaml.as_bytes())
+                .map_err(|error| error.to_string())?;
+        }
 
         Ok(zip.finish().map_err(error)?.into_inner())
     }
 
     /// Reads a template from the bytes of a zip file.
     ///
-    /// Only folders and `_type.yaml` files are read; anything else, like notes, is left
-    /// out and counted. A zip of one folder, like Windows makes with "Send to > Compressed
-    /// folder", is read as that folder's contents, unless the folder has a type of its own.
-    /// Every type must be one the app can read.
+    /// Only folders, `_type.yaml` files and the top `_walkthrough.yaml` are read; anything
+    /// else, like notes, is left out and counted. A zip of one folder, like Windows makes
+    /// with "Send to > Compressed folder", is read as that folder's contents, unless the
+    /// folder has a type of its own. Every type, and the walkthrough questions, must be
+    /// ones the app can read.
     pub fn from_zip(bytes: &[u8]) -> Result<(Self, usize), String> {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
             .map_err(|error| format!("it isn't a zip file the app can read ({error})"))?;
 
         let mut folders: Vec<String> = Vec::new();
         let mut files: Vec<(String, String)> = Vec::new();
+        // The `_walkthrough.yaml` files, by the folder each is in; only the top one is used.
+        let mut walkthroughs: Vec<(String, String)> = Vec::new();
         let mut skipped = 0;
         for index in 0..zip.len() {
             let mut entry = zip.by_index(index).map_err(|error| error.to_string())?;
@@ -189,11 +213,12 @@ impl Structure {
                 continue;
             }
 
+            let name = parts.last().map(String::as_str);
             let depth = if entry.is_dir() {
                 parts.len()
-            } else if parts.last().is_some_and(|name| name == types::TYPE_FILE) {
+            } else if name == Some(types::TYPE_FILE) || name == Some(walkthrough::FILE) {
                 if entry.size() > MAX_TYPE_SIZE {
-                    return Err(format!("{} is too big for a type", parts.join("/")));
+                    return Err(format!("{} is too big", parts.join("/")));
                 }
                 let mut yaml = String::new();
                 entry
@@ -201,7 +226,12 @@ impl Structure {
                     .take(MAX_TYPE_SIZE)
                     .read_to_string(&mut yaml)
                     .map_err(|error| format!("{}: {error}", parts.join("/")))?;
-                files.push((parts[..parts.len() - 1].join("/"), yaml));
+                let folder = parts[..parts.len() - 1].join("/");
+                if name == Some(types::TYPE_FILE) {
+                    files.push((folder, yaml));
+                } else {
+                    walkthroughs.push((folder, yaml));
+                }
                 parts.len() - 1
             } else {
                 skipped += 1;
@@ -226,19 +256,33 @@ impl Structure {
             && files
                 .iter()
                 .all(|(folder, _)| !folder.is_empty() && folder != top)
+            && walkthroughs.iter().all(|(folder, _)| !folder.is_empty())
             && folders.len() > 1
         {
+            let top = top.clone();
             let prefix = format!("{top}/");
             folders = folders
                 .iter()
                 .filter_map(|folder| folder.strip_prefix(&prefix).map(String::from))
                 .collect();
-            for (folder, _) in &mut files {
-                *folder = folder.strip_prefix(&prefix).unwrap_or(folder).to_string();
+            for (folder, _) in files.iter_mut().chain(walkthroughs.iter_mut()) {
+                *folder = match folder.strip_prefix(&prefix) {
+                    Some(inside) => inside.to_string(),
+                    None if *folder == top => String::new(),
+                    None => folder.clone(),
+                };
             }
         }
 
-        let mut structure = Structure::default();
+        // A walkthrough file in a subfolder isn't one the app reads, so it's left out.
+        let (top, others): (Vec<_>, Vec<_>) = walkthroughs
+            .into_iter()
+            .partition(|(folder, _)| folder.is_empty());
+        skipped += others.len();
+        let mut structure = Structure {
+            walkthrough: top.into_iter().next().map(|(_, yaml)| yaml),
+            ..Structure::default()
+        };
         if let Some((_, yaml)) = files.iter().find(|(folder, _)| folder.is_empty()) {
             structure.folders.push((String::new(), Some(yaml.clone())));
         }
@@ -264,6 +308,10 @@ impl Structure {
                     format!("{place} can't be read: {error}")
                 })?;
             }
+        }
+        if let Some(yaml) = &structure.walkthrough {
+            walkthrough::parse(yaml)
+                .map_err(|error| format!("{} can't be read: {error}", walkthrough::FILE))?;
         }
         if structure.folders.is_empty() {
             return Err("it has no folders or types in it".into());
@@ -538,6 +586,56 @@ mod tests {
         let bytes = zip_of(&[("npcs/_type.yaml", "type: npc\n"), ("npcs/villains/", "")]);
         let (structure, _) = Structure::from_zip(&bytes).unwrap();
         assert_eq!(structure.top_folders(), ["npcs"]);
+    }
+
+    const QUESTIONS: &str = "notes:\n  hero: { folder: players, many: true }\nchapters:\n  - title: Heroes\n    questions:\n      - { ask: Who?, note: hero }\n";
+
+    #[test]
+    fn templates_carry_their_walkthrough_questions() {
+        let root = temp_folder("walkthrough");
+        Structure::starter().create_in(&root).unwrap();
+        // The starter folders use the built-in questions.
+        assert!(!root.join(walkthrough::FILE).exists());
+        assert_eq!(Structure::read(&root).walkthrough, None);
+
+        fs::write(root.join(walkthrough::FILE), QUESTIONS).unwrap();
+        let structure = Structure::read(&root);
+        assert_eq!(structure.walkthrough.as_deref(), Some(QUESTIONS));
+        let (back, _) = Structure::from_zip(&structure.to_zip().unwrap()).unwrap();
+        assert_eq!(back, structure);
+
+        let copy = temp_folder("walkthrough_copy");
+        back.create_in(&copy).unwrap();
+        assert_eq!(
+            fs::read_to_string(copy.join(walkthrough::FILE)).unwrap(),
+            QUESTIONS
+        );
+        // A campaign's own questions are kept.
+        fs::write(copy.join(walkthrough::FILE), "mine").unwrap();
+        back.create_in(&copy).unwrap();
+        assert_eq!(
+            fs::read_to_string(copy.join(walkthrough::FILE)).unwrap(),
+            "mine"
+        );
+
+        // In a zipped folder, the questions are in that folder; in a subfolder, they
+        // aren't read.
+        let bytes = zip_of(&[
+            ("Cairn/players/_type.yaml", "type: player\n"),
+            ("Cairn/_walkthrough.yaml", QUESTIONS),
+            ("Cairn/players/_walkthrough.yaml", QUESTIONS),
+        ]);
+        let (structure, skipped) = Structure::from_zip(&bytes).unwrap();
+        assert_eq!(structure.top_folders(), ["players"]);
+        assert_eq!(structure.walkthrough.as_deref(), Some(QUESTIONS));
+        assert_eq!(skipped, 1);
+
+        let broken = zip_of(&[("players/", ""), ("_walkthrough.yaml", "chapters: [")]);
+        let error = Structure::from_zip(&broken).unwrap_err();
+        assert!(error.starts_with(walkthrough::FILE), "{error}");
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(copy).unwrap();
     }
 
     #[test]

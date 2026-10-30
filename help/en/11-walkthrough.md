@@ -61,3 +61,5 @@ At the end of each chapter, a summary lists the notes it made. Click one to open
 ## Your own folders
 
 The walkthrough asks about the starter folders. If a campaign doesn't have a folder or a field a question is about, that question is left out, so the walkthrough fits campaigns whose folders you've changed.
+
+A template can bring questions of its own, made for its folders, and a campaign made from it asks those instead. They are kept in **_walkthrough.yaml** in the campaign folder, and go with the campaign's folders when you export them as a template (see the Templates guide). If that file has a mistake in it, it is listed in **Problems**, and the walkthrough doesn't open until it's fixed.

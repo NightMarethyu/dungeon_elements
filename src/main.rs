@@ -165,7 +165,8 @@ impl NewCampaign {
         self.template = template;
     }
 
-    /// Whether the walkthrough has questions for the folders the picked template makes.
+    /// Whether the walkthrough has questions for the folders the picked template makes:
+    /// the template's own questions, or else the built-in ones.
     fn has_walkthrough(&self) -> bool {
         let Ok(structure) = &self.structure else {
             return false;
@@ -176,7 +177,10 @@ impl NewCampaign {
             .filter(|(_, ty)| ty.is_some())
             .map(|(folder, _)| folder.as_str())
             .collect();
-        walkthrough::Questions::built_in().asks_about(&typed)
+        match &structure.walkthrough {
+            Some(yaml) => walkthrough::parse(yaml).is_ok_and(|own| own.asks_about(&typed)),
+            None => walkthrough::Questions::built_in().asks_about(&typed),
+        }
     }
 }
 
@@ -8913,6 +8917,9 @@ fn template_summary(structure: &templates::Structure) -> String {
         typed if typed == structure.folders.len() => ". Each has its own note fields.".into(),
         typed => format!(". {typed} of them have note fields."),
     });
+    if structure.walkthrough.is_some() {
+        summary.push_str(" It has its own walkthrough questions.");
+    }
     summary
 }
 
