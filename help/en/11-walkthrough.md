@@ -62,4 +62,22 @@ At the end of each chapter, a summary lists the notes it made. Click one to open
 
 The walkthrough asks about the starter folders. If a campaign doesn't have a folder or a field a question is about, that question is left out, so the walkthrough fits campaigns whose folders you've changed.
 
-A template can bring questions of its own, made for its folders, and a campaign made from it asks those instead. They are kept in **_walkthrough.yaml** in the campaign folder, and go with the campaign's folders when you export them as a template (see the Templates guide). If that file has a mistake in it, it is listed in **Problems**, and the walkthrough doesn't open until it's fixed.
+A template can bring questions of its own, made for its folders, and a campaign made from it asks those instead. They go with the campaign's folders when you export them as a template (see the Templates guide).
+
+## Your own questions
+
+**Edit > Walkthrough Questions...** changes the questions this campaign asks.
+
+1. A campaign starts out asking the built-in questions, which get better as the app updates. Click **Start from the Default Questions** to make a copy of them for this campaign to change.
+2. The chapters are listed on the left. Click one to see its questions, or **Add Chapter** for a new one. A chapter has a title, a line shown at its top, and **↑**, **↓** and **Remove**.
+3. Each question has its text, a hint under it if you like, and three choices:
+   - **Goes into**: the note the answer is written into, like *factions: several new Factions*.
+   - **Field**: which of that note's fields the answer fills. **Its name** (or **Their names**, for several notes) asks for the note's name instead.
+   - **Inspire me from**: the roll table **Inspire me** rolls on. **Automatic** uses the field's own table, and **No Inspire me** leaves the button out.
+
+   Write `{name}` in a question about several notes, like "What do {name} want?", and it is asked about each one. A question whose field links to other notes can offer notes from other folders too: add them under **Pick from**. A question that asks for the names of several notes can have a button that adds notes from Markdown files, like the heroes question does.
+4. **Notes it makes** lists the notes the questions write into. Each has a short name the questions use, its folder, whether a list of names makes several, and how a single note is named: asked for, after the campaign, or always the same name, like Session 1. **Fill In a Field** gives a field a value when the note is made. A value that is the short name of another of these notes links to it. **Also link to it from** adds a link to it in a field of another note, like the campaign's Players for each hero.
+
+Mistakes show at the bottom of the dialog in plain words, like a question with no text, and must be fixed before saving. Questions the campaign can't ask, like one about a field its type no longer has, are listed there too. They can still be saved, and the walkthrough leaves them out.
+
+**Save** keeps the questions for this campaign. **Save and Try It** opens the walkthrough with them. **Use the Built-In Questions** goes back to the built-in ones.

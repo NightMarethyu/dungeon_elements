@@ -8,7 +8,7 @@ The folders and fields you build for one game can start your next campaign, and 
 2. Choose **Export Campaign Structure...** at the bottom.
 3. Save it. The save window starts in your templates folder: save it there to start new campaigns from it, or anywhere else to share it.
 
-A template is an ordinary **.zip** file holding the campaign's folders and the **_type.yaml** file of each folder that has fields, subfolders and all. If the campaign has walkthrough questions of its own, in **_walkthrough.yaml**, they go in the template too. It never holds your notes, so it's small and has no spoilers in it.
+A template is an ordinary **.zip** file holding the campaign's folders and the **_type.yaml** file of each folder that has fields, subfolders and all. If the campaign has walkthrough questions of its own (see **Edit > Walkthrough Questions...** in the walkthrough guide), they go in the template too. It never holds your notes, so it's small and has no spoilers in it.
 
 ## Start a campaign from a template
 

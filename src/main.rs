@@ -32,6 +32,7 @@ mod theme;
 mod types;
 mod types_editor;
 mod walkthrough;
+mod walkthrough_editor;
 mod walkthrough_tab;
 mod watch;
 mod web;
@@ -380,6 +381,8 @@ enum Dialog {
     },
     /// Edit > Types: changes the fields of every folder's type.
     Types(types_editor::Editor),
+    /// Edit > Walkthrough Questions: changes the campaign's own walkthrough questions.
+    Walkthrough(walkthrough_editor::Editor),
     /// Lists the campaign's files with formatting problems.
     Problems,
     /// Offers fixes for the problems of the note at this path, which is the active tab.
@@ -721,6 +724,9 @@ enum Message {
     UpdateTagNotes,
     ShowTypes,
     Types(types_editor::Message),
+    /// Edit > Walkthrough Questions.
+    ShowWalkthroughEditor,
+    WalkthroughEditor(walkthrough_editor::Message),
     /// A type or the campaign's structure was exported, to here (or not, if cancelled).
     Exported(Result<Option<PathBuf>, String>),
     TypesImportPicked(Option<PathBuf>),
@@ -1542,6 +1548,10 @@ impl App {
                 .shortcut("Ctrl+Shift+F"),
                 Entry::Separator,
                 item("Types...", Some(Message::ShowTypes)),
+                item(
+                    "Walkthrough Questions...",
+                    when(workspace.is_some(), Message::ShowWalkthroughEditor),
+                ),
             ],
             Menu::View => {
                 let mut entries = vec![Entry::Heading("Theme".into())];
@@ -3289,6 +3299,9 @@ impl Workspace {
         if let Dialog::Types(editor) = dialog {
             return editor.view(c).map(Message::Types);
         }
+        if let Dialog::Walkthrough(editor) = dialog {
+            return editor.view(c).map(Message::WalkthroughEditor);
+        }
         if let Dialog::Problems = dialog {
             return self.problems_dialog(c);
         }
@@ -3685,6 +3698,7 @@ impl Workspace {
                     Message::CreateNoteFromRoll,
                 ),
                 Dialog::Types(_)
+                | Dialog::Walkthrough(_)
                 | Dialog::Problems
                 | Dialog::Fix(_)
                 | Dialog::ReplaceField { .. } => {
@@ -4727,6 +4741,71 @@ impl Workspace {
                 editor.set_saved(templates::saved_types());
                 editor.select(&folder);
                 self.dialog = Some(Dialog::Types(editor));
+                Task::none()
+            }
+            Message::ShowWalkthroughEditor => {
+                let mut folders = Vec::new();
+                collect_folders(&self.tree, &mut folders);
+                let folders = folders
+                    .iter()
+                    .map(|folder| {
+                        let name = folder
+                            .strip_prefix(&self.root)
+                            .unwrap_or(folder)
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        let ty = self.types.get(folder).and_then(|ty| ty.as_ref().ok());
+                        (name, ty.cloned())
+                    })
+                    .collect();
+                let tables = self.all_tables().iter().map(tables::Entry::name).collect();
+                self.dialog = Some(Dialog::Walkthrough(walkthrough_editor::Editor::new(
+                    &self.root, folders, tables,
+                )));
+                Task::none()
+            }
+            Message::WalkthroughEditor(walkthrough_editor::Message::Cancel) => {
+                self.dialog = None;
+                Task::none()
+            }
+            Message::WalkthroughEditor(
+                message @ (walkthrough_editor::Message::Save | walkthrough_editor::Message::TryIt),
+            ) => {
+                let Some(Dialog::Walkthrough(editor)) = &mut self.dialog else {
+                    return Task::none();
+                };
+                if editor.has_changes() {
+                    if let Err(error) = editor.save() {
+                        editor.error = Some(format!("Could not save them: {error}"));
+                        return Task::none();
+                    }
+                    self.status = "Saved the walkthrough questions".into();
+                }
+                self.dialog = None;
+                self.rescan();
+                // An open walkthrough asks the new questions.
+                let shown = self.walkthrough_shown();
+                self.close_walkthrough();
+                if shown || matches!(message, walkthrough_editor::Message::TryIt) {
+                    self.show_walkthrough();
+                    return self.focus_walkthrough();
+                }
+                Task::none()
+            }
+            Message::WalkthroughEditor(message) => {
+                let scroll = matches!(
+                    message,
+                    walkthrough_editor::Message::AddQuestion | walkthrough_editor::Message::AddNote
+                );
+                if let Some(Dialog::Walkthrough(editor)) = &mut self.dialog {
+                    editor.update(message);
+                }
+                if scroll {
+                    return iced::widget::operation::snap_to(
+                        walkthrough_editor::DETAIL,
+                        iced::widget::scrollable::RelativeOffset::END,
+                    );
+                }
                 Task::none()
             }
             Message::Types(types_editor::Message::Cancel) => {
