@@ -183,7 +183,7 @@ chapters:
         field: ruled_by
         table: Group names
         pick: [factions, npcs]
-      - ask: Name three people the heroes will meet there.
+      - ask: Name some people the heroes will meet there.
         note: locals
         table: Female names, Male names
       - ask: What does {name} want?
