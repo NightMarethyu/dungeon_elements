@@ -13,6 +13,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Questions that ask for a list of names, like the regions or the factions, have a box for each name and **Add Another**. Pasting a list (one name a line, as name generator websites give them, or with commas between) fills a box for each, with capital letters added.
 - Answers that link to other notes show the notes you've made to pick from, and a new name can be made there and then. Who rules the starting town can be a faction or an NPC, and who can use magic any people, faction or NPC.
 - Notes the walkthrough makes show in the file tree, with their folders opened.
+- **Add Characters from Files...** on the heroes question (or dragging files onto the window) copies characters your players wrote up in Markdown into the players folder and adds them to the heroes.
 - Answers are ordinary fields, so changing them in a note changes them in the walkthrough. A note open with unsaved changes gets the answer in its tab.
 - Questions about folders or fields a campaign doesn't have are left out.
 - New guide in **Help > How-To Guides**: The campaign walkthrough.

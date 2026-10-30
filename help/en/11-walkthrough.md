@@ -32,6 +32,8 @@ Some questions ask for names: the campaign's, the world's, or a list like the re
 - **Paste a list** to fill a box for each name: names on separate lines, like a list copied from a name generator website, or between commas. Names copied all in lower case get capital letters.
 - **Inspire me** rolls a name into the next empty box.
 
+Your players can write up their own characters. Click **Add Characters from Files...** under "Who are the players' characters?" and pick their Markdown files, or drag the files onto the window. Each is copied into the players folder as a player character, and added to the list. The file itself stays where it was. When you press **Next**, the character is added to the campaign's Players, and fields it left empty, like Status and Home, are filled in. Fields the player filled in are kept.
+
 Each name makes a note in its folder, and the questions after it are asked about each one: "What do the Iron Guild want?", then the same for the next faction.
 
 Changing a name you gave before renames its note, and its links with it.

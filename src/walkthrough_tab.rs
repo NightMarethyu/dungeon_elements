@@ -52,6 +52,10 @@ pub enum Message {
     Pick(String),
     /// Makes a note named this in the folder, and links the answer to it.
     Make(PathBuf, String),
+    /// Asks for Markdown files to add to a list of names, like the players' characters.
+    Import,
+    /// Adds these Markdown files to the list of names, each as a note.
+    Imported(Vec<PathBuf>),
 }
 
 /// What the app does after a list of names changed.
@@ -498,6 +502,16 @@ impl Walkthrough {
         self.form.as_ref()?.first_id(self.field?)
     }
 
+    /// The note files can be added as, if the question asks for a list of names that
+    /// can come from files: the walkthrough's note, and its type.
+    pub fn import_into(&self, campaign: &Campaign) -> Option<(walkthrough::NoteSpec, ContentType)> {
+        let (question, _) = self.question()?;
+        question.import.as_ref()?;
+        self.names.as_ref()?;
+        let spec = self.questions.notes.get(&question.note)?;
+        Some((spec.clone(), campaign.type_of(spec)?.clone()))
+    }
+
     /// Adds a rolled name to the list: in the first empty box, or a new one.
     pub fn add_name(&mut self, name: &str) -> Option<NamesDone> {
         let names = self.names.as_mut()?;
@@ -926,13 +940,26 @@ impl Walkthrough {
                     .on_press_maybe((names.len() > 1).then(|| on(Message::RemoveName(index))));
                 row![input, remove].spacing(6).align_y(Center).into()
             });
+        let import = self
+            .question()
+            .and_then(|(question, _)| question.import.as_ref())
+            .map(|label| {
+                button(text(label).size(13))
+                    .padding([4, 10])
+                    .style(style::secondary(c))
+                    .on_press(on(Message::Import))
+            });
         column![
             text(&self.names_label).size(14).color(c.text),
             column(boxes).spacing(6),
-            button(text("Add Another").size(13))
-                .padding([4, 10])
-                .style(style::secondary(c))
-                .on_press(on(Message::AddName)),
+            row![
+                button(text("Add Another").size(13))
+                    .padding([4, 10])
+                    .style(style::secondary(c))
+                    .on_press(on(Message::AddName)),
+            ]
+            .push(import)
+            .spacing(6),
         ]
         .spacing(8)
         .into()

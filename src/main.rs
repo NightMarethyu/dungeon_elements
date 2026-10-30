@@ -5035,6 +5035,24 @@ impl Workspace {
                 Task::perform(pick_picture(), Message::AddPicture)
             }
             Message::AddPicture(Some(file)) => {
+                // A Markdown file dropped on a walkthrough question that takes files is
+                // added there, like a player's character.
+                if campaign::is_markdown(&file) && self.walkthrough_shown() {
+                    let campaign = walkthrough::Campaign {
+                        root: &self.root,
+                        types: &self.types,
+                        index: &self.index,
+                    };
+                    if self
+                        .walkthrough
+                        .as_ref()
+                        .and_then(|walkthrough| walkthrough.import_into(&campaign))
+                        .is_some()
+                    {
+                        return self
+                            .walkthrough_message(walkthrough_tab::Message::Imported(vec![file]));
+                    }
+                }
                 self.add_picture(&file);
                 Task::none()
             }
@@ -7026,6 +7044,15 @@ impl Workspace {
                     .and_then(|walkthrough| walkthrough.update_names(message));
                 return self.names_done(done);
             }
+            Step::Import => {
+                return Task::perform(pick_imports(), |files| {
+                    Message::Walkthrough(walkthrough_tab::Message::Imported(files))
+                });
+            }
+            Step::Imported(files) => {
+                let files = files.clone();
+                return self.import_into_walkthrough(&files);
+            }
             Step::Pick(link) => {
                 let link = link.clone();
                 return self.walkthrough_pick_link(&link);
@@ -7154,6 +7181,56 @@ impl Workspace {
             types::Kind::Link | types::Kind::Links => self.link_folder(field).into_iter().collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// Adds the Markdown files `files` to the walkthrough's list of names, each copied
+    /// into the list's folder as a note.
+    fn import_into_walkthrough(&mut self, files: &[PathBuf]) -> Task<Message> {
+        let campaign = walkthrough::Campaign {
+            root: &self.root,
+            types: &self.types,
+            index: &self.index,
+        };
+        let Some((spec, ty)) = self
+            .walkthrough
+            .as_ref()
+            .and_then(|walkthrough| walkthrough.import_into(&campaign))
+        else {
+            return Task::none();
+        };
+        let mut added = Vec::new();
+        let mut problems = Vec::new();
+        for file in files {
+            match walkthrough::import_note(&campaign, &spec, &ty, file) {
+                Ok(name) => added.push(name),
+                Err(problem) => problems.push(problem),
+            }
+        }
+        if added.is_empty() && problems.is_empty() {
+            return Task::none();
+        }
+        self.rescan();
+        let mut done = None;
+        for name in &added {
+            let path = self
+                .root
+                .join(spec.folder.trim_matches('/'))
+                .join(format!("{}.md", campaign::note_file_name(name)));
+            self.reveal(&path);
+            if let Some(walkthrough) = self.walkthrough.as_mut() {
+                done = walkthrough.add_name(name).or(done);
+            }
+        }
+        self.status = match (added.as_slice(), problems.as_slice()) {
+            ([], [problem, ..]) => problem.clone(),
+            (added, []) => format!("Added {} to {}", added.join(", "), spec.folder),
+            (added, [problem, ..]) => format!(
+                "Added {} to {}, but {problem}",
+                added.join(", "),
+                spec.folder
+            ),
+        };
+        self.names_done(done)
     }
 
     /// Links the walkthrough's answer to the note `link` names: it is the answer to a
@@ -7326,6 +7403,15 @@ impl Workspace {
         self.status = match written.made.as_slice() {
             [] => match &subject {
                 Some(path) => format!("Saved the answer in {}", display_name(path, false)),
+                None if !written.changed.is_empty() => format!(
+                    "Saved the answer in {}",
+                    written
+                        .changed
+                        .iter()
+                        .map(|path| display_name(path, false))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
                 None => "Saved".into(),
             },
             made => format!(
@@ -9001,6 +9087,22 @@ async fn save_export(
     let path = handle.path().to_path_buf();
     std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
     Ok(Some(path))
+}
+
+/// Asks for Markdown files to add to the walkthrough, like the players' characters.
+async fn pick_imports() -> Vec<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Add from Markdown files")
+        .add_filter("Markdown", &["md"])
+        .pick_files()
+        .await
+        .map(|handles| {
+            handles
+                .iter()
+                .map(|handle| handle.path().to_path_buf())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn pick_picture() -> Option<PathBuf> {

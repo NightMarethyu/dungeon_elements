@@ -11,7 +11,8 @@
 # `many` note is asked once for each of them, with `{name}` filled in. `table` is what
 # Inspire me rolls on, and an empty one (`table: ""`) leaves Inspire me out. An answer that
 # links to notes offers the notes of its field's folder to pick from, or of the `pick`
-# folders, where a new name can be made too. Questions whose folder or field a campaign doesn't have are left out.
+# folders, where a new name can be made too. A list of names with `import` has a button
+# of that label that adds notes from Markdown files. Questions whose folder or field a campaign doesn't have are left out.
 notes:
   campaign:
     folder: campaign
@@ -209,8 +210,10 @@ chapters:
     intro: The players' characters, and what ties them to the world.
     questions:
       - ask: Who are the players' characters?
+        hint: Type their names, or add characters your players wrote up in Markdown files.
         note: heroes
         table: Female names, Male names
+        import: Add Characters from Files...
       - ask: Who plays {name}?
         note: heroes
         field: player
