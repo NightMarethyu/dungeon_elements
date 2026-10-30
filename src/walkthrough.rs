@@ -113,6 +113,10 @@ pub struct Question {
     /// empty one leaves Inspire me out, for answers no table could give, like who plays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<String>,
+    /// For an answer that links to notes: the folders whose notes are offered to pick
+    /// from, and where a new name can be made. With none, the field's own link folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pick: Vec<String>,
 }
 
 impl Question {
@@ -1003,6 +1007,17 @@ mod tests {
             if let Some(add_to) = &spec.add_to {
                 let target = campaign.type_of(&questions.notes[&add_to.note]).unwrap();
                 assert!(target.fields.iter().any(|field| field.key == add_to.field));
+            }
+        }
+
+        // Every folder offered to pick from is a starter folder.
+        for (_, question) in questions.all() {
+            for folder in &question.pick {
+                assert!(
+                    test.root.join(folder).is_dir(),
+                    "{} picks {folder}",
+                    question.key()
+                );
             }
         }
     }

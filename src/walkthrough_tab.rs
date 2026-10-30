@@ -3,13 +3,13 @@
 //!
 //! The answer box is the input of the field the question fills, from a form of the note
 //! the answer goes into, so a date shows the calendar and a dice field the dice picker.
-//! Questions that ask for names get a form of their own with one field: a line for one
-//! name, or a box with a name on each line. The app writes the answers (see
+//! Questions that ask for a name get a form of their own with one field, and questions
+//! that ask for a list of names a box for each, with Add Another. The app writes the answers (see
 //! [`crate::walkthrough`]); this keeps the GM's place and draws the tab.
 
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, column, container, row, rule, scrollable, space, text};
+use iced::widget::{button, column, container, row, rule, scrollable, space, text, text_input};
 use iced::{Center, Element, Fill};
 use serde_yaml_ng::Value;
 
@@ -35,6 +35,38 @@ pub enum Message {
     Open(PathBuf),
     /// Rolls on a table for ideas and puts the roll in the answer.
     Inspire(String),
+    /// Name `index` of a list of names was typed in.
+    Name(usize, String),
+    /// Text was pasted into name `index`, which is now this. The app then reads the
+    /// clipboard for [`Message::PastedNames`], since a one-line box drops the line breaks.
+    PasteNames(usize, String),
+    /// What was pasted into name `index`, which held the first text before. A list fills
+    /// a box for each name.
+    PastedNames(usize, String, String),
+    /// Enter in name `index`: the next box, a new one, or after an empty last box the next
+    /// question.
+    NameEntered(usize),
+    AddName,
+    RemoveName(usize),
+    /// Links the answer to a note picked from the notes offered, by its link text.
+    Pick(String),
+    /// Makes a note named this in the folder, and links the answer to it.
+    Make(PathBuf, String),
+}
+
+/// What the app does after a list of names changed.
+pub enum NamesDone {
+    /// Puts the keyboard in name box `index`.
+    Focus(usize),
+    /// Reads the clipboard for what was pasted in name box `index`, which held this.
+    ReadPaste(usize, String),
+    /// Goes to the next question.
+    Next,
+}
+
+/// The widget id of name box `index` of a list of names.
+pub fn name_id(index: usize) -> String {
+    format!("walkthrough-name-{index}")
 }
 
 /// A place in the walkthrough.
@@ -69,8 +101,12 @@ pub struct Walkthrough {
     steps: Vec<Step>,
     at: usize,
     chapters: Vec<ChapterState>,
-    /// The answer being typed: a form of the note it goes into, or of the names asked for.
+    /// The answer being typed: a form of the note it goes into, or of the name asked for.
     pub form: Option<Form>,
+    /// The names being typed, for a question that asks for a list of them.
+    names: Option<Vec<String>>,
+    /// The label over the names.
+    names_label: String,
     /// The field of `form` that holds the answer.
     pub field: Option<usize>,
     /// The note the answer goes into, if it is made.
@@ -109,6 +145,8 @@ impl Walkthrough {
             at: 0,
             chapters: Vec::new(),
             form: None,
+            names: None,
+            names_label: String::new(),
             field: None,
             subject: None,
             subject_name: None,
@@ -261,6 +299,7 @@ impl Walkthrough {
     fn load_step(&mut self, campaign: &Campaign, open_text: &dyn Fn(&Path) -> Option<String>) {
         self.progress.at = Some(self.step_key(self.step()));
         self.form = None;
+        self.names = None;
         self.field = None;
         self.subject = None;
         self.subject_name = None;
@@ -311,8 +350,16 @@ impl Walkthrough {
                 _ => Vec::new(),
             };
             self.tables = question.tables(None, &ty);
-            self.form = Some(names_form(&ty, spec.many, &names));
-            self.field = Some(0);
+            if spec.many {
+                self.names_label = "Names".into();
+                let mut boxes = names;
+                // An empty box to type the next one in.
+                boxes.push(String::new());
+                self.names = Some(boxes);
+            } else {
+                self.form = Some(names_form(&ty, &names));
+                self.field = Some(0);
+            }
             // A set name the note hasn't got yet is written when Next is pressed.
             let made = self
                 .progress
@@ -377,6 +424,16 @@ impl Walkthrough {
     /// The answer typed in the answer box, if it has one.
     pub fn answer(&self) -> Option<Answer> {
         let (question, _) = self.question()?;
+        if let Some(names) = &self.names {
+            return Some(Answer::Names(
+                names
+                    .iter()
+                    .map(|name| name.trim())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            ));
+        }
         let form = self.form.as_ref()?;
         match &question.field {
             None => {
@@ -426,14 +483,93 @@ impl Walkthrough {
         }
     }
 
-    /// Whether the answer box asks for a list of names, so a roll adds a name to it.
+    /// Whether the answer is a list of names, so a roll is added to it.
     pub fn asks_for_names(&self) -> bool {
-        matches!(self.question(), Some((question, _)) if question.field.is_none())
-            && self
-                .form
-                .as_ref()
-                .and_then(|form| form.field(NAMES_KEY))
-                .is_some_and(|field| field.kind == Kind::Longtext)
+        self.names.is_some()
+    }
+
+    /// The widget the keyboard goes to at a question: the answer's input, or the first
+    /// empty name box.
+    pub fn focus_id(&self) -> Option<String> {
+        if let Some(names) = &self.names {
+            let empty = names.iter().position(|name| name.trim().is_empty());
+            return Some(name_id(empty.unwrap_or(names.len().saturating_sub(1))));
+        }
+        self.form.as_ref()?.first_id(self.field?)
+    }
+
+    /// Adds a rolled name to the list: in the first empty box, or a new one.
+    pub fn add_name(&mut self, name: &str) -> Option<NamesDone> {
+        let names = self.names.as_mut()?;
+        let index = match names.iter().position(|name| name.trim().is_empty()) {
+            Some(index) => index,
+            None => {
+                names.push(String::new());
+                names.len() - 1
+            }
+        };
+        names[index] = name.to_string();
+        Some(NamesDone::Focus(index))
+    }
+
+    /// Changes the list of names as `message` says.
+    pub fn update_names(&mut self, message: Message) -> Option<NamesDone> {
+        let names = self.names.as_mut()?;
+        match message {
+            Message::Name(index, name) => {
+                *names.get_mut(index)? = name;
+                None
+            }
+            Message::PasteNames(index, pasted) => {
+                let before = std::mem::replace(names.get_mut(index)?, pasted);
+                Some(NamesDone::ReadPaste(index, before))
+            }
+            Message::PastedNames(index, before, pasted) => {
+                let mut list = split_names(&pasted);
+                if list.len() < 2 || index >= names.len() {
+                    return None;
+                }
+                // The box keeps what it had, or takes the first name.
+                let mut at = index + 1;
+                if before.trim().is_empty() {
+                    names[index] = list.remove(0);
+                } else {
+                    names[index] = before;
+                }
+                for name in list {
+                    names.insert(at, name);
+                    at += 1;
+                }
+                Some(NamesDone::Focus(at - 1))
+            }
+            Message::NameEntered(index) => {
+                if index + 1 < names.len() {
+                    Some(NamesDone::Focus(index + 1))
+                } else if names[index].trim().is_empty() {
+                    Some(NamesDone::Next)
+                } else {
+                    names.push(String::new());
+                    Some(NamesDone::Focus(index + 1))
+                }
+            }
+            Message::AddName => match names.iter().position(|name| name.trim().is_empty()) {
+                Some(index) => Some(NamesDone::Focus(index)),
+                None => {
+                    names.push(String::new());
+                    Some(NamesDone::Focus(names.len() - 1))
+                }
+            },
+            Message::RemoveName(index) => {
+                if index < names.len() {
+                    names.remove(index);
+                }
+                if names.is_empty() {
+                    names.push(String::new());
+                }
+                Some(NamesDone::Focus(index.min(names.len() - 1)))
+            }
+            _ => None,
+        }
     }
 
     /// Goes to the next step. Notes an answer just made have their questions next.
@@ -625,16 +761,17 @@ impl Walkthrough {
                     );
                 }
 
-                match answer {
-                    Some(answer) => body = body.push(answer),
-                    None if self.error.is_none() => {
+                match (answer, &self.names) {
+                    (_, Some(names)) => body = body.push(self.names_view(c, names, on)),
+                    (Some(answer), None) => body = body.push(answer),
+                    (None, None) if self.error.is_none() => {
                         let first = self
                             .name_question(&question.note)
                             .map(|asked| format!("Answer \"{}\" first", asked.ask_about(None)))
                             .unwrap_or_else(|| "There is no note to write this into yet".into());
                         body = body.push(text(first).size(14).color(c.text_muted));
                     }
-                    None => {}
+                    (None, None) => {}
                 }
                 if let Some(chips) = chips {
                     body = body.push(chips);
@@ -764,6 +901,43 @@ impl Walkthrough {
         .into()
     }
 
+    /// A box for each name of a list, with a button to take it out, and Add Another.
+    fn names_view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        names: &'a [String],
+        on: fn(Message) -> M,
+    ) -> Element<'a, M> {
+        let boxes = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| -> Element<'a, M> {
+                let input = text_input("Type a name, or paste a list", name)
+                    .id(name_id(index))
+                    .on_input(move |name| on(Message::Name(index, name)))
+                    .on_paste(move |name| on(Message::PasteNames(index, name)))
+                    .on_submit(on(Message::NameEntered(index)))
+                    .padding([6, 8])
+                    .size(14)
+                    .style(style::input(c));
+                let remove = button(text("✕").size(13))
+                    .padding([4, 10])
+                    .style(style::flat(c, false))
+                    .on_press_maybe((names.len() > 1).then(|| on(Message::RemoveName(index))));
+                row![input, remove].spacing(6).align_y(Center).into()
+            });
+        column![
+            text(&self.names_label).size(14).color(c.text),
+            column(boxes).spacing(6),
+            button(text("Add Another").size(13))
+                .padding([4, 10])
+                .style(style::secondary(c))
+                .on_press(on(Message::AddName)),
+        ]
+        .spacing(8)
+        .into()
+    }
+
     /// The notes of a summary, each a button that opens it.
     fn note_list<'a, M: Clone + 'a>(&'a self, c: Colors, on: fn(Message) -> M) -> Element<'a, M> {
         column(self.made.iter().map(|(name, path)| -> Element<'a, M> {
@@ -793,19 +967,10 @@ fn campaign_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// A form with one field for the names a question asks for: a line for one name, or a
-/// box with a name on each line.
-fn names_form(ty: &ContentType, many: bool, names: &[String]) -> Form {
-    let (label, kind) = if many {
-        (
-            format!("{} names, one on each line", ty.label()),
-            Kind::Longtext,
-        )
-    } else {
-        (format!("{} name", ty.label()), Kind::Text)
-    };
-    let mut field = Field::for_note(NAMES_KEY, kind);
-    field.label = Some(label);
+/// A form with one line for the name a question asks for.
+fn names_form(ty: &ContentType, names: &[String]) -> Form {
+    let mut field = Field::for_note(NAMES_KEY, Kind::Text);
+    field.label = Some(format!("{} name", ty.label()));
     field.width = Width::Full;
     let names_type = ContentType {
         id: "walkthrough".into(),
@@ -817,8 +982,79 @@ fn names_form(ty: &ContentType, many: bool, names: &[String]) -> Form {
     };
     let mut form = Form::blank(names_type);
     form.lock();
-    if !names.is_empty() {
-        form.set_value(NAMES_KEY, Some(&Value::String(names.join("\n"))));
+    if let Some(name) = names.first() {
+        form.set_value(NAMES_KEY, Some(&Value::String(name.clone())));
     }
     form
+}
+
+/// The names in a pasted list: one on each line, or else between commas, semicolons or
+/// tabs, without list marks or numbers. Names copied all in lower case, as some name
+/// generators give them, get capitals.
+fn split_names(pasted: &str) -> Vec<String> {
+    let lines: Vec<&str> = pasted
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let parts: Vec<&str> = if lines.len() > 1 {
+        lines
+    } else {
+        pasted.split([',', ';', '\t']).collect()
+    };
+    parts
+        .into_iter()
+        .map(|part| {
+            let part = part.trim();
+            let part = part.trim_start_matches(['-', '*', '•', '+']).trim_start();
+            // "1. Name" or "2) Name"
+            let digits = part.len() - part.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let part = match part[digits..].strip_prefix(['.', ')']) {
+                Some(rest) if digits > 0 => rest.trim_start(),
+                _ => part,
+            };
+            if part.chars().any(char::is_uppercase) {
+                part.to_string()
+            } else {
+                capitalized(part)
+            }
+        })
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// `name` with each word's first letter a capital.
+fn capitalized(name: &str) -> String {
+    name.split(' ')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pasted_list_is_split_into_names() {
+        let generator = "swanburn\ncavehill\nheartham\n\nbleakstar\n";
+        assert_eq!(
+            split_names(generator),
+            ["Swanburn", "Cavehill", "Heartham", "Bleakstar"]
+        );
+        assert_eq!(
+            split_names("Eldmoor, the Iron Coast; Vael"),
+            ["Eldmoor", "the Iron Coast", "Vael"]
+        );
+        assert_eq!(
+            split_names("1. Old Tomas\n2) Brann\n- McAllister"),
+            ["Old Tomas", "Brann", "McAllister"]
+        );
+        assert_eq!(split_names("Eldmoor"), ["Eldmoor"]);
+    }
 }

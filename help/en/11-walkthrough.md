@@ -25,15 +25,28 @@ An empty answer writes nothing, so pressing **Next** without typing is the same 
 
 ## Names and lists
 
-Some questions ask for names: the campaign's, the world's, or a list like the regions or factions, one name on each line. Each name makes a note in its folder, and the questions after it are asked about each one: "What do the Iron Guild want?", then the same for the next faction.
+Some questions ask for names: the campaign's, the world's, or a list like the regions or factions. A list has a box for each name:
+
+- Type a name and press **Enter** for a box for the next one, or click **Add Another**. Pressing **Enter** in an empty box at the end goes on to the next question.
+- Click **✕** to take a name out.
+- **Paste a list** to fill a box for each name: names on separate lines, like a list copied from a name generator website, or between commas. Names copied all in lower case get capital letters.
+- **Inspire me** rolls a name into the next empty box.
+
+Each name makes a note in its folder, and the questions after it are asked about each one: "What do the Iron Guild want?", then the same for the next faction.
 
 Changing a name you gave before renames its note, and its links with it.
 
 ## Links
 
-Answers that name other notes, like a faction's leader or a hero's bonds, link to them. Type a name: notes that match are offered as you type (**Tab** takes the first), and a name with no note yet makes one when you press **Next**. In a long answer or a step, type `[[` to start a link.
+Answers that name other notes, like a faction's leader or a hero's bonds, link to them.
+
+- The notes you've made that fit are shown under the answer. Click one to pick it.
+- Or type a name: notes that match are offered as you type (**Tab** takes the first). For a name with no note yet, click **+ New** to make it there and then, or press **Next** and it is made for you. Some questions can make more than one kind of note: who rules a town can be a new faction or a new NPC.
+- In a long answer or a step, type `[[` to start a link.
 
 So answering "Who leads the Iron Guild?" with a name makes an NPC with that name, and the faction links to them.
+
+Notes the walkthrough makes show in the file tree, with their folders opened. **▾** and **▸** at the top of the file tree open and close every folder at once.
 
 ## Changing your answers
 

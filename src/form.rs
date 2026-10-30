@@ -1077,6 +1077,22 @@ impl Form {
         true
     }
 
+    /// Adds `item` to the end of steps or list field `index`, as a new step or a new
+    /// link (or tag).
+    pub fn add_item(&mut self, index: usize, item: &str) -> bool {
+        match self.inputs.get_mut(index) {
+            Some(Input::Steps(steps)) => {
+                steps.steps.push(Step {
+                    done: false,
+                    text: item.to_string(),
+                });
+                true
+            }
+            Some(Input::List(list)) => list.add(note::unlink(item)),
+            _ => false,
+        }
+    }
+
     /// The label of field `index`, to name what was rolled from it.
     pub fn label(&self, index: usize) -> Option<String> {
         self.fields.get(index).map(Field::label)
@@ -1167,8 +1183,12 @@ impl Form {
         self.tab_stops().into_iter().map(|(.., id)| id).collect()
     }
 
-    /// The widget id of field `index`'s first input, for focusing it.
+    /// The widget id to focus field `index` by: its first input, or for steps the box a
+    /// new step is typed in.
     pub fn first_id(&self, index: usize) -> Option<String> {
+        if let Some(Input::Steps(steps)) = self.inputs.get(index) {
+            return Some(step_id(index, steps.steps.len()));
+        }
         self.tab_stops()
             .into_iter()
             .find(|(field, ..)| *field == index)

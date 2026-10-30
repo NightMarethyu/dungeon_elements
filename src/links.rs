@@ -368,6 +368,27 @@ impl Index {
             .collect()
     }
 
+    /// The notes inside `folder` (but not `from`), by name, as `(link text, label)` pairs
+    /// like [`Self::suggest`]'s.
+    pub fn in_folder(&self, folder: &Path, from: &Path) -> Vec<(String, String)> {
+        let mut entries: Vec<&Entry> = self
+            .notes
+            .iter()
+            .filter(|entry| entry.path.starts_with(folder) && entry.path != from)
+            .collect();
+        entries.sort_by_cached_key(|entry| normalize(entry.name()));
+        entries
+            .into_iter()
+            .filter_map(|entry| {
+                let link = self.link_text(&entry.path, from, false)?;
+                Some(match self.written_name(entry) {
+                    Some(name) => (format!("{link}|{name}"), name.to_string()),
+                    None => (link, self.label(entry)),
+                })
+            })
+            .collect()
+    }
+
     /// [`Self::written_name`] of the note at `path`.
     pub fn written_name_of(&self, path: &Path) -> Option<&str> {
         let entry = self.notes.iter().find(|entry| entry.path == path)?;

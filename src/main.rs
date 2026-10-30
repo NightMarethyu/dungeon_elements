@@ -141,6 +141,9 @@ const FIELD_EDITOR: &str = "field-editor";
 /// How many notes the link bar suggests at most.
 const SUGGESTIONS: usize = 8;
 
+/// How many notes the walkthrough offers to pick from at most.
+const PICKS: usize = 24;
+
 /// The fields of the "New campaign" dialog.
 struct NewCampaign {
     title: String,
@@ -440,6 +443,9 @@ struct Suggestions {
     /// For a link field that links to a folder: the field's index, and the label of a
     /// button that makes the note it names there.
     create: Option<(usize, String)>,
+    /// In the walkthrough: buttons that make the note named in one of the folders its
+    /// answer links to, as `(folder, name, label)`.
+    make: Vec<(PathBuf, String, String)>,
 }
 
 /// A content type a new folder can start with.
@@ -726,6 +732,8 @@ enum Message {
     KeepMine,
     OpenEntry(PathBuf),
     RefreshTree,
+    ExpandAll,
+    CollapseAll,
     SelectTab(u64),
     CloseTab(u64),
     CloseTabConfirmed(u64, bool),
@@ -1596,6 +1604,14 @@ impl App {
                     item(
                         "Refresh File Tree",
                         when(workspace.is_some(), Message::RefreshTree),
+                    ),
+                    item(
+                        "Expand All Folders",
+                        when(workspace.is_some(), Message::ExpandAll),
+                    ),
+                    item(
+                        "Collapse All Folders",
+                        when(workspace.is_some(), Message::CollapseAll),
                     ),
                 ]);
                 entries
@@ -4534,6 +4550,14 @@ impl Workspace {
                 }
                 None => Task::none(),
             },
+            Message::ExpandAll => {
+                self.expanded = folders_of(&self.tree).into_iter().collect();
+                Task::none()
+            }
+            Message::CollapseAll => {
+                self.expanded.clear();
+                Task::none()
+            }
             Message::RefreshTree => {
                 self.status.clear();
                 self.pick_up_outside_changes();
@@ -5646,6 +5670,8 @@ impl Workspace {
                 ),
                 Entry::Separator,
                 item("Refresh File Tree", Some(Message::RefreshTree)),
+                item("Expand All", Some(Message::ExpandAll)),
+                item("Collapse All", Some(Message::CollapseAll)),
                 item(
                     SHOW_IN_FILE_MANAGER,
                     Some(Message::ShowInFileManager(path.clone())),
@@ -5923,10 +5949,9 @@ impl Workspace {
                 .size(11)
                 .color(c.text_muted),
             space::horizontal(),
-            button(text("⟳").size(13))
-                .padding([0, 6])
-                .style(style::flat(c, false))
-                .on_press(Message::RefreshTree),
+            tree_button(c, "▾", "Expand all folders", Message::ExpandAll),
+            tree_button(c, "▸", "Collapse all folders", Message::CollapseAll),
+            tree_button(c, "⟳", "Refresh the file tree", Message::RefreshTree),
         ]
         .align_y(Center)
         .padding([6, 12]);
@@ -6445,10 +6470,35 @@ impl Workspace {
             )
         });
 
+        // The walkthrough makes the note without leaving the question, in any folder its
+        // answer can link to.
+        if self.walkthrough_shown() {
+            let make = self
+                .walkthrough_pick()
+                .into_iter()
+                .map(|folder| {
+                    let kind = match self.types.get(&folder) {
+                        Some(Ok(ty)) => ty.label(),
+                        _ => "note".into(),
+                    };
+                    let name = query.trim().to_string();
+                    let label = format!("+ New {kind}: {name}");
+                    (folder, name, label)
+                })
+                .collect();
+            return Suggestions {
+                notes,
+                in_field,
+                create: None,
+                make,
+            };
+        }
+
         Suggestions {
             notes,
             in_field,
             create,
+            make: Vec::new(),
         }
     }
 
@@ -6946,7 +6996,7 @@ impl Workspace {
         let id = self
             .walkthrough
             .as_ref()
-            .and_then(|walkthrough| walkthrough.form.as_ref()?.first_id(walkthrough.field?));
+            .and_then(walkthrough_tab::Walkthrough::focus_id);
         match id {
             Some(id) if self.walkthrough_shown() => iced::widget::operation::focus(id),
             _ => Task::none(),
@@ -6964,7 +7014,62 @@ impl Workspace {
                 self.open_file(path.clone());
                 return Task::none();
             }
+            Step::Name(..)
+            | Step::PasteNames(..)
+            | Step::PastedNames(..)
+            | Step::NameEntered(_)
+            | Step::AddName
+            | Step::RemoveName(_) => {
+                let done = self
+                    .walkthrough
+                    .as_mut()
+                    .and_then(|walkthrough| walkthrough.update_names(message));
+                return self.names_done(done);
+            }
+            Step::Pick(link) => {
+                let link = link.clone();
+                return self.walkthrough_pick_link(&link);
+            }
+            Step::Make(folder, name) => {
+                let ty = match self.types.get(folder) {
+                    Some(Ok(ty)) => Some(ty.clone()),
+                    _ => None,
+                };
+                let path = match create_linked_note(&self.root, name, Some(folder), ty.as_ref()) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        self.status = error;
+                        return Task::none();
+                    }
+                };
+                self.rescan();
+                self.reveal(&path);
+                self.status = format!("Made {}", display_name(&path, false));
+                let link = self
+                    .index
+                    .link_text(&path, &self.walkthrough_from(), false)
+                    .unwrap_or_else(|| name.clone());
+                return self.walkthrough_input(Message::CompleteLink(link));
+            }
             Step::Inspire(table) => {
+                // A rolled name goes on the list of names.
+                if self
+                    .walkthrough
+                    .as_ref()
+                    .is_some_and(walkthrough_tab::Walkthrough::asks_for_names)
+                {
+                    let from = self.walkthrough_from();
+                    let Some((name, found, each_column)) = self.linked_table(table, &from) else {
+                        self.status = format!("There is no roll table called {table}");
+                        return Task::none();
+                    };
+                    let value = self.roll_found(&from, &name, &found, each_column);
+                    let done = self
+                        .walkthrough
+                        .as_mut()
+                        .and_then(|walkthrough| walkthrough.add_name(&value));
+                    return self.names_done(done);
+                }
                 // The roll goes into the answer, as a field's own table button's does.
                 if let Some(index) = self.walkthrough.as_ref().and_then(|w| w.field) {
                     // The answer keeps the keyboard, so Enter goes on to the next question.
@@ -7010,13 +7115,111 @@ impl Workspace {
             Step::Next => walkthrough.next(&campaign, &open),
             Step::Skip => walkthrough.skip(&campaign, &open),
             Step::SkipChapter => walkthrough.skip_chapter(&campaign, &open),
-            Step::Open(_) | Step::Inspire(_) => {}
+            _ => {}
         }
         if let Err(error) = walkthrough.progress.save(&self.root) {
             self.status = format!("Could not remember where the walkthrough was: {error}");
         }
         self.walkthrough = Some(walkthrough);
         self.focus_walkthrough()
+    }
+
+    /// The folders the walkthrough's answer links to notes in: the question's own, or the
+    /// link folder of a link or links field. Their notes are offered to pick from, and a
+    /// new name can be made in any of them.
+    fn walkthrough_pick(&self) -> Vec<PathBuf> {
+        let Some(walkthrough) = self.walkthrough.as_ref() else {
+            return Vec::new();
+        };
+        let Some((question, _)) = walkthrough.question() else {
+            return Vec::new();
+        };
+        let Some(field) = question
+            .field
+            .as_ref()
+            .zip(walkthrough.form.as_ref())
+            .and_then(|(key, form)| form.field(key))
+        else {
+            return Vec::new();
+        };
+        if !question.pick.is_empty() {
+            return question
+                .pick
+                .iter()
+                .map(|folder| self.root.join(folder.trim_matches('/')))
+                .filter(|folder| folder.is_dir())
+                .collect();
+        }
+        match field.kind {
+            types::Kind::Link | types::Kind::Links => self.link_folder(field).into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Links the walkthrough's answer to the note `link` names: it is the answer to a
+    /// link field, and is added to a list or steps.
+    fn walkthrough_pick_link(&mut self, link: &str) -> Task<Message> {
+        let Some(walkthrough) = self.walkthrough.as_mut() else {
+            return Task::none();
+        };
+        let Some((key, index)) = walkthrough
+            .question()
+            .and_then(|(question, _)| question.field.clone())
+            .zip(walkthrough.field)
+        else {
+            return Task::none();
+        };
+        let Some(form) = walkthrough.form.as_mut() else {
+            return Task::none();
+        };
+        let kind = form.field(&key).map(|field| field.kind);
+        match kind {
+            Some(types::Kind::Link) => {
+                form.set_value(
+                    &key,
+                    Some(&serde_yaml_ng::Value::String(format!("[[{link}]]"))),
+                );
+            }
+            Some(types::Kind::Links) => {
+                form.add_item(index, link);
+            }
+            Some(_) => {
+                form.add_item(index, &format!("[[{link}]]"));
+            }
+            None => {}
+        }
+        self.focus_walkthrough()
+    }
+
+    /// Expands the folders the file or folder at `path` is in, so the tree shows it.
+    fn reveal(&mut self, path: &Path) {
+        for folder in path.ancestors().skip(1) {
+            if !folder.starts_with(&self.root) || folder == self.root {
+                break;
+            }
+            self.expanded.insert(folder.to_path_buf());
+        }
+    }
+
+    /// Puts the keyboard in the name box a list of names says, or goes on.
+    fn names_done(&mut self, done: Option<walkthrough_tab::NamesDone>) -> Task<Message> {
+        match done {
+            Some(walkthrough_tab::NamesDone::Focus(index)) => {
+                iced::widget::operation::focus(walkthrough_tab::name_id(index))
+            }
+            Some(walkthrough_tab::NamesDone::ReadPaste(index, before)) => iced::clipboard::read()
+                .map(move |pasted| {
+                    Message::Walkthrough(walkthrough_tab::Message::PastedNames(
+                        index,
+                        before.clone(),
+                        pasted.unwrap_or_default(),
+                    ))
+                }),
+            Some(walkthrough_tab::NamesDone::Next) => {
+                self.walkthrough_message(walkthrough_tab::Message::Next)
+            }
+            None => Task::none(),
+        }
     }
 
     /// The note links in the walkthrough's answer box are read from: the note the answer
@@ -7099,7 +7302,10 @@ impl Workspace {
         let written = result?;
         saved.map_err(|error| format!("Could not save the walkthrough's progress: {error}"))?;
 
-        // Open notes show what was written into them.
+        // Notes made show in the file tree, and open ones what was written into them.
+        for path in &written.made {
+            self.reveal(path);
+        }
         for path in written.made.iter().chain(&written.changed) {
             if let Some(index) = self
                 .tabs
@@ -7142,46 +7348,27 @@ impl Workspace {
         let ctrl = self.ctrl;
         match message {
             Message::Form(form::Message::RollTable(index, table)) => {
-                let Some(form) = self
-                    .walkthrough
-                    .as_ref()
-                    .and_then(|walkthrough| walkthrough.form.as_ref())
-                else {
-                    return Task::none();
-                };
-                let (Some((current, long)), Some(label)) =
-                    (form.text_value(index), form.label(index))
-                else {
-                    return Task::none();
-                };
                 let Some((name, found, each_column)) = self.linked_table(&table, &from) else {
                     self.status = format!("There is no roll table called {table}");
                     return Task::none();
                 };
                 let value = self.roll_found(&from, &name, &found, each_column);
-                let names = self
-                    .walkthrough
-                    .as_ref()
-                    .is_some_and(walkthrough_tab::Walkthrough::asks_for_names);
-                let form = self
+                let Some(form) = self
                     .walkthrough
                     .as_mut()
-                    .and_then(|walkthrough| walkthrough.form.as_mut());
-                match form {
-                    // A rolled name goes on the list.
-                    Some(form) if names => {
-                        let list = current.trim_end();
-                        let text = if list.is_empty() {
-                            value
-                        } else {
-                            format!("{list}\n{value}")
-                        };
-                        form.set_text_value(index, &text, false);
+                    .and_then(|walkthrough| walkthrough.form.as_mut())
+                else {
+                    return Task::none();
+                };
+                match (form.text_value(index), form.label(index)) {
+                    // A roll is a new step, or a new link, of a list.
+                    (None, _) => {
+                        form.add_item(index, &value);
                     }
-                    Some(form) if current.trim().is_empty() => {
+                    (Some((current, _)), _) if current.trim().is_empty() => {
                         form.set_text_value(index, &value, false);
                     }
-                    Some(_) => {
+                    (Some((_, long)), Some(label)) => {
                         self.dialog = Some(Dialog::ReplaceField {
                             index,
                             label,
@@ -7189,7 +7376,7 @@ impl Workspace {
                             long,
                         });
                     }
-                    None => {}
+                    (Some(_), None) => {}
                 }
                 Task::none()
             }
@@ -7356,7 +7543,55 @@ impl Workspace {
                     Some(Message::Walkthrough(walkthrough_tab::Message::Next)),
                 )
             });
-        let chips = suggestion_chips(c, &suggestions, true);
+        // While no link is being typed, the notes the answer can link to are offered.
+        let chips = suggestion_chips(c, &suggestions, true).or_else(|| {
+            let from = self.walkthrough_from();
+            // Notes the answer links to already aren't offered again.
+            let linked: Vec<String> = walkthrough
+                .answer()
+                .and_then(|answer| match answer {
+                    walkthrough::Answer::Value(Some(value)) => {
+                        serde_yaml_ng::to_string(&value).ok()
+                    }
+                    _ => None,
+                })
+                .map(|text| {
+                    links::targets(&text)
+                        .iter()
+                        .map(|target| links::normalize(target))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut notes: Vec<(String, String)> = Vec::new();
+            for folder in self.walkthrough_pick() {
+                for note in self.index.in_folder(&folder, &from) {
+                    let target = note.0.split('|').next().unwrap_or_default();
+                    if !notes.contains(&note) && !linked.contains(&links::normalize(target)) {
+                        notes.push(note);
+                    }
+                }
+            }
+            if notes.is_empty() {
+                return None;
+            }
+            let chips = notes.into_iter().take(PICKS).map(|(link, label)| {
+                button(text(label).size(13))
+                    .padding([3, 10])
+                    .style(style::secondary(c))
+                    .on_press(Message::Walkthrough(walkthrough_tab::Message::Pick(link)))
+                    .into()
+            });
+            Some(
+                column![
+                    text("Pick one you've made, or type a new name")
+                        .size(12)
+                        .color(c.text_muted),
+                    row(chips).spacing(6).wrap(),
+                ]
+                .spacing(6)
+                .into(),
+            )
+        });
         walkthrough.view(c, answer, chips, Message::Walkthrough)
     }
 
@@ -7855,6 +8090,38 @@ fn with_front_matter(front: &serde_yaml_ng::Mapping, body: &str) -> Option<Strin
     } else {
         format!("---\n{yaml}---\n\n{body}")
     })
+}
+
+/// A small button in the file tree's header, with a tooltip saying what it does.
+fn tree_button<'a>(
+    c: Colors,
+    label: &'a str,
+    tip: &'a str,
+    message: Message,
+) -> Element<'a, Message> {
+    tooltip(
+        button(text(label).size(13))
+            .padding([0, 6])
+            .style(style::flat(c, false))
+            .on_press(message),
+        container(text(tip).size(12))
+            .padding([2, 6])
+            .style(style::dropdown(c)),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+/// Lists every folder in the tree.
+fn folders_of(entries: &[Entry]) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    for entry in entries {
+        if let Some(children) = &entry.children {
+            folders.push(entry.path.clone());
+            folders.extend(folders_of(children));
+        }
+    }
+    folders
 }
 
 /// Lists every Markdown file in the tree.
@@ -9084,7 +9351,7 @@ fn suggestion_chips<'a>(
     suggestions: &Suggestions,
     narrow: bool,
 ) -> Option<Element<'a, Message>> {
-    if suggestions.notes.is_empty() && suggestions.create.is_none() {
+    if suggestions.notes.is_empty() && suggestions.create.is_none() && suggestions.make.is_empty() {
         return None;
     }
     let chips = suggestions.notes.iter().map(|(link, label)| {
@@ -9105,7 +9372,17 @@ fn suggestion_chips<'a>(
         (_, true) => "Enter picks the first",
         (_, false) => "Tab inserts the first",
     };
-    let chips = row(chips).push(create).spacing(6).wrap();
+    let make = suggestions.make.iter().map(|(folder, name, label)| {
+        button(text(label.clone()).size(13))
+            .padding([3, 10])
+            .style(style::secondary(c))
+            .on_press(Message::Walkthrough(walkthrough_tab::Message::Make(
+                folder.clone(),
+                name.clone(),
+            )))
+            .into()
+    });
+    let chips = row(chips).push(create).extend(make).spacing(6).wrap();
     if narrow {
         let hint = match hint {
             "" => "Link to".to_string(),
