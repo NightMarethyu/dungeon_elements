@@ -643,6 +643,9 @@ pub struct Settings {
     /// For each table, the tables its results link to that it doesn't roll.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub not_rolled: BTreeMap<String, BTreeSet<String>>,
+    /// The groups of built-in tables open in the Roll Tables list, by [`Group::key`].
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub open_groups: BTreeSet<String>,
 }
 
 impl Settings {
@@ -733,6 +736,43 @@ pub fn label(table: &str) -> String {
     }
 }
 
+/// A group of built-in tables, in the Roll Tables list and the Tables menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Group {
+    Names,
+    StoryPrompts,
+    World,
+    Adventure,
+}
+
+impl Group {
+    pub const ALL: [Group; 4] = [
+        Group::Names,
+        Group::StoryPrompts,
+        Group::World,
+        Group::Adventure,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::Names => "Names",
+            Group::StoryPrompts => "Story Prompts",
+            Group::World => "World",
+            Group::Adventure => "Adventure",
+        }
+    }
+
+    /// How the group is named in the campaign's settings file.
+    pub fn key(self) -> &'static str {
+        match self {
+            Group::Names => "names",
+            Group::StoryPrompts => "story prompts",
+            Group::World => "world",
+            Group::Adventure => "adventure",
+        }
+    }
+}
+
 /// A roll table built into the app, used where a campaign has no note of its name.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BuiltIn {
@@ -740,62 +780,64 @@ pub struct BuiltIn {
     pub text: &'static str,
     /// Whether it rolls each column on its own, like a name's first and family names.
     pub each_column: bool,
+    pub group: Group,
 }
 
 macro_rules! built_in {
-    ($name:literal, $each_column:literal) => {
+    ($name:literal, $each_column:literal, $group:ident) => {
         BuiltIn {
             name: $name,
             text: include_str!(concat!("../assets/tables/", $name, ".md")),
             each_column: $each_column,
+            group: Group::$group,
         }
     };
 }
 
 /// The tables built into the app, in the order the Roll Tables list shows them.
 pub const BUILT_IN: [BuiltIn; 42] = [
-    built_in!("Names", false),
-    built_in!("Female names", false),
-    built_in!("Male names", false),
-    built_in!("Mixed female names", true),
-    built_in!("Mixed male names", true),
-    built_in!("English names", true),
-    built_in!("Norse names", true),
-    built_in!("Celtic names", true),
-    built_in!("Latin names", true),
-    built_in!("Greek names", true),
-    built_in!("Arabic names", true),
-    built_in!("Slavic names", true),
-    built_in!("Japanese names", true),
-    built_in!("Fantasy names", true),
-    built_in!("Place names", true),
-    built_in!("Inn and shop names", true),
-    built_in!("Group names", true),
-    built_in!("Wants", false),
-    built_in!("Trouble", false),
-    built_in!("Twists", false),
-    built_in!("What's here", false),
-    built_in!("Feel of a place", false),
-    built_in!("Action and Theme", true),
-    built_in!("Campaign names", true),
-    built_in!("Threats", false),
-    built_in!("Tone", false),
-    built_in!("World names", true),
-    built_in!("Peoples", true),
-    built_in!("Historic events", true),
-    built_in!("Aftermath", false),
-    built_in!("Faiths", true),
-    built_in!("Deity names", true),
-    built_in!("Domains", false),
-    built_in!("Wonders", true),
-    built_in!("Sources of power", false),
-    built_in!("Costs and limits", false),
-    built_in!("Dangerous places", true),
-    built_in!("Quest names", true),
-    built_in!("Rumors", false),
-    built_in!("Plot hooks", false),
-    built_in!("Opening scenes", false),
-    built_in!("Secrets", false),
+    built_in!("Names", false, Names),
+    built_in!("Female names", false, Names),
+    built_in!("Male names", false, Names),
+    built_in!("Mixed female names", true, Names),
+    built_in!("Mixed male names", true, Names),
+    built_in!("English names", true, Names),
+    built_in!("Norse names", true, Names),
+    built_in!("Celtic names", true, Names),
+    built_in!("Latin names", true, Names),
+    built_in!("Greek names", true, Names),
+    built_in!("Arabic names", true, Names),
+    built_in!("Slavic names", true, Names),
+    built_in!("Japanese names", true, Names),
+    built_in!("Fantasy names", true, Names),
+    built_in!("Place names", true, Names),
+    built_in!("Inn and shop names", true, Names),
+    built_in!("Group names", true, Names),
+    built_in!("Wants", false, StoryPrompts),
+    built_in!("Trouble", false, StoryPrompts),
+    built_in!("Twists", false, StoryPrompts),
+    built_in!("What's here", false, StoryPrompts),
+    built_in!("Feel of a place", false, StoryPrompts),
+    built_in!("Action and Theme", true, StoryPrompts),
+    built_in!("Campaign names", true, World),
+    built_in!("Threats", false, World),
+    built_in!("Tone", false, World),
+    built_in!("World names", true, World),
+    built_in!("Peoples", true, World),
+    built_in!("Historic events", true, World),
+    built_in!("Aftermath", false, World),
+    built_in!("Faiths", true, World),
+    built_in!("Deity names", true, World),
+    built_in!("Domains", false, World),
+    built_in!("Wonders", true, World),
+    built_in!("Sources of power", false, World),
+    built_in!("Costs and limits", false, World),
+    built_in!("Dangerous places", true, Adventure),
+    built_in!("Quest names", true, Adventure),
+    built_in!("Rumors", false, Adventure),
+    built_in!("Plot hooks", false, Adventure),
+    built_in!("Opening scenes", false, Adventure),
+    built_in!("Secrets", false, Adventure),
 ];
 
 /// The built-in table called `name`, ignoring case.
@@ -862,6 +904,8 @@ pub enum Message {
     RollBuiltIn(String),
     /// Copy the built-in table with this name into the campaign, to change it.
     CopyBuiltIn(String),
+    /// Open or fold a group of built-in tables.
+    ToggleGroup(Group),
     /// Open the table editor on the table that starts at this place in the note.
     Edit(PathBuf, usize),
     /// Copy the built-in table with this name into the campaign, and open the table
@@ -887,8 +931,11 @@ pub enum Pick {
 pub struct List {
     pub open: bool,
     entries: Vec<Entry>,
-    /// The built-in tables shown, with their dice: those the campaign has no note for.
-    built_in: Vec<(String, String)>,
+    /// The built-in tables shown, with their dice and groups: those the campaign has no
+    /// note for.
+    built_in: Vec<(String, String, Group)>,
+    /// The groups of built-in tables that are open, by [`Group::key`].
+    pub open_groups: BTreeSet<String>,
 }
 
 impl List {
@@ -898,7 +945,13 @@ impl List {
         self.entries = entries;
         self.built_in = built_in
             .into_iter()
-            .filter_map(|table| Some((table.name.to_string(), table.table()?.die.to_string())))
+            .filter_map(|table| {
+                Some((
+                    table.name.to_string(),
+                    table.table()?.die.to_string(),
+                    table.group,
+                ))
+            })
             .collect();
     }
 
@@ -996,7 +1049,36 @@ impl List {
                     .into(),
             );
         }
-        for (name, die) in &self.built_in {
+        let mut group = None;
+        for (name, die, in_group) in &self.built_in {
+            let open = self.open_groups.contains(in_group.key());
+            if group != Some(*in_group) {
+                group = Some(*in_group);
+                let count = self
+                    .built_in
+                    .iter()
+                    .filter(|(_, _, other)| other == in_group)
+                    .count();
+                rows.push(
+                    button(
+                        row![
+                            text(if open { "▾" } else { "▸" }).size(11).width(12),
+                            text(in_group.label()).size(13),
+                            text(count.to_string()).size(11).color(c.text_muted),
+                        ]
+                        .spacing(6)
+                        .align_y(Center),
+                    )
+                    .width(Fill)
+                    .padding([2, 8])
+                    .style(style::flat(c, false))
+                    .on_press(Message::ToggleGroup(*in_group))
+                    .into(),
+                );
+            }
+            if !open {
+                continue;
+            }
             let roll = hint(
                 c,
                 button(die_label(die.clone()))
@@ -1257,6 +1339,35 @@ fn die_label<'a>(die: String) -> iced::widget::Text<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_tables_are_grouped_in_order() {
+        let groups: Vec<Group> = BUILT_IN.iter().map(|table| table.group).collect();
+        // Each group's tables are together, and the groups come in the menu's order.
+        let mut sorted = groups.clone();
+        sorted.sort();
+        assert_eq!(groups, sorted);
+        let count = |group| groups.iter().filter(|other| **other == group).count();
+        assert_eq!(count(Group::Names), 17);
+        assert_eq!(count(Group::StoryPrompts), 6);
+        assert_eq!(count(Group::World), 13);
+        assert_eq!(count(Group::Adventure), 6);
+    }
+
+    #[test]
+    fn open_groups_are_saved_only_when_some_are_open() {
+        let mut settings = Settings::default();
+        assert!(
+            !serde_yaml_ng::to_string(&settings)
+                .unwrap()
+                .contains("open_groups")
+        );
+        settings.open_groups.insert(Group::World.key().to_string());
+        let yaml = serde_yaml_ng::to_string(&settings).unwrap();
+        assert!(yaml.contains("open_groups"), "{yaml}");
+        let back: Settings = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(back, settings);
+    }
 
     const WEATHER: &str = "---\nname: Weather\n---\n\n## Weather\n\n| d6  | Weather |\n| --- | ------- |\n| 1   | Clear |\n| 2-3 | Drizzle |\n| 4–5 | 1d4 days of rain |\n| 6   | [[Storms]] |\n";
 
