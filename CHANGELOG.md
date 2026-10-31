@@ -7,8 +7,9 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 ### More generators
 
 - New built-in roll tables for building a world: **Campaign names**, **Threats**, **Tone**, **World names**, **Peoples**, **Historic events**, **Aftermath**, **Faiths**, **Deity names**, **Domains**, **Wonders**, **Sources of power** and **Costs and limits**. They're written to fit any genre.
-- The walkthrough's questions about the campaign, the world, power and the extraordinary each roll on a table made for them, so **Inspire me** gives ideas that fit the question. "What game or rules will you use?" has no Inspire me button, since that's for you to choose.
-- In new campaigns, the matching fields roll on them too: the campaign's Name, Big picture and Themes and tone, a people's, event's, religion's or deity's Name, an event's Consequences, a deity's Domains, and a magic note's Name, Source and Cost and limits.
+- And for adventures: **Dangerous places**, **Quest names**, **Rumors**, **Plot hooks**, **Opening scenes** and **Secrets**.
+- Every question in the walkthrough rolls on a table made for it, so **Inspire me** gives ideas that fit the question: a nearby danger rolls a dangerous place, a rumor a quest name, and the first session an opening scene and secrets. A hero's bonds roll a name for a new NPC. "What game or rules will you use?" has no Inspire me button, since that's for you to choose.
+- In new campaigns, the matching fields roll on them too: the campaign's Name, Big picture and Themes and tone, a people's, event's, religion's or deity's Name, an event's Consequences, a deity's Domains, a magic note's Name, Source and Cost and limits, a quest's Name and Hook (now Rumors and Plot hooks, in place of Trouble), a site's Name, a session's Strong start, and Secrets on NPCs, factions, locations and lore.
 
 ### App icon
 

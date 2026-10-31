@@ -19,7 +19,7 @@ On the right is one question, with the box you answer in. Under it, **Goes into*
 - **Next** writes the answer and goes on. In a one-line answer, **Enter** does the same, and in a long one, **Ctrl+Enter**.
 - **Back** goes to the question before.
 - **Skip** leaves the question for later, and **Skip Chapter** leaves the rest of the chapter.
-- **Inspire me** rolls on a roll table for an idea and puts it in the answer, like a name for a faction or a twist for the first session. Roll again for another. If the answer already has something in it, you're asked whether to replace it or add the roll on a new line.
+- **Inspire me** rolls on a roll table for an idea and puts it in the answer, like a name for a faction or an opening scene for the first session. Every question has a table of its own, apart from the ones only you can answer, like which game you'll play. Roll again for another. If the answer already has something in it, you're asked whether to replace it or add the roll on a new line.
 
 An empty answer writes nothing, so pressing **Next** without typing is the same as skipping.
 

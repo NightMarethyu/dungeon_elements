@@ -3,6 +3,7 @@ label: Quest
 fields:
   - key: name
     label: Name
+    table: Quest names
   - key: status
     label: Status
     kind: choice
@@ -31,7 +32,7 @@ fields:
   - key: hook
     label: Hook
     kind: longtext
-    table: Trouble
+    table: Rumors, Plot hooks
   - key: objectives
     label: Objectives
     kind: steps
