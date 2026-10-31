@@ -38,7 +38,7 @@ mod walkthrough_tab;
 mod watch;
 mod web;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -261,6 +261,10 @@ struct Workspace {
     web: web::Pictures,
     /// The right-click menu that is open, and where in the window.
     context: Option<(Target, Point)>,
+    /// The block of the reading view the mouse last went over, and the one it was over
+    /// when the right-click menu opened.
+    hovered_block: Option<usize>,
+    menu_block: Option<usize>,
     /// How a File > Save All is going, until every note in it is saved or not.
     save_all: Option<SaveAll>,
     /// The tags that have notes, offered in tags fields.
@@ -276,6 +280,9 @@ struct Workspace {
     tables: tables::List,
     /// Which roll tables roll each column on their own.
     table_settings: tables::Settings,
+    /// The [`Self::step_table_keys`], so steps that link to a roll table can roll it.
+    /// Kept up to date by [`Self::rescan`].
+    table_keys: BTreeSet<String>,
     /// The folder the last note made from a roll went in.
     roll_folder: Option<PathBuf>,
     /// The world-building walkthrough, while its tab is open.
@@ -338,6 +345,8 @@ enum Target {
     /// The active note's form, outside its long text fields.
     Form,
     Reading,
+    /// A table in the Roll Tables list.
+    Table(tables::Pick),
 }
 
 /// A folder to move something into, in the "Move" dialog.
@@ -524,6 +533,9 @@ enum ReadEdit {
     Table {
         index: usize,
         editor: Box<table_editor::Editor>,
+        /// For a table just added: the note's text before it, and whether it had unsaved
+        /// changes, for Cancel to put back.
+        added: Option<(String, bool)>,
     },
 }
 
@@ -702,6 +714,11 @@ enum Message {
     EditField(String),
     /// Adds text at the end of the note in the reading view.
     AddText,
+    /// The mouse went over this block of the reading view.
+    HoverBlock(usize),
+    /// Adds a roll table after the block the reading view's right-click menu was opened
+    /// on, and opens the table editor on it.
+    AddTableHere,
     /// Puts what was edited in the reading view back into the note.
     FinishEditing,
     Modifiers(Modifiers),
@@ -1417,6 +1434,7 @@ impl App {
                     }
                 }
                 workspace.refresh_preview();
+                workspace.set_form_tables();
                 Task::batch([task, workspace.fetch_pictures()])
             }
         }
@@ -1719,6 +1737,8 @@ impl Workspace {
             open_in_reading,
             web: web::Pictures::new(),
             context: None,
+            hovered_block: None,
+            menu_block: None,
             save_all: None,
             tags,
             tag_saves: HashMap::new(),
@@ -1728,7 +1748,36 @@ impl Workspace {
             table_settings,
             roll_folder: None,
             walkthrough: None,
+            table_keys: BTreeSet::new(),
         }
+        .with_table_keys()
+    }
+
+    /// Finds the roll tables a link can name, for [`Self::table_keys`].
+    fn with_table_keys(mut self) -> Self {
+        self.table_keys = self.step_table_keys();
+        self
+    }
+
+    /// The [`tables::link_key`]s of the roll tables a step's link rolls: as
+    /// [`Self::table_link_keys`], but a typed note, like a location with a table in its
+    /// description, only by `Note#Heading`, since a link to it is a link to the place.
+    fn step_table_keys(&self) -> BTreeSet<String> {
+        let mut keys = self.table_link_keys();
+        for entry in self.all_tables() {
+            let typed = entry
+                .path
+                .parent()
+                .is_some_and(|folder| self.types.contains_key(folder))
+                || self
+                    .note_text(&entry.path)
+                    .and_then(|text| note::parse(&text).ok())
+                    .is_some_and(|note| note.front.contains_key("type"));
+            if typed {
+                keys.remove(&tables::link_key(&entry.note));
+            }
+        }
+        keys
     }
 
     fn name(&self) -> String {
@@ -1897,6 +1946,7 @@ impl Workspace {
         self.refresh_search();
         self.refresh_quests();
         self.refresh_tables();
+        self.table_keys = self.step_table_keys();
     }
 
     /// Reads the quests again for the Quests list, if it is open. Open notes are read as
@@ -2019,9 +2069,25 @@ impl Workspace {
                 })?;
             let name = table.name(&self.tree_name(&path, false));
             let each_column = self.rolls_each_column(&path, table.heading.as_deref());
-            Some((name, table, each_column))
+            Some((name, self.with_settings(&path, table), each_column))
         });
         found.or_else(|| tables::built_in_link(target))
+    }
+
+    /// `table`, from the note at `path`, with the links it doesn't roll from the settings.
+    fn with_settings(&self, path: &Path, mut table: tables::Table) -> tables::Table {
+        let key = tables::key(&self.root, path, table.heading.as_deref());
+        table.not_rolled = self.not_rolled(&key);
+        table
+    }
+
+    /// The tables that the results of table `key` link to without rolling them.
+    fn not_rolled(&self, key: &str) -> BTreeSet<String> {
+        self.table_settings
+            .not_rolled
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The table typed into the dice roller's box: by its note's name (or `Note#Heading`),
@@ -2067,6 +2133,18 @@ impl Workspace {
 
     /// Rolls `table`, from the note at `path`, and shows the result in the dice roller.
     fn roll_found(
+        &mut self,
+        path: &Path,
+        name: &str,
+        table: &tables::Table,
+        each_column: bool,
+    ) -> String {
+        let table = self.with_settings(path, table.clone());
+        self.roll_found_as_is(path, name, &table, each_column)
+    }
+
+    /// Like [`Self::roll_found`], with the links `table` doesn't roll as they are in it.
+    fn roll_found_as_is(
         &mut self,
         path: &Path,
         name: &str,
@@ -2230,7 +2308,7 @@ impl Workspace {
     }
 
     /// Makes the note New Roll Table asks for, and opens it to fill in.
-    fn create_table(&mut self) -> Result<(), String> {
+    fn create_table(&mut self) -> Result<Task<Message>, String> {
         let Some(Dialog::NewTable {
             name,
             folder,
@@ -2241,7 +2319,7 @@ impl Workspace {
             ..
         }) = &self.dialog
         else {
-            return Ok(());
+            return Ok(Task::none());
         };
         let name = name.trim().to_string();
         if name.is_empty() {
@@ -2282,16 +2360,20 @@ impl Workspace {
         self.dialog = None;
         self.rescan();
         self.expanded.insert(folder);
-        self.open_file(path.clone());
-        // It opens as Markdown, ready to fill in.
-        if let Some(tab) = self.active_tab_mut() {
-            tab.preview = None;
-        }
+        // It opens in the table editor, ready to fill in.
+        let start = tables::find(&text).first().map(|table| table.range.start);
+        let task = match start {
+            Some(start) => self.edit_table_in(path.clone(), start),
+            None => {
+                self.open_file(path.clone());
+                Task::none()
+            }
+        };
         self.status = format!(
             "Created the roll table {}: fill in its rows",
             self.relative(&path)
         );
-        Ok(())
+        Ok(task)
     }
 
     /// Ticks or unticks the step of the quest at `path` whose task box is at `at`: in its
@@ -2728,11 +2810,9 @@ impl Workspace {
         };
         let (range, edited, table) = match tab.edit.take() {
             Some(ReadEdit::Block { range, content, .. }) => (range, content.text(), None),
-            Some(ReadEdit::Table { editor, .. }) => (
-                editor.range.clone(),
-                editor.markdown(),
-                Some((editor.changed(), editor.each_column())),
-            ),
+            Some(ReadEdit::Table { editor, .. }) => {
+                (editor.range.clone(), editor.markdown(), Some(editor))
+            }
             _ => return 0,
         };
         let Some(preview) = &tab.preview else {
@@ -2745,12 +2825,29 @@ impl Workspace {
             return 0;
         }
 
-        let new = match table {
+        let path = tab.note_path();
+        let mut new = match &table {
             // A table goes back exactly where it was, and only if it was changed.
-            Some((changed, _)) if !changed => text.clone(),
+            Some(editor) if !editor.changed() => text.clone(),
             Some(_) => format!("{}{edited}{}", &text[..range.start], &text[range.end..]),
             None => replace_block(&text, range.clone(), &edited),
         };
+        // A renamed table renames its heading, and the links to it in this note.
+        let renamed = table
+            .as_ref()
+            .and_then(|editor| editor.heading())
+            .filter(|(old, new)| !new.is_empty() && old != new)
+            .map(|(old, new)| (old.to_string(), new.to_string()));
+        if let Some((old, heading)) = &renamed {
+            if let Some(changed) = table_editor::rename_heading(&new, range.start, old, heading) {
+                new = changed;
+            }
+            if let Some((changed, _)) =
+                links::rename_heading(&new, &path, &index, &path, old, heading)
+            {
+                new = changed;
+            }
+        }
         let mut added = 0;
         if new != text {
             tab.set_text(&new);
@@ -2759,17 +2856,419 @@ impl Workspace {
             added = preview.block_count() as isize - blocks as isize;
             tab.preview = Some(preview);
         }
-        if let Some((_, Some(each_column))) = table {
-            let path = tab.note_path();
-            let heading = tables::find(&new)
-                .into_iter()
-                .find(|table| table.range.start == range.start)
-                .and_then(|table| table.heading);
-            if self.rolls_each_column(&path, heading.as_deref()) != each_column {
-                self.set_each_column(&path, range.start, each_column);
+        if let Some(editor) = table {
+            let old = editor.heading().map(|(old, _)| old.to_string());
+            let heading = match &renamed {
+                Some((_, heading)) => Some(heading.clone()),
+                None => old.clone(),
+            };
+            self.save_table_settings(
+                &path,
+                old.as_deref(),
+                heading.as_deref(),
+                editor.each_column(),
+                editor.not_rolled(),
+            );
+            if let Some((old, heading)) = &renamed {
+                self.rename_heading_links(&path, old, heading);
             }
         }
         added
+    }
+
+    /// The heading of the note that the table in the active tab's form's table editor is
+    /// under: its own heading in the field, or else the field's.
+    fn form_table_heading(label: &str, editor: &table_editor::Editor) -> String {
+        match editor.heading() {
+            Some((old, _)) => old.to_string(),
+            None => label.to_string(),
+        }
+    }
+
+    /// Rolls on the roll table that step `step` of steps field `index` links to, in the
+    /// active tab's form.
+    fn roll_step(&mut self, index: usize, step: usize) {
+        let Some(tab) = self.active_tab() else {
+            return;
+        };
+        let path = tab.note_path();
+        let Some(target) = tab.form.as_ref().and_then(|form| {
+            form.step_targets(index, step)
+                .into_iter()
+                .find(|target| self.table_keys.contains(&tables::link_key(target)))
+        }) else {
+            return;
+        };
+        match self.linked_table(&target, &path) {
+            Some((name, table, each_column)) => {
+                self.roll_found_as_is(&path, &name, &table, each_column);
+            }
+            None => self.status = format!("There is no roll table called {target}"),
+        }
+    }
+
+    /// Gives the editors of the roll table fields in the active tab's form what the
+    /// settings keep for their tables, once.
+    fn set_form_tables(&mut self) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let path = tab.note_path();
+        let Some(form) = &mut tab.form else {
+            return;
+        };
+        let labels: Vec<String> = form
+            .unset_tables()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect();
+        if labels.is_empty() {
+            return;
+        }
+        let settings: Vec<(bool, BTreeSet<String>)> = labels
+            .iter()
+            .map(|label| {
+                let key = tables::key(&self.root, &path, Some(label));
+                (
+                    self.rolls_each_column(&path, Some(label)),
+                    self.not_rolled(&key),
+                )
+            })
+            .collect();
+        let links = self.table_link_keys();
+        let Some(form) = self.active_tab_mut().and_then(|tab| tab.form.as_mut()) else {
+            return;
+        };
+        for ((_, editor), (each_column, not_rolled)) in
+            form.unset_tables().into_iter().zip(settings)
+        {
+            editor.set_settings(Some(each_column), not_rolled);
+            editor.set_table_links(links.clone());
+        }
+    }
+
+    /// Keeps what roll table field `index` of the active tab's form is set to: whether it
+    /// rolls each column on its own, and the links it doesn't roll.
+    fn save_field_table_settings(&mut self, index: usize) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let path = tab.note_path();
+        let Some((label, editor)) = tab
+            .form
+            .as_mut()
+            .and_then(|form| form.field_table_mut(index))
+        else {
+            return;
+        };
+        if !editor.has_settings() {
+            return;
+        }
+        let (each_column, not_rolled) = (editor.each_column(), editor.not_rolled());
+        self.save_table_settings(&path, Some(&label), Some(&label), each_column, not_rolled);
+    }
+
+    /// Rolls roll table field `index` of the active tab's form, as it is in its editor.
+    fn roll_field_table(&mut self, index: usize) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let path = tab.note_path();
+        let Some((_, editor)) = tab
+            .form
+            .as_mut()
+            .and_then(|form| form.field_table_mut(index))
+        else {
+            return;
+        };
+        let (name, table, each_column) = (editor.name(), editor.table(), editor.each_column());
+        if let Some(table) = table {
+            self.roll_found_as_is(&path, &name, &table, each_column.unwrap_or(false));
+        }
+    }
+
+    /// Rolls the table in the active tab's form's table editor, as it is in the editor.
+    fn roll_form_table(&mut self) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let path = tab.note_path();
+        let Some((label, editor)) = tab.form.as_mut().and_then(form::Form::table_editor_mut) else {
+            return;
+        };
+        let heading = Self::form_table_heading(&label, editor);
+        let (name, table, each_column) = (editor.name(), editor.table(), editor.each_column());
+        let Some(table) = table else {
+            return;
+        };
+        let each_column =
+            each_column.unwrap_or_else(|| self.rolls_each_column(&path, Some(&heading)));
+        self.roll_found_as_is(&path, &name, &table, each_column);
+    }
+
+    /// Gives the table editor just opened in the active tab's form what the settings keep
+    /// for its table, and keeps what the one `finished` with Done set.
+    fn form_table_settings(
+        &mut self,
+        finished: Option<(String, Box<table_editor::Editor>)>,
+        opened: bool,
+    ) {
+        let Some(path) = self.active_tab().map(Tab::note_path) else {
+            return;
+        };
+        if let Some((label, editor)) = finished {
+            let old = Self::form_table_heading(&label, &editor);
+            let renamed = editor
+                .heading()
+                .filter(|(old, new)| !new.is_empty() && old != new)
+                .map(|(_, new)| new.to_string());
+            let heading = renamed.clone().unwrap_or_else(|| old.clone());
+            self.save_table_settings(
+                &path,
+                Some(&old),
+                Some(&heading),
+                editor.each_column(),
+                editor.not_rolled(),
+            );
+            if let Some(new) = renamed {
+                self.rename_heading_links(&path, &old, &new);
+            }
+        }
+        if !opened {
+            return;
+        }
+        let links = self.table_link_keys();
+        let Some((label, editor)) = self
+            .active_tab()
+            .and_then(|tab| tab.form.as_ref())
+            .and_then(form::Form::table_heading)
+        else {
+            return;
+        };
+        let heading = match editor {
+            Some(old) => old,
+            None => label,
+        };
+        let each_column = self.rolls_each_column(&path, Some(&heading));
+        let key = tables::key(&self.root, &path, Some(&heading));
+        let not_rolled = self.not_rolled(&key);
+        if let Some(tab) = self.active_tab_mut()
+            && let Some((_, editor)) = tab.form.as_mut().and_then(form::Form::table_editor_mut)
+        {
+            editor.set_settings(Some(each_column), not_rolled);
+            editor.set_table_links(links);
+        }
+    }
+
+    /// Keeps what the table editor set for the table under `heading` in the note at
+    /// `path`, which was under `old`: whether it rolls each column (if it could be set),
+    /// and the tables it links to without rolling.
+    fn save_table_settings(
+        &mut self,
+        path: &Path,
+        old: Option<&str>,
+        heading: Option<&str>,
+        each_column: Option<bool>,
+        not_rolled: BTreeSet<String>,
+    ) {
+        let old_key = tables::key(&self.root, path, old);
+        let key = tables::key(&self.root, path, heading);
+        let before = self.table_settings.clone();
+        let each_column = each_column.unwrap_or_else(|| self.rolls_each_column(path, old));
+        if old_key != key {
+            self.table_settings.set(&old_key, false);
+            self.table_settings
+                .set_not_rolled(&old_key, BTreeSet::new());
+        }
+        self.table_settings.set(&key, each_column);
+        self.table_settings.set_not_rolled(&key, not_rolled);
+        if self.table_settings == before {
+            return;
+        }
+        if let Err(error) = self.table_settings.save(&self.root) {
+            self.status = format!("Could not remember how the table rolls: {error}");
+        }
+        self.refresh_tables();
+    }
+
+    /// Points the links to heading `old` of the note at `note`, in the other notes, to
+    /// heading `new`, as when a roll table under it is renamed.
+    fn rename_heading_links(&mut self, note: &Path, old: &str, new: &str) {
+        let mut changed = 0;
+        let mut problems = Vec::new();
+        for path in markdown_files(&self.tree) {
+            if path == note {
+                continue;
+            }
+            let tab = self
+                .tabs
+                .iter()
+                .position(|tab| tab.path.as_ref() == Some(&path));
+            // An open note with unsaved changes gets them in its tab, to save with them.
+            if let Some(index) = tab
+                && self.tabs[index].modified
+            {
+                let Ok(text) = self.tabs[index].text() else {
+                    continue;
+                };
+                if let Some((text, count)) =
+                    links::rename_heading(&text, &path, &self.index, note, old, new)
+                {
+                    let tab = &mut self.tabs[index];
+                    match &tab.form {
+                        Some(form) if !tab.source => {
+                            if let Ok(parsed) = note::parse(&text) {
+                                tab.form = Some(Form::from_note(form.ty.clone(), parsed));
+                            }
+                        }
+                        _ => tab.content = text_editor::Content::with_text(&text),
+                    }
+                    tab.preview = None;
+                    changed += count;
+                }
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Some((text, count)) =
+                links::rename_heading(&text, &path, &self.index, note, old, new)
+            else {
+                continue;
+            };
+            if std::fs::write(&path, text).is_err() {
+                problems.push(self.relative(&path));
+                continue;
+            }
+            changed += count;
+            if let Some(index) = tab {
+                let _ = self.reload_tab(index);
+            }
+        }
+        self.status = match changed {
+            0 => format!("Renamed the {new} table"),
+            1 => format!("Renamed the {new} table and updated 1 link to it"),
+            count => format!("Renamed the {new} table and updated {count} links to it"),
+        };
+        if !problems.is_empty() {
+            self.status.push_str(&format!(
+                ". Could not update the links in {}",
+                problems.join(", ")
+            ));
+        }
+    }
+
+    /// The [`tables::link_key`]s of every roll table a link can name: each table's note,
+    /// and `Note#Heading` for a table under a heading, the built-in tables included.
+    fn table_link_keys(&self) -> BTreeSet<String> {
+        let mut keys = BTreeSet::new();
+        for entry in self.all_tables() {
+            keys.insert(tables::link_key(&entry.note));
+            if let Some(heading) = &entry.table.heading {
+                keys.insert(tables::link_key(&format!("{}#{heading}", entry.note)));
+            }
+        }
+        for built_in in tables::BUILT_IN {
+            keys.insert(tables::link_key(built_in.name));
+            for table in tables::find(built_in.text) {
+                if let Some(heading) = &table.heading {
+                    keys.insert(tables::link_key(&format!("{}#{heading}", built_in.name)));
+                }
+            }
+        }
+        keys
+    }
+
+    /// Opens the note at `path` in the reading view, with the table editor on the roll
+    /// table that starts at `start` in it.
+    fn edit_table_in(&mut self, path: PathBuf, start: usize) -> Task<Message> {
+        self.open_file(path.clone());
+        if self.active_tab().and_then(|tab| tab.path.as_ref()) != Some(&path) {
+            return Task::none();
+        }
+        self.read_active_tab();
+        let block = self
+            .active_tab()
+            .and_then(|tab| tab.preview.as_ref())
+            .and_then(|preview| {
+                (0..preview.block_count()).find(|&block| {
+                    preview
+                        .block_range(block)
+                        .is_some_and(|range| range.start == start)
+                })
+            });
+        match block {
+            Some(block) => self.edit_table(block),
+            None => Task::none(),
+        }
+    }
+
+    /// Adds a d6 roll table after the block the right-click menu was opened on (or at the
+    /// end), and opens the table editor on it.
+    fn add_table_here(&mut self) -> Task<Message> {
+        let after = self.menu_block;
+        let editing = match self.active_tab().and_then(|tab| tab.edit.as_ref()) {
+            Some(ReadEdit::Block { index, .. } | ReadEdit::Table { index, .. }) => Some(*index),
+            _ => None,
+        };
+        let added = self.finish_editing();
+        let after = match (after, editing) {
+            (Some(after), Some(edited)) if after > edited => {
+                Some(after.saturating_add_signed(added))
+            }
+            _ => after,
+        };
+        let (root, index) = (self.root.clone(), self.index.clone());
+        let Some(tab) = self.active_tab_mut().filter(|tab| tab.is_note()) else {
+            return Task::none();
+        };
+        let Some(preview) = &tab.preview else {
+            return Task::none();
+        };
+        let text = preview.source().to_string();
+        let at = after
+            .and_then(|after| preview.block_range(after))
+            .map_or(text.len(), |range| range.end);
+        let table = tables::markdown(&tables::Blank {
+            die: "d6".into(),
+            columns: vec!["Result".into()],
+            rows: None,
+            pasted: String::new(),
+        });
+        // The table gets a blank line on each side, so it isn't read as part of a paragraph.
+        let before = text[..at].trim_end_matches('\n');
+        let rest = text[at..].trim_start_matches('\n');
+        let lead = if before.is_empty() { "" } else { "\n\n" };
+        let start = before.len() + lead.len();
+        let tail = if rest.is_empty() { "" } else { "\n" };
+        let table = table.trim_end_matches('\n');
+        let new = format!("{before}{lead}{table}\n{tail}{rest}");
+        let added = (text.clone(), tab.modified);
+        tab.set_text(&new);
+        tab.modified = true;
+        let preview = tab.make_preview(&root, &index);
+        let block = (0..preview.block_count()).find(|&block| {
+            preview
+                .block_range(block)
+                .is_some_and(|range| range.start == start)
+        });
+        tab.preview = Some(preview);
+        let Some(block) = block else {
+            return Task::none();
+        };
+        let _ = self.edit_table(block);
+        let Some(ReadEdit::Table {
+            editor,
+            added: slot,
+            ..
+        }) = self.active_tab_mut().and_then(|tab| tab.edit.as_mut())
+        else {
+            return Task::none();
+        };
+        *slot = Some(added);
+        // Focusing its first box scrolls it into sight, as it may be further down.
+        let first = editor.cell_id(0, 0);
+        iced::advanced::widget::operate(form::tab(vec![first], false)).discard()
     }
 
     /// Opens the table editor on the roll table that is block `index` of the active tab's
@@ -2803,11 +3302,26 @@ impl Workspace {
         let path = tab.note_path();
         let name = table.name(&self.tree_name(&path, false));
         let each_column = self.rolls_each_column(&path, table.heading.as_deref());
-        let editor = table_editor::Editor::new(&source, &table, &name, Some(each_column));
+        // A heading with more than one table under it can't be renamed from one of them.
+        let shared = tables::find(&source)
+            .iter()
+            .filter(|other| other.heading.is_some() && other.heading == table.heading)
+            .count()
+            > 1;
+        let table = self.with_settings(&path, table);
+        let mut editor = table_editor::Editor::new(&source, &table, &name, Some(each_column));
+        editor.set_table_links(self.table_link_keys());
+        if shared {
+            editor.keep_heading();
+        }
         let mut editor = Box::new(editor);
         let focus = editor.take_focus();
         if let Some(tab) = self.active_tab_mut() {
-            tab.edit = Some(ReadEdit::Table { index, editor });
+            tab.edit = Some(ReadEdit::Table {
+                index,
+                editor,
+                added: None,
+            });
         }
         match focus {
             Some(id) => iced::widget::operation::focus(id),
@@ -4502,6 +5016,24 @@ impl Workspace {
                     self.copy_built_in(&name);
                     Task::none()
                 }
+                tables::Message::Edit(path, start) => self.edit_table_in(path, start),
+                tables::Message::EditBuiltIn(name) => {
+                    self.copy_built_in(&name);
+                    let Some(path) = self.active_tab().and_then(|tab| tab.path.clone()) else {
+                        return Task::none();
+                    };
+                    let start = self.note_text(&path).and_then(|text| {
+                        tables::find(&text).first().map(|table| table.range.start)
+                    });
+                    match start {
+                        Some(start) => self.edit_table_in(path, start),
+                        None => Task::none(),
+                    }
+                }
+                tables::Message::Menu(pick, position) => {
+                    self.context = Some((Target::Table(pick), position));
+                    Task::none()
+                }
                 tables::Message::New => self.update(Message::ShowNewTable(None)),
                 tables::Message::Close => {
                     self.tables.open = false;
@@ -4510,12 +5042,26 @@ impl Workspace {
             },
             Message::EditTable(index) => self.edit_table(index),
             Message::TableEditor(message) => {
+                let (root, index) = (self.root.clone(), self.index.clone());
                 let Some(tab) = self.active_tab_mut() else {
                     return Task::none();
                 };
+                let path = tab.note_path();
                 let Some(ReadEdit::Table { editor, .. }) = &mut tab.edit else {
                     return Task::none();
                 };
+                // Roll to try it rolls the table as it is in the editor.
+                if matches!(message, table_editor::Message::Roll) {
+                    let (name, table) = (editor.name(), editor.table());
+                    let each_column = editor.each_column();
+                    if let Some(table) = table {
+                        let each_column = each_column.unwrap_or_else(|| {
+                            self.rolls_each_column(&path, table.heading.as_deref())
+                        });
+                        self.roll_found_as_is(&path, &name, &table, each_column);
+                    }
+                    return Task::none();
+                }
                 match editor.update(message) {
                     table_editor::Outcome::Editing => match editor.take_focus() {
                         Some(id) => {
@@ -4528,7 +5074,16 @@ impl Workspace {
                         Task::none()
                     }
                     table_editor::Outcome::Cancel => {
-                        tab.edit = None;
+                        // A table just added goes again.
+                        if let Some(ReadEdit::Table {
+                            added: Some((text, modified)),
+                            ..
+                        }) = tab.edit.take()
+                        {
+                            tab.set_text(&text);
+                            tab.modified = modified;
+                            tab.preview = Some(tab.make_preview(&root, &index));
+                        }
                         Task::none()
                     }
                 }
@@ -4617,13 +5172,13 @@ impl Workspace {
                 }
                 Task::none()
             }
-            Message::CreateTable => {
-                let result = self.create_table();
-                if let Err(message) = result {
+            Message::CreateTable => match self.create_table() {
+                Ok(task) => task,
+                Err(message) => {
                     self.dialog_result(Err(message));
+                    Task::none()
                 }
-                Task::none()
-            }
+            },
             Message::NoteFromRollName(value) => {
                 if let Some(Dialog::NoteFromRoll { name, error, .. }) = &mut self.dialog {
                     *name = value;
@@ -5042,6 +5597,10 @@ impl Workspace {
                 self.follow_list_item(index, item)
             }
             Message::Form(form::Message::FollowAll(index)) => self.follow_all(index),
+            Message::Form(form::Message::RollStep(index, step)) => {
+                self.roll_step(index, step);
+                Task::none()
+            }
             Message::Form(form::Message::FollowStep(index, step)) => {
                 let Some((field, target)) = self
                     .active_tab()
@@ -5064,6 +5623,21 @@ impl Workspace {
                         .and_then(|tab| tab.form.as_ref())
                         .and_then(form::Form::focused_linking_field)
                         .is_some()
+                {
+                    let link = link.clone();
+                    return self.update(Message::CompleteLink(link));
+                }
+                // A link being typed in a roll table's result is finished by Tab too.
+                let in_table = self.active_tab().is_some_and(|tab| match &tab.edit {
+                    Some(ReadEdit::Table { editor, .. }) => editor.link_query().is_some(),
+                    _ => tab
+                        .form
+                        .as_ref()
+                        .is_some_and(|form| form.typing_in_table() && form.link_query().is_some()),
+                });
+                if in_table
+                    && !back
+                    && let Some((link, _)) = self.link_suggestions().notes.first()
                 {
                     let link = link.clone();
                     return self.update(Message::CompleteLink(link));
@@ -5122,6 +5696,14 @@ impl Workspace {
                 self.dice.roll_field(&label, &expression);
                 Task::none()
             }
+            Message::Form(form::Message::Table(table_editor::Message::Roll)) => {
+                self.roll_form_table();
+                Task::none()
+            }
+            Message::Form(form::Message::FieldTable(index, table_editor::Message::Roll)) => {
+                self.roll_field_table(index);
+                Task::none()
+            }
             Message::Form(message) => {
                 // Picking a choice in the reading view finishes editing that field.
                 let picked = matches!(message, form::Message::Choice(..));
@@ -5136,11 +5718,29 @@ impl Workspace {
                     form::Message::Long(_, text_editor::Action::Click(_))
                 );
                 let moves_focus = message.moves_focus();
+                let opens_table = matches!(message, form::Message::EditTable(..));
+                let field_table = match &message {
+                    form::Message::FieldTable(index, _) => Some(*index),
+                    _ => None,
+                };
                 let ctrl = self.ctrl;
                 if let Some(tab) = self.active_tab_mut()
                     && let Some(form) = &mut tab.form
                 {
                     tab.modified |= form.update(message);
+                    let finished = form.take_finished_table();
+                    if finished.is_some() || opens_table {
+                        self.form_table_settings(finished, opens_table);
+                    }
+                    if let Some(index) = field_table {
+                        self.save_field_table_settings(index);
+                    }
+                    let Some(tab) = self.active_tab_mut() else {
+                        return Task::none();
+                    };
+                    let Some(form) = &mut tab.form else {
+                        return Task::none();
+                    };
                     if click
                         && ctrl
                         && let Some(target) = form.link_under_cursor()
@@ -5212,7 +5812,12 @@ impl Workspace {
                         }
                         return iced::widget::operation::focus(FIELD_EDITOR);
                     }
-                    Some(ReadEdit::Table { .. }) => return Task::none(),
+                    Some(ReadEdit::Table { editor, .. }) => {
+                        return match editor.complete_link(&link) {
+                            Some(id) => iced::widget::operation::focus(id),
+                            None => Task::none(),
+                        };
+                    }
                     None if reading => return Task::none(),
                     None => {}
                 }
@@ -5323,6 +5928,11 @@ impl Workspace {
                 }
                 Task::none()
             }
+            Message::HoverBlock(index) => {
+                self.hovered_block = Some(index);
+                Task::none()
+            }
+            Message::AddTableHere => self.add_table_here(),
             Message::AddText => {
                 if let Some(tab) = self.active_tab_mut()
                     && let Some(preview) = &tab.preview
@@ -5637,6 +6247,7 @@ impl Workspace {
                 Task::none()
             }
             Message::OpenContextMenu(target, position) => {
+                self.menu_block = self.hovered_block;
                 self.context = Some((target, position));
                 Task::none()
             }
@@ -6089,10 +6700,41 @@ impl Workspace {
                 note_items(&mut entries);
                 entries
             }
+            Target::Table(tables::Pick::Note(path, start)) => {
+                let table = |message| Some(Message::Tables(message));
+                vec![
+                    item("Roll", table(tables::Message::Roll(path.clone(), *start))),
+                    item(
+                        "Edit Table",
+                        table(tables::Message::Edit(path.clone(), *start)),
+                    ),
+                    item("Open Note", table(tables::Message::Open(path.clone()))),
+                    Entry::Separator,
+                    item(
+                        "Show in File Tree",
+                        Some(Message::RevealInTree(path.clone())),
+                    ),
+                ]
+            }
+            Target::Table(tables::Pick::BuiltIn(name)) => {
+                let table = |message| Some(Message::Tables(message));
+                vec![
+                    item("Roll", table(tables::Message::RollBuiltIn(name.clone()))),
+                    item(
+                        "Copy into Campaign and Edit",
+                        table(tables::Message::EditBuiltIn(name.clone())),
+                    ),
+                    item(
+                        "Copy into Campaign",
+                        table(tables::Message::CopyBuiltIn(name.clone())),
+                    ),
+                ]
+            }
             Target::Reading => {
                 let mut entries = vec![
                     item("Edit This Note", Some(Message::SetReading(false))).shortcut("Ctrl+R"),
                     item("Add Text at the End", Some(Message::AddText)),
+                    item("Add Roll Table Here", Some(Message::AddTableHere)),
                     item("Insert Picture...", Some(Message::InsertPicture))
                         .shortcut("Ctrl+Shift+K"),
                 ];
@@ -6657,8 +7299,11 @@ impl Workspace {
                     (Some(ReadEdit::Block { content, .. }), _) => {
                         links::query(content).map(|query| (query, false))
                     }
+                    (Some(ReadEdit::Table { editor, .. }), _) => {
+                        editor.link_query().map(|query| (query, false))
+                    }
                     (_, Some(form)) => form.link_query(),
-                    (Some(ReadEdit::Field(_) | ReadEdit::Table { .. }), None) => None,
+                    (Some(ReadEdit::Field(_)), None) => None,
                     (None, None) if tab.reading() => None,
                     (None, None) => links::query(&tab.content).map(|query| (query, false)),
                 };
@@ -6678,9 +7323,31 @@ impl Workspace {
             .and_then(form::Form::focused_linking_field)
             .and_then(|field| self.link_folder(field));
 
-        let notes = self
+        let mut notes = self
             .index
             .suggest(&query, &from, folder.as_deref(), SUGGESTIONS);
+        // A result in a roll table can roll the built-in tables too.
+        let in_table = !self.walkthrough_shown()
+            && self.active_tab().is_some_and(|tab| {
+                matches!(tab.edit, Some(ReadEdit::Table { .. }))
+                    || form.is_some_and(form::Form::typing_in_table)
+            });
+        if in_table {
+            let typed = query.trim().to_lowercase();
+            for built_in in tables::BUILT_IN {
+                if notes.len() >= SUGGESTIONS {
+                    break;
+                }
+                let name = built_in.name;
+                let taken = notes
+                    .iter()
+                    .any(|(link, _)| link.eq_ignore_ascii_case(name))
+                    || self.index.resolve(name, &from).is_some();
+                if !taken && name.to_lowercase().contains(&typed) {
+                    notes.push((name.to_string(), format!("{name} (built in)")));
+                }
+            }
+        }
         // A link field that already names a note needs no suggestions.
         if in_field && self.index.resolve(&query, &from).is_some() {
             return none;
@@ -7840,6 +8507,7 @@ impl Workspace {
                     editor_menu,
                     &dice.field,
                     &self.tags,
+                    &self.table_keys,
                     Some(Message::Walkthrough(walkthrough_tab::Message::Next)),
                 )
             });
@@ -8117,7 +8785,8 @@ impl Workspace {
         let tab = self.active_tab()?;
         match &tab.edit {
             Some(ReadEdit::Block { content, .. }) => Some(content),
-            Some(ReadEdit::Field(_) | ReadEdit::Table { .. }) => None,
+            Some(ReadEdit::Table { editor, .. }) => editor.focused_cell(),
+            Some(ReadEdit::Field(_)) => None,
             None if tab.reading() => None,
             None if tab.shows_form() => tab.form.as_ref()?.focused_text(),
             None => Some(&tab.content),
@@ -8131,12 +8800,10 @@ impl Workspace {
         let shows_form = tab.shows_form();
         match &mut tab.edit {
             Some(ReadEdit::Block { content, .. }) => Some((content, BLOCK_EDITOR.into())),
-            Some(ReadEdit::Field(_) | ReadEdit::Table { .. }) => None,
+            Some(ReadEdit::Table { editor, .. }) => editor.focused_cell_mut(),
+            Some(ReadEdit::Field(_)) => None,
             None if reading => None,
-            None if shows_form => {
-                let (index, content) = tab.form.as_mut()?.focused_text_mut()?;
-                Some((content, form::field_id(index)))
-            }
+            None if shows_form => tab.form.as_mut()?.focused_text_mut(),
             None => Some((&mut tab.content, EDITOR.into())),
         }
     }
@@ -8233,6 +8900,7 @@ impl Workspace {
             let mut editing = preview::Editing {
                 on_link: Message::PreviewLink,
                 on_block: Message::EditBlock,
+                on_hover: Message::HoverBlock,
                 on_task: Message::ToggleTask,
                 on_field: Message::EditField,
                 on_roll: Message::RollField,
@@ -8259,8 +8927,10 @@ impl Workspace {
                         .and_then(|form| field_input(c, form, key, accept.clone(), &self.tags))
                         .map(|input| (key.clone(), column![input, chips()].spacing(4).into()));
                 }
-                Some(ReadEdit::Table { index, editor }) => {
-                    editing.block = Some((*index, editor.view(c, Message::TableEditor, shortcut)));
+                Some(ReadEdit::Table { index, editor, .. }) => {
+                    let editor =
+                        editor.view(c, Message::TableEditor, shortcut, self.link_colors(c));
+                    editing.block = Some((*index, column![editor, chips()].spacing(4).into()));
                 }
                 None => {}
             }
@@ -8288,6 +8958,7 @@ impl Workspace {
                 editor_menu,
                 &dice.field,
                 &self.tags,
+                &self.table_keys,
             ))
             .width(Fill)
             .height(Fill)

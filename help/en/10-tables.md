@@ -25,7 +25,23 @@ It's plain Markdown, so it shows as a table in Obsidian and anywhere else, and s
 - **Result columns** are the headers after the die. Add more for tables like Name and Description, or First and Last.
 - **Paste a list** to copy a table from a web page or a PDF: one result a line. Numbers or ranges at the start of the lines, like `1.` or `3-4`, are kept. Otherwise the rows are numbered for you, and the die is picked to fit.
 
-The note opens ready to fill in. You can also type a table into any note yourself.
+The note opens in the table editor, ready to fill in. You can also type a table into any note yourself, or right-click in the reading view and pick **Add Roll Table Here** for a d6 table after the paragraph you clicked, open in the table editor.
+
+## Changing a table
+
+Click a roll table in the reading view, or **Edit Table** above it, and it opens in the table editor. Right-click a table in the Roll Tables list and pick **Edit Table** to open it there. It works on any roll table in any note, like the encounter tables in a chapter of a sourcebook, and only that table changes.
+
+- **Name** is the heading the table is under, for a table under one. Renaming it renames the heading, and the links to it in your other notes, like `[[Encounters#Marsh]]`, are changed to match.
+- **Die** picks the die. Changing it keeps each row's share: a d6 table turned into a d20 table keeps its weighting. **Spread Evenly** gives every row the same share.
+- **Calculate ranges** works out which numbers each row covers. Each row's **−** and **+** say how many of the die's numbers it takes. Untick it to type your own ranges, like 2-3 or 12+. A table with gaps or ranges of its own opens unticked, just as it was written.
+- Each row shows its **chance** of being rolled, worked out from the real dice, so on 2d6 a row for 7 shows 17% and one for 2 shows 3%.
+- Each column has a box in every row. **Enter** adds a row, **Shift+Enter** starts a new line in a result, and **Tab** moves to the next box. Rows and columns can be added, moved and removed.
+- **Link** on a row, or typing `[[`, links a result to another note or table. A result that links to a roll table gets a **Rolls on** box: ticked, the table is rolled and its result put in place; unticked, the link stays a link.
+- **Paste a List...** adds a row for each line of a list copied from a web page or a PDF. Numbers at the start of every line, like `3-4`, are kept.
+- **Roll** rolls the table as it is in the editor, to try it.
+- **Done** puts the table back into the note. **Cancel** leaves it as it was.
+
+Tables are still ordinary Markdown tables that Obsidian and other apps read. A line break in a result is saved as `<br>`. Which links don't roll is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 
 ## The die and the rows
 
@@ -46,7 +62,7 @@ The result shows in the dice roller, with what the die rolled. **Copy** copies i
 
 ## Results that roll more
 
-- A result that links to another roll table, like `[[Storms]]`, rolls that table and puts its result in place. `[[Weather#Winter]]` rolls the table under the Winter heading of the Weather note. The tables it rolled on are listed under the result.
+- A result that links to another roll table, like `[[Storms]]`, rolls that table and puts its result in place, unless its **Rolls on** box is unticked in the table editor. `[[Weather#Winter]]` rolls the table under the Winter heading of the Weather note. The tables it rolled on are listed under the result.
 - A link to a note that isn't a table stays its name.
 - Dice in a result are rolled: `1d4 days of rain` might give "3 days of rain".
 
@@ -75,7 +91,7 @@ Some tables come with the app, listed under **Built in** in the Roll Tables list
 The world-building and adventure tables are kept genre-light, so they fit a fantasy, sci-fi or modern world.
 - **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each.
 
-Roll them like any other table, link to them from your own (`[[Norse names]]`, `[[Norse names#Male]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled.
+Roll them like any other table, link to them from your own (`[[Norse names]]`, `[[Norse names#Male]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled. Right-click it and pick **Copy into Campaign and Edit** to open your copy in the table editor straight away.
 
 ## Fields that roll on a table
 
@@ -95,3 +111,9 @@ The result shows in the dice roller too, so you can copy it or roll again. In ne
 - The campaign note's Name rolls on **Campaign names**, Big picture on **Threats**, and Themes and tone on **Tone**.
 - A people's Name rolls on **Peoples**, an event's Name on **Historic events** and Consequences on **Aftermath**, a religion's Name on **Faiths**, and a deity's Name on **Deity names** and Domains on **Domains**.
 - Magic and technology notes roll their Name on **Wonders**, Source on **Sources of power**, and Cost and limits on **Costs and limits**.
+
+## Roll table fields
+
+A field in **Edit > Types...** can be a **Roll table**, like Encounters on a location or Loot on a dungeon room. Each note of that type has the table editor in its form, always open, starting with a d6 table. It's saved as a `## Encounters` section with the table under it, so a step or another table can roll it with `[[Old Mill#Encounters]]`.
+
+If a note's section has more than just a table in it, the field shows it as long text instead, so nothing in it is lost, with **Edit Table** to change the table.

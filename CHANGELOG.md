@@ -13,6 +13,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - **Enter** adds a row, **Shift+Enter** starts a new line in a result, **Tab** moves to the next box, and rows and columns can be added, moved and removed. **Done** puts the table back into the note; **Cancel** leaves it as it was.
 - It works on any roll table in any note, like the encounter tables in a chapter of a sourcebook, and only that table changes. A long text field in the form with a roll table in it has **Edit Table** too.
 - Tables are still ordinary Markdown tables that Obsidian and other apps read. A line break in a result is saved as `<br>`, and shows as a line break in the reading view.
+- **Link** on a row, or typing `[[`, links a result to another note or table, with the usual suggestions (Ctrl+K works too). A result that links to a roll table gets a **Rolls on** box, ticked to start with: untick it and the link stays a link when the table is rolled. Which links don't roll is kept in `.dungeon_elements/tables.yaml`.
+- **Name** renames the heading a table is under, and the links to it in the note and in your other notes, like `[[Encounters#Marsh]]`, follow.
+- **Paste a List...** adds a row for each line of a list copied from a web page or a PDF, and **Roll** tries the table as it is in the editor.
+- **Add Roll Table Here**, in the reading view's right-click menu, adds a d6 table after the paragraph you clicked and opens it in the editor. **New Roll Table** opens the new table in the editor too.
+- Right-click a table in the Roll Tables list for **Roll**, **Edit Table** and **Open Note**. A built-in table has **Copy into Campaign and Edit**.
+- A new **Roll table** field kind in **Edit > Types...**: each note has the table editor in its form, always open, starting with a d6 table, saved as a `## Label` section that steps and other tables can roll with `[[Note#Label]]`.
+- A quest step that links to a roll table, like `Cross the marsh: [[Encounters#Marsh]]`, has a button that rolls it.
 
 ### More generators
 

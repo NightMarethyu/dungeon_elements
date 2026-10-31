@@ -261,6 +261,9 @@ pub enum Kind {
     /// Dice to roll, like `2d6+3` or `1d20+5 advantage`: picked as a number of dice, a die,
     /// a modifier and a special rule, and stored as that text.
     Dice,
+    /// A roll table, filled in with the table editor and stored as a `## Label` section
+    /// that is a Markdown table, so it can be rolled as `[[Note#Label]]`.
+    Table,
 }
 
 impl Kind {
@@ -269,10 +272,11 @@ impl Kind {
         matches!(self, Kind::Text | Kind::Longtext)
     }
 
-    pub const ALL: [Kind; 11] = [
+    pub const ALL: [Kind; 12] = [
         Kind::Text,
         Kind::Longtext,
         Kind::Steps,
+        Kind::Table,
         Kind::Number,
         Kind::Dice,
         Kind::Date,
@@ -285,7 +289,8 @@ impl Kind {
 
     /// The kinds a field added to a single note can have.
     ///
-    /// A choice needs its options listed in the type, so it isn't one of them.
+    /// A choice needs its options listed in the type, so it isn't one of them. Nor is a
+    /// roll table: a note's own sections read back as long text, which has Edit Table.
     pub const FOR_NOTE: [Kind; 10] = [
         Kind::Text,
         Kind::Longtext,
@@ -301,7 +306,7 @@ impl Kind {
 
     /// Whether fields of this kind are `## Label` sections of the body, not front matter.
     pub fn is_section(self) -> bool {
-        matches!(self, Kind::Longtext | Kind::Steps)
+        matches!(self, Kind::Longtext | Kind::Steps | Kind::Table)
     }
 
     /// Whether fields of this kind can link to notes, and so have a folder they link to.
@@ -324,6 +329,7 @@ impl std::fmt::Display for Kind {
             Kind::Longtext => "Long text",
             Kind::Steps => "Steps",
             Kind::Dice => "Dice",
+            Kind::Table => "Roll table",
         })
     }
 }

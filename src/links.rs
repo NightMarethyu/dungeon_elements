@@ -562,6 +562,43 @@ pub fn retarget_note(text: &str, old: &str, new: &str) -> Option<(String, usize)
     })
 }
 
+/// Changes the heading the links in `text` (the note at `from`) point to from `old` to
+/// `new`, in links to the note at `note`, like `[[Chapter 4#Encounters]]`. Returns the new text and how many links
+/// changed, or `None` if none did.
+pub fn rename_heading(
+    text: &str,
+    from: &Path,
+    index: &Index,
+    note: &Path,
+    old: &str,
+    new: &str,
+) -> Option<(String, usize)> {
+    let mut result = text.to_string();
+    let mut changed = 0;
+    for link in find(text).into_iter().rev() {
+        if index.resolve(text[link.target.clone()].trim(), from) != Some(note) {
+            continue;
+        }
+        // The heading runs from the `#` after the target to the shown text or the end.
+        let close = link.range.end - 2;
+        let tail = &text[link.target.end..close];
+        let Some(rest) = tail.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let start = close - tail.len() + (tail.len() - rest.len());
+        let end = start
+            + rest
+                .find("\\|")
+                .or_else(|| rest.find('|'))
+                .unwrap_or(rest.len());
+        if text[start..end].trim().eq_ignore_ascii_case(old.trim()) {
+            result.replace_range(start..end, new.trim());
+            changed += 1;
+        }
+    }
+    (changed > 0).then_some((result, changed))
+}
+
 /// Turns the links to `target` in `text` back into plain text: their shown text, or the
 /// name they link to. Returns `None` if no link named `target`.
 pub fn unlink_all(text: &str, target: &str) -> Option<String> {
@@ -1191,6 +1228,32 @@ mod tests {
             .into_iter()
             .map(|link| &text[link.target])
             .collect()
+    }
+
+    #[test]
+    fn renames_the_heading_links_point_to() {
+        let root = Path::new("/c");
+        let index = Index::new(root, [root.join("Chapter 4.md"), root.join("Other.md")]);
+        let note = root.join("Chapter 4.md");
+        let text = "[[Chapter 4#Encounters]] [[chapter 4 # encounters|roll]] [[#Encounters]] [[Other#Encounters]] [[Chapter 4#Weather]] | [[Chapter 4#Encounters\\|x]] |";
+        let (renamed, count) = rename_heading(
+            text,
+            &root.join("Other.md"),
+            &index,
+            &note,
+            "Encounters",
+            "On the road",
+        )
+        .unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(
+            renamed,
+            "[[Chapter 4#On the road]] [[chapter 4 #On the road|roll]] [[#Encounters]] [[Other#Encounters]] [[Chapter 4#Weather]] | [[Chapter 4#On the road\\|x]] |"
+        );
+        let (own, count) =
+            rename_heading(text, &note, &index, &note, "Encounters", "Road").unwrap();
+        assert_eq!(count, 3);
+        assert!(own.contains("[[Chapter 4#Road]]"));
     }
 
     #[test]

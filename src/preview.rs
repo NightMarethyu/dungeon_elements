@@ -144,6 +144,8 @@ pub struct Editing<'a, M> {
     pub on_link: fn(Uri) -> M,
     /// Block `index` was clicked.
     pub on_block: fn(usize) -> M,
+    /// The mouse went over block `index`, so a right-click menu can add things after it.
+    pub on_hover: fn(usize) -> M,
     /// The task box whose `[ ]` is at this place in the note's text was clicked.
     pub on_task: fn(usize) -> M,
     /// The field with this front matter key was clicked (the title is `name`).
@@ -413,6 +415,9 @@ impl Preview {
             )
             .on_press(edit.on_page),
         )
+        // The form's id, so moving the focus to a box in the table editor scrolls to it
+        // as it does in the form.
+        .id(crate::form::SCROLL)
         .height(Fill)
         .into()
     }
@@ -453,6 +458,7 @@ impl Preview {
 
         let block_element: Element<'a, M> = mouse_area(block)
             .on_press((edit.on_block)(index))
+            .on_enter((edit.on_hover)(index))
             .interaction(Interaction::Text)
             .into();
         let Some(table) = &self.blocks[index].table else {
