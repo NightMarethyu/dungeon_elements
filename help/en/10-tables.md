@@ -80,7 +80,7 @@ Rolling each column puts the results together with spaces. A result that starts 
 
 ## Built-in tables
 
-Some tables come with the app, listed under **Built in** in the Roll Tables list:
+Some tables come with the app, listed under **Built in** in the Roll Tables list in four groups: **Names**, **Story Prompts**, **World** and **Adventure**. Click a group to open or fold it; the list remembers which are open. The same groups are at the bottom of the **Tables** menu, where picking a table rolls it.
 
 - **Names**, which picks one of the name tables below at random, and **Female names** and **Male names**, which do the same for women's or men's names.
 - **Mixed female names** and **Mixed male names**, which roll the first name and the family name on cultures of their own, so they can differ, like a family with roots in more than one place.
@@ -88,11 +88,11 @@ Some tables come with the app, listed under **Built in** in the Roll Tables list
 - **Fantasy names**, made-up names built from a start and an ending, like Aelwen or Kaeldor.
 - **Place names** (like Ashford or Ravenmoor), **Inn and shop names** (The Crooked Lantern) and **Group names**, for factions, crews and ships (The Silent Hand).
 - Story prompts, a few words to spark an idea, never the whole story: **Wants** (what someone is after), **Trouble** (what's going wrong), **Twists**, **What's here** (details for a room or site) and **Feel of a place**.
+- **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each.
 - World building, for the walkthrough's questions and your own notes: **Campaign names** (The Drowned Crown), **Threats** (a danger as big as the campaign), **Tone** (one word, like Grim or Cozy), **World names**, **Peoples** (the Ashborn, River folk), **Historic events** (The Long Winter) and their **Aftermath**, **Faiths** (The Order of the Open Hand), **Deity names** and **Domains** (what a god holds sway over), and for magic or strange technology, **Wonders** (its name, like the Weave), **Sources of power** and **Costs and limits**.
 - Adventure, for the places and quests near the heroes: **Dangerous places** (The Sunken Crypt), **Quest names** (The Missing Miller), **Rumors**, **Plot hooks**, **Opening scenes** (how a session starts) and **Secrets**.
 
 The world-building and adventure tables are kept genre-light, so they fit a fantasy, sci-fi or modern world.
-- **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each.
 
 Roll them like any other table, link to them from your own (`[[Norse names]]`, `[[Norse names#Male]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled. Right-click it and pick **Copy into Campaign and Edit** to open your copy in the table editor straight away.
 

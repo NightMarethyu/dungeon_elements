@@ -1875,13 +1875,33 @@ impl App {
                 Gap,
                 Do(ShowCampaignFolder),
             ]),
-            Menu::Tables => lines(&[
-                Do(RollTables),
-                Do(DiceRoller),
-                Gap,
-                Do(NewRollTable),
-                Do(AddRollTableHere),
-            ]),
+            Menu::Tables => {
+                let mut entries = lines(&[
+                    Do(RollTables),
+                    Do(DiceRoller),
+                    Gap,
+                    Do(NewRollTable),
+                    Do(AddRollTableHere),
+                    Gap,
+                ]);
+                // Picking a built-in table rolls it, as its die does in the Roll Tables list.
+                entries.extend(tables::Group::ALL.into_iter().map(|group| {
+                    let tables = tables::BUILT_IN
+                        .into_iter()
+                        .filter(|table| table.group == group)
+                        .map(|table| {
+                            menu::item(
+                                table.name,
+                                Some(Message::Tables(tables::Message::RollBuiltIn(
+                                    table.name.to_string(),
+                                ))),
+                            )
+                        })
+                        .collect();
+                    menu::submenu(group.label(), tables)
+                }));
+                entries
+            }
             Menu::Maps => Vec::new(),
             Menu::Help => lines(&[
                 Do(HowTo),
@@ -2291,6 +2311,7 @@ impl Workspace {
                 .filter(|table| self.index.resolve(table.name, &from).is_none())
                 .collect();
             self.tables.set(found, built_in);
+            self.tables.open_groups = self.table_settings.open_groups.clone();
         }
     }
 
@@ -5272,6 +5293,17 @@ impl Workspace {
                 }
                 tables::Message::CopyBuiltIn(name) => {
                     self.copy_built_in(&name);
+                    Task::none()
+                }
+                tables::Message::ToggleGroup(group) => {
+                    let open = &mut self.table_settings.open_groups;
+                    if !open.remove(group.key()) {
+                        open.insert(group.key().to_string());
+                    }
+                    self.tables.open_groups = self.table_settings.open_groups.clone();
+                    if let Err(error) = self.table_settings.save(&self.root) {
+                        self.status = format!("Could not remember which groups are open: {error}");
+                    }
                     Task::none()
                 }
                 tables::Message::Edit(path, start) => self.edit_table_in(path, start),

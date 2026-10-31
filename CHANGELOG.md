@@ -12,6 +12,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - **File > New Campaign...** and **Open Campaign...** work while a campaign is open, closing it first.
 - The dice roller opens and closes with **Ctrl+Shift+D**, or from **View** or **Tables**.
 - Hold **Alt** and press a menu's first letter to open it (**Alt+F** for File), then move about with the arrow keys and pick with **Enter**.
+- The built-in roll tables are in four groups, **Names**, **Story Prompts**, **World** and **Adventure**, in the Roll Tables list (click a group to open or fold it) and at the bottom of the **Tables** menu, where picking one rolls it.
 
 ### Inspire Me dropdown
 
