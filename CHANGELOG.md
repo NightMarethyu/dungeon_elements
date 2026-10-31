@@ -17,6 +17,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Answers are ordinary fields, so changing them in a note changes them in the walkthrough. A note open with unsaved changes gets the answer in its tab.
 - Questions about folders or fields a campaign doesn't have are left out.
 - A template can have walkthrough questions of its own, for its folders. **Export Campaign Structure...** puts the campaign's `_walkthrough.yaml` in the template, importing a template checks it, and a campaign made from the template gets it. New Campaign says when a template has its own questions, and shows **Start the walkthrough** only for a template the walkthrough has questions for. Campaigns made from the starter folders keep using the built-in questions, so they get better ones as the app updates. A `_walkthrough.yaml` the app can't read is listed in **Problems**.
+- **Edit > Walkthrough Questions...** changes the questions a campaign asks, with no YAML to write. Start from the default questions, then change, add, move or remove chapters and questions. Each question picks the note it goes into, the field it fills and the table Inspire me rolls on from lists, and the notes it makes have their folder, how they're named, values to fill in and links from other notes. Mistakes are shown in plain words before saving, and **Save and Try It** opens the walkthrough with the new questions.
 - New guide in **Help > How-To Guides**: The campaign walkthrough.
 
 ### Story prompts
