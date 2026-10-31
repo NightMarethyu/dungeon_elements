@@ -62,3 +62,4 @@ fields:
   - key: secrets
     label: Secrets
     kind: longtext
+    table: Secrets

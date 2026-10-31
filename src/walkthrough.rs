@@ -1511,6 +1511,39 @@ mod tests {
     }
 
     #[test]
+    fn every_built_in_question_has_a_table_of_its_own() {
+        // Each question rolls on built-in tables it names itself, not on Action and
+        // Theme for want of one, unless it names none (`table: ""`) on purpose or its
+        // answer is a set kind of value, like a date.
+        let questions = Questions::built_in();
+        for chapter in &questions.chapters {
+            for question in &chapter.questions {
+                let folder = &questions.notes[&question.note].folder;
+                let ty = types::starter(folder).unwrap_or_else(|| panic!("{folder}"));
+                let field = question.field.as_ref().map(|key| {
+                    ty.fields
+                        .iter()
+                        .find(|field| &field.key == key)
+                        .unwrap_or_else(|| panic!("{folder} has no {key}"))
+                });
+                let ask = &question.ask;
+                match question.table.as_deref() {
+                    Some("") => {}
+                    Some(_) => {
+                        for table in question.tables(field, &ty) {
+                            assert!(crate::tables::built_in(&table).is_some(), "{ask}: {table}");
+                        }
+                    }
+                    None => {
+                        let tables = question.tables(field, &ty);
+                        assert!(tables.is_empty(), "{ask} has no table of its own");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn inspire_me_uses_the_question_then_the_field_then_action_and_theme() {
         let questions = Questions::built_in();
         let npc = types::starter("npcs").unwrap();

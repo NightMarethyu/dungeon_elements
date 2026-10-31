@@ -35,6 +35,7 @@ fields:
   - key: strong_start
     label: Strong start
     kind: longtext
+    table: Opening scenes
   - key: scenes
     label: Scenes
     kind: steps

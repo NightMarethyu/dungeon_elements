@@ -2,6 +2,9 @@ type: site
 label: Site
 removed_fields: [kind]
 fields:
+  - key: name
+    label: Name
+    table: Dangerous places
   - key: danger
     label: Danger
     kind: choice

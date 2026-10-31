@@ -144,12 +144,13 @@ The items in Player Management are all things that will just be built as templat
   - Each question gets an **Inspire me** button that rolls on a story-prompt table (builds on Generators): a question names its table with `table:`, like a field does, falling back to its field's own table, then Action and Theme
   - A walkthrough editor (**Edit > Walkthrough Questions...**), so no one has to write YAML: chapters and question cards with pick lists for the note, field and table, the notes it makes, Start from the default questions, and Try it
   - Built in four steps: the question format, progress file and writing answers into notes; the walkthrough tab with Inspire me, menu items and a help guide; templates' own questions; the walkthrough editor
-- [ ] More generators, so every walkthrough question has a table of its own to roll on (in theory, a GM could fill in the whole walkthrough from the tables alone; no "fill it all in" button is planned)
+- [x] More generators, so every walkthrough question has a table of its own to roll on (in theory, a GM could fill in the whole walkthrough from the tables alone; no "fill it all in" button is planned)
   - Religions and faiths, and deities (names and what they hold sway over)
   - Rumors, plot hooks and quest names, for "What rumors are going around?" and quest notes
   - Peoples and races, historic events, magic and strange technology (name, source, cost), and anything else the walkthrough asks that falls back to Action and Theme today
   - Not for questions about real-world things, like the game system or who plays a hero: those have no Inspire me button
   - Built-in tables stay genre-light, so they fit fantasy, sci-fi and modern campaigns alike. They are a starting point and an example: the hope is that people make their own tables and share them
+  - Built in two steps: 13 tables for the campaign, the world, power and the extraordinary (Campaign names, Threats, Tone, World names, Peoples, Historic events, Aftermath, Faiths, Deity names, Domains, Wonders, Sources of power, Costs and limits), then 6 for the adventure (Dangerous places, Quest names, Rumors, Plot hooks, Opening scenes, Secrets). Each is set on its walkthrough question and on the matching text field in the default template; a test checks that every built-in question names a table of its own
 - [ ] A roll table editor, so people can make and change their own tables without touching the Markdown table: the die, the columns and the rows in a form, with rows that can be added, moved and removed, and ranges kept in step with the die
 - [ ] Menu bar review: work out the most user-friendly menu bar for everything the earlier items added, before Phase 3 adds more
   - A **Tables** menu (new roll table, the Roll Tables list, the built-in tables)

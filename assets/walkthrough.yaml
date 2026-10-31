@@ -201,7 +201,7 @@ chapters:
         table: Wants
       - ask: What dangerous place lies nearby?
         note: danger
-        table: Place names
+        table: Dangerous places
       - ask: What waits there?
         note: danger
         field: description
@@ -209,10 +209,11 @@ chapters:
       - ask: What rumors are going around?
         hint: Short names, like "The Missing Miller". Each becomes a quest.
         note: rumors
+        table: Quest names
       - ask: What is the hook of {name}?
         note: rumors
         field: hook
-        table: Trouble
+        table: Rumors, Plot hooks
 
   - id: heroes
     title: The heroes
@@ -231,6 +232,7 @@ chapters:
         hint: Type names to link NPCs, or make new ones.
         note: heroes
         field: bonds
+        table: Female names, Male names
 
   - id: first_session
     title: The first session
@@ -240,17 +242,17 @@ chapters:
         hint: Start in the middle of something happening.
         note: first_session
         field: strong_start
-        table: Twists
+        table: Opening scenes
       - ask: When does it take place in the world?
         note: first_session
         field: world_date
       - ask: What secrets could the heroes learn?
         note: first_session
         field: secrets
-        table: Twists
+        table: Secrets
       - ask: What first quest pulls them in?
         hint: A link to a quest, like one of the rumors.
         note: first_session
         field: follow_ups
-        table: Trouble
+        table: Quest names, Plot hooks
         pick: [quests]
