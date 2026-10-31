@@ -154,7 +154,8 @@ The items in Player Management are all things that will just be built as templat
 - [ ] Menu bar review: work out the most user-friendly menu bar for everything the earlier items added, before Phase 3 adds more
   - A **Tables** menu (new roll table, the Roll Tables list, the built-in tables)
   - The built-in tables grouped in the Roll Tables list (names, story prompts, world, adventure) instead of one long Built in group
-  - Weigh a ribbon like Microsoft Office's against menus with a toolbar
+  - A tool pane instead of a ribbon (an idea from Adobe's apps): buttons for the tools, under the menu bar by default. With Layouts it can be moved like any pane, or popped out into a floating window that stays above the main window
+  - Users choose which buttons the tool pane shows, picked from a list of everything the menus can do, with no file to edit
 
 ### Phase 3: climax
 
