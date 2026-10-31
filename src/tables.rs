@@ -16,12 +16,12 @@
 //! roll each column on its own is kept in `.dungeon_elements/tables.yaml` in the campaign,
 //! so the notes stay plain tables.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use iced::widget::{button, checkbox, column, container, row, space, text, tooltip};
-use iced::{Center, Element, Fill};
+use iced::{Center, Element, Fill, Point};
 
 use crate::dice::Expression;
 use crate::links;
@@ -52,6 +52,9 @@ pub struct Table {
     pub range: Range<usize>,
     /// Every row's cells as written, the header first, for the table editor.
     pub written: Vec<Vec<String>>,
+    /// The tables its results link to that aren't rolled, as [`link_key`]s. This is kept
+    /// in the campaign's settings, not the note.
+    pub not_rolled: BTreeSet<String>,
 }
 
 /// One row of a roll table: the numbers it covers and its results.
@@ -227,6 +230,7 @@ fn read(heading: Option<String>, rows: Vec<Vec<String>>, range: Range<usize>) ->
         unread: Vec::new(),
         range,
         written,
+        not_rolled: BTreeSet::new(),
     };
     for cells in rows {
         let Some(first) = cells.first() else {
@@ -451,7 +455,7 @@ fn roll_at(
         let result = match row {
             Some(row) => {
                 let cell = row.cells.get(index).map_or("", String::as_str);
-                expand(cell, rng, lookup, depth, &mut inner)
+                expand(cell, &table.not_rolled, rng, lookup, depth, &mut inner)
             }
             None => format!("(no row for {value})"),
         };
@@ -467,10 +471,11 @@ fn roll_at(
     }
 }
 
-/// A result's text with its links to tables rolled, its other links shown as their
-/// names, and its dice rolled.
+/// A result's text with its links to tables rolled (unless they are in `not_rolled`), its
+/// other links shown as their names, and its dice rolled.
 fn expand(
     cell: &str,
+    not_rolled: &BTreeSet<String>,
     rng: &mut fastrand::Rng,
     lookup: &mut Lookup<'_>,
     depth: usize,
@@ -489,7 +494,8 @@ fn expand(
             Some((target, shown)) => (target.trim(), shown.trim()),
             None => (written.trim(), written.trim()),
         };
-        let table = (depth < MAX_DEPTH).then(|| lookup(target)).flatten();
+        let rolls = depth < MAX_DEPTH && !not_rolled.contains(&link_key(target));
+        let table = rolls.then(|| lookup(target)).flatten();
         match table {
             Some((name, table, each_column)) => {
                 let rolled = roll_at(&name, &table, each_column, rng, lookup, depth + 1);
@@ -501,6 +507,37 @@ fn expand(
     }
     out.push_str(&roll_dice(&cell[last..], rng));
     out
+}
+
+/// A link's target as it is compared to say whether the link rolls its table:
+/// `Norse names#Female` as `norse names#female`.
+pub fn link_key(target: &str) -> String {
+    let target = target.split('|').next().unwrap_or(target);
+    target
+        .split('#')
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("#")
+        .to_lowercase()
+}
+
+/// The targets of the links in `text`, as written, like `Storms` or `Names#Female`.
+pub fn link_targets(text: &str) -> Vec<String> {
+    links::find(text)
+        .into_iter()
+        .map(|link| {
+            let written = text[link.range.clone()]
+                .trim_start_matches('!')
+                .trim_start_matches("[[")
+                .trim_end_matches("]]");
+            written
+                .split('|')
+                .next()
+                .unwrap_or(written)
+                .trim()
+                .to_string()
+        })
+        .collect()
 }
 
 /// `text` with each dice expression in it, like `1d4`, replaced by what it rolled.
@@ -537,6 +574,9 @@ pub fn key(root: &Path, path: &Path, heading: Option<&str>) -> String {
 pub struct Settings {
     #[serde(default)]
     pub each_column: BTreeSet<String>,
+    /// For each table, the tables its results link to that it doesn't roll.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub not_rolled: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Settings {
@@ -555,6 +595,15 @@ impl Settings {
         }
         let yaml = serde_yaml_ng::to_string(self).map_err(|error| error.to_string())?;
         std::fs::write(&path, yaml).map_err(|error| error.to_string())
+    }
+
+    /// Sets the tables that the results of table `key` link to without rolling them.
+    pub fn set_not_rolled(&mut self, key: &str, not_rolled: BTreeSet<String>) {
+        if not_rolled.is_empty() {
+            self.not_rolled.remove(key);
+        } else {
+            self.not_rolled.insert(key.to_string(), not_rolled);
+        }
     }
 
     /// Sets whether the table `key` rolls each column on its own.
@@ -694,8 +743,24 @@ pub enum Message {
     RollBuiltIn(String),
     /// Copy the built-in table with this name into the campaign, to change it.
     CopyBuiltIn(String),
+    /// Open the table editor on the table that starts at this place in the note.
+    Edit(PathBuf, usize),
+    /// Copy the built-in table with this name into the campaign, and open the table
+    /// editor on the copy.
+    EditBuiltIn(String),
+    /// A table in the list was right-clicked here.
+    Menu(Pick, Point),
     New,
     Close,
+}
+
+/// A table in the Roll Tables list.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pick {
+    /// The table that starts at this place in the note.
+    Note(PathBuf, usize),
+    /// The built-in table with this name.
+    BuiltIn(String),
 }
 
 /// The Tables list in the sidebar.
@@ -796,7 +861,13 @@ impl List {
                     .padding(iced::padding::left(46)),
                 );
             }
-            rows.push(container(line).padding([2, 8]).into());
+            let pick = Pick::Note(entry.path.clone(), start);
+            rows.push(
+                crate::context_menu::area(container(line).padding([2, 8]), move |position| {
+                    Message::Menu(pick.clone(), position)
+                })
+                .into(),
+            );
         }
 
         if !self.built_in.is_empty() {
@@ -824,25 +895,29 @@ impl List {
                     .on_press(Message::CopyBuiltIn(name.clone())),
                 "Copy it into this campaign, to change it",
             );
+            let pick = Pick::BuiltIn(name.clone());
             rows.push(
-                container(
-                    row![
-                        roll,
-                        container(
-                            text(name)
-                                .size(13)
-                                .color(c.text)
-                                .wrapping(text::Wrapping::None)
-                        )
-                        .clip(true)
-                        .padding([1, 4])
-                        .width(Fill),
-                        copy,
-                    ]
-                    .spacing(6)
-                    .align_y(Center),
+                crate::context_menu::area(
+                    container(
+                        row![
+                            roll,
+                            container(
+                                text(name)
+                                    .size(13)
+                                    .color(c.text)
+                                    .wrapping(text::Wrapping::None)
+                            )
+                            .clip(true)
+                            .padding([1, 4])
+                            .width(Fill),
+                            copy,
+                        ]
+                        .spacing(6)
+                        .align_y(Center),
+                    )
+                    .padding([2, 8]),
+                    move |position| Message::Menu(pick.clone(), position),
                 )
-                .padding([2, 8])
                 .into(),
             );
         }
@@ -919,7 +994,7 @@ fn die_bounds(die: &str) -> (i64, i64) {
 
 /// The pasted lines with anything in them, each as its numbers (if it starts with a
 /// number or range, like `1.` or `3-4`) and its result.
-fn pasted_lines(pasted: &str) -> Vec<(Option<String>, String)> {
+pub fn pasted_lines(pasted: &str) -> Vec<(Option<String>, String)> {
     pasted
         .lines()
         .map(str::trim)
@@ -1145,6 +1220,26 @@ mod tests {
     }
 
     #[test]
+    fn links_that_dont_roll_stay_links() {
+        let mut table = find("| d1 | x |\n| - | - |\n| 1 | Beware [[Storms]] |\n").remove(0);
+        let storms = find("| d1 | Storm |\n| -- | -- |\n| 1 | Hail |\n").remove(0);
+        let mut lookup = |target: &str| {
+            (target == "Storms").then(|| ("Storms".to_string(), storms.clone(), false))
+        };
+        let mut rng = fastrand::Rng::with_seed(1);
+        assert_eq!(
+            roll("x", &table, false, &mut rng, &mut lookup).text(),
+            "Beware Hail"
+        );
+        table.not_rolled.insert(link_key(" storms "));
+        assert_eq!(
+            roll("x", &table, false, &mut rng, &mut lookup).text(),
+            "Beware Storms"
+        );
+        assert_eq!(link_key("Weather # Winter|the cold"), "weather#winter");
+    }
+
+    #[test]
     fn a_table_that_rolls_on_itself_stops() {
         let table = find("| d1 | Again |\n| - | - |\n| 1 | more [[Loop]] |\n").remove(0);
         let mut rng = fastrand::Rng::with_seed(1);
@@ -1326,5 +1421,15 @@ mod tests {
         assert!(settings.each_column.contains("a"));
         settings.set("a", false);
         assert!(settings.each_column.is_empty());
+
+        // Links that don't roll are only written for tables that have some.
+        settings.set_not_rolled("a", ["storms".to_string()].into());
+        let yaml = serde_yaml_ng::to_string(&settings).unwrap();
+        assert!(yaml.contains("not_rolled"), "{yaml}");
+        let read: Settings = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(read, settings);
+        settings.set_not_rolled("a", BTreeSet::new());
+        let yaml = serde_yaml_ng::to_string(&settings).unwrap();
+        assert!(!yaml.contains("not_rolled"), "{yaml}");
     }
 }
