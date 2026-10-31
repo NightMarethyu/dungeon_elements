@@ -20,7 +20,7 @@ use iced::mouse::Interaction;
 use iced::widget::markdown::{self, HeadingLevel, Uri};
 use iced::widget::text::Span;
 use iced::widget::{
-    Svg, column, container, image, mouse_area, rich_text, row, rule, scrollable, svg, text,
+    Svg, button, column, container, image, mouse_area, rich_text, row, rule, scrollable, svg, text,
 };
 use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
@@ -156,6 +156,8 @@ pub struct Editing<'a, M> {
     pub on_roll_table: fn(usize) -> M,
     /// The roll button of the field with this key, which rolls on this roll table.
     pub on_roll_into: fn(String, String) -> M,
+    /// Edit Table was clicked on the roll table that is block `index`.
+    pub on_edit_table: fn(usize) -> M,
     /// The roll table at this place was set to roll each column on its own, or not.
     pub on_each_column: fn(usize, bool) -> M,
     /// Where the roll tables that roll each column on their own are in the note's text.
@@ -223,7 +225,7 @@ impl Preview {
             .into_iter()
             .map(|range| Block {
                 content: markdown::Content::parse(&pictures_apart(&rewrite_links(
-                    &body[range.clone()],
+                    &line_breaks(&body[range.clone()]),
                     true,
                 ))),
                 tasks: task_boxes(&body[range.clone()])
@@ -462,7 +464,11 @@ impl Preview {
             let on_roll = edit.on_roll_table;
             move |_| on_roll(start)
         });
-        let mut bar = row![roll].spacing(12).align_y(Center);
+        let edit_table = button(text("Edit Table").size(12))
+            .padding([2, 8])
+            .style(style::flat(reader.c, false))
+            .on_press((edit.on_edit_table)(index));
+        let mut bar = row![roll, edit_table].spacing(12).align_y(Center);
         if table.has_columns {
             let on_each = edit.on_each_column;
             bar = bar.push(tables::each_column(
@@ -971,6 +977,30 @@ impl Embed {
             content: content.map(|text| markdown::Content::parse(&rewrite_links(&text, false))),
         }
     }
+}
+
+/// `markdown` with each `<br>` written as a new line character, so iced's Markdown widget,
+/// which leaves out HTML, shows it as a line break. Roll tables use them for results of
+/// more than one line.
+fn line_breaks(markdown: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    let mut out = String::new();
+    let mut last = 0;
+    for (event, range) in Parser::new_ext(markdown, Options::ENABLE_TABLES).into_offset_iter() {
+        if let Event::InlineHtml(html) = event
+            && matches!(
+                html.to_ascii_lowercase().replace(' ', "").as_str(),
+                "<br>" | "<br/>"
+            )
+        {
+            out.push_str(&markdown[last..range.start]);
+            out.push_str("&#10;");
+            last = range.end;
+        }
+    }
+    out.push_str(&markdown[last..]);
+    out
 }
 
 /// Puts a picture that follows text in a paragraph on a paragraph of its own. iced's

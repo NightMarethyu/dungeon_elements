@@ -23,6 +23,8 @@ use crate::dice::{self, Dice, Expression, Special};
 use crate::links;
 use crate::note::{self, Note, Section};
 use crate::style;
+use crate::table_editor;
+use crate::tables;
 use crate::tags;
 use crate::theme::Colors;
 use crate::types::{ContentType, Field, Kind, Width};
@@ -105,6 +107,9 @@ pub enum Message {
     FollowItem(usize, usize),
     /// Opens every note a links field links to.
     FollowAll(usize),
+    /// Edit Table on the roll table at this place in long text field `.0`'s text.
+    EditTable(usize, usize),
+    Table(table_editor::Message),
     /// Shows or hides the calendar of date field `.0`.
     Calendar(usize),
     /// Shows the month `.1` months after the one date field `.0`'s calendar shows.
@@ -604,6 +609,8 @@ pub struct Form {
     step: usize,
     /// Whether fields can't be removed (see [`Form::lock`]).
     locked: bool,
+    /// The long text field whose roll table is in the table editor, and the editor.
+    table: Option<(usize, Box<table_editor::Editor>)>,
 }
 
 impl Form {
@@ -716,12 +723,62 @@ impl Form {
             step: 0,
             locked: false,
             front: note.front,
+            table: None,
         };
 
         Form {
             show_other: !note.preamble.trim().is_empty() || !form.uneditable_keys().is_empty(),
             ..form
         }
+    }
+
+    /// The text of long text field `index`, with the table being edited in it as it is
+    /// in the table editor.
+    fn long_text(&self, index: usize, content: &text_editor::Content) -> String {
+        let text = content.text();
+        match &self.table {
+            Some((editing, editor))
+                if *editing == index
+                    && editor.changed()
+                    && text.get(editor.range.clone()).is_some() =>
+            {
+                format!(
+                    "{}{}{}",
+                    &text[..editor.range.start],
+                    editor.markdown(),
+                    &text[editor.range.end..]
+                )
+            }
+            _ => text,
+        }
+    }
+
+    /// Puts the table being edited back into its long text field, and stops editing it.
+    /// Returns whether the field changed.
+    pub fn finish_table(&mut self) -> bool {
+        let Some((index, editor)) = self.table.take() else {
+            return false;
+        };
+        let Some(Input::Long(content)) = self.inputs.get(index) else {
+            return false;
+        };
+        let text = content.text();
+        if !editor.changed() || text.get(editor.range.clone()).is_none() {
+            return false;
+        }
+        let new = format!(
+            "{}{}{}",
+            &text[..editor.range.start],
+            editor.markdown(),
+            &text[editor.range.end..]
+        );
+        self.inputs[index] = Input::Long(text_editor::Content::with_text(&new));
+        true
+    }
+
+    /// The box in the table editor to focus, once, after the last message.
+    pub fn take_table_focus(&mut self) -> Option<String> {
+        self.table.as_mut()?.1.take_focus()
     }
 
     /// Applies an edit. Returns whether the note changed.
@@ -824,6 +881,36 @@ impl Form {
                     return false;
                 }
                 input.text = text;
+            }
+            Message::EditTable(index, start) => {
+                let changed = self.finish_table();
+                let Some(Input::Long(content)) = self.inputs.get(index) else {
+                    return changed;
+                };
+                let text = content.text();
+                if let Some(table) = tables::find(&text)
+                    .into_iter()
+                    .find(|table| table.range.start == start)
+                {
+                    let name = table.name(&self.fields[index].label());
+                    let editor = table_editor::Editor::new(&text, &table, &name, None);
+                    self.table = Some((index, Box::new(editor)));
+                    self.focus = Some(index);
+                }
+                return changed;
+            }
+            Message::Table(message) => {
+                let Some((_, editor)) = &mut self.table else {
+                    return false;
+                };
+                return match editor.update(message) {
+                    table_editor::Outcome::Editing => false,
+                    table_editor::Outcome::Done => self.finish_table(),
+                    table_editor::Outcome::Cancel => {
+                        self.table = None;
+                        false
+                    }
+                };
             }
             Message::Long(index, action) => {
                 let edited = action.is_edit();
@@ -1158,6 +1245,11 @@ impl Form {
         let mut stops = Vec::new();
         for (index, input) in self.inputs.iter().enumerate() {
             match input {
+                Input::Long(_) if self.table.as_ref().is_some_and(|(at, _)| *at == index) => {
+                    if let Some((_, editor)) = &self.table {
+                        stops.extend(editor.tab_ids().into_iter().map(|id| (index, 0, id)));
+                    }
+                }
                 Input::Text(_) | Input::Long(_) | Input::List(_) | Input::Date(_) => {
                     stops.push((index, 0, field_id(index)))
                 }
@@ -1520,7 +1612,7 @@ impl Form {
             .enumerate()
             .filter_map(|(index, (field, input))| {
                 let body = match input {
-                    Input::Long(content) => content.text(),
+                    Input::Long(content) => self.long_text(index, content),
                     Input::Steps(steps) => steps.to_markdown(),
                     _ => return None,
                 };
@@ -1566,7 +1658,12 @@ impl Form {
                 known_tags,
                 None,
             );
-            (self.fields[index].width, widget)
+            // The table editor needs the room of a whole row.
+            let width = match &self.table {
+                Some((editing, _)) if *editing == index => Width::Full,
+                _ => self.fields[index].width,
+            };
+            (width, widget)
         });
 
         // Half-width fields pair up side by side; full-width fields take a row each.
@@ -1654,12 +1751,35 @@ impl Form {
         let label = move |index: usize, label: String| -> Element<'a, M> {
             let label = text(label).size(14).color(c.text);
             let tables = self.fields[index].tables();
-            if !self.can_remove(index) && tables.is_empty() {
+            // A roll table in a long text field can be edited in the table editor.
+            let roll_tables = match &self.inputs[index] {
+                Input::Long(content)
+                    if !self.table.as_ref().is_some_and(|(at, _)| *at == index) =>
+                {
+                    tables::find(&content.text())
+                }
+                _ => Vec::new(),
+            };
+            let several = roll_tables.len() > 1;
+            let edit_tables = roll_tables.into_iter().map(|table| {
+                let name = match (&table.heading, several) {
+                    (Some(heading), true) => format!("Edit {heading} Table"),
+                    _ => "Edit Table".into(),
+                };
+                button(text(name).size(12))
+                    .padding([0, 6])
+                    .style(style::flat(c, false))
+                    .on_press(map(Message::EditTable(index, table.range.start)))
+                    .into()
+            });
+            let edit_tables: Vec<Element<'a, M>> = edit_tables.collect();
+            if !self.can_remove(index) && tables.is_empty() && edit_tables.is_empty() {
                 return label.into();
             }
             // A long text field with one table is filled with ideas from it.
             let inspire = tables.len() == 1 && self.fields[index].kind == Kind::Longtext;
             row![label, space::horizontal()]
+                .extend(edit_tables)
                 .push(self.can_remove(index).then(|| {
                     button(text("Remove").size(12))
                         .padding([0, 6])
@@ -1787,6 +1907,15 @@ impl Form {
             ]
             .spacing(6)
             .into(),
+            Input::Long(_) if self.table.as_ref().is_some_and(|(at, _)| *at == index) => {
+                let editor = self.table.as_ref().map(|(_, editor)| {
+                    editor.view(c, move |message| map(Message::Table(message)), shortcut)
+                });
+                column![label(index, field.label())]
+                    .push(editor)
+                    .spacing(6)
+                    .into()
+            }
             Input::Long(content) => column![
                 label(index, field.label()),
                 context_menu::area(
