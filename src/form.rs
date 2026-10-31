@@ -4,6 +4,8 @@
 //! matter keys and `## ` sections the type doesn't list (added with the main
 //! pane's + button, or in another app like Obsidian).
 
+use std::collections::BTreeSet;
+
 use iced::advanced::widget::Id;
 use iced::advanced::widget::operation::scrollable::AbsoluteOffset;
 use iced::advanced::widget::operation::{Focusable, Operation, Outcome, Scrollable};
@@ -93,6 +95,10 @@ pub enum Message {
     StepRemove(usize, usize),
     /// Opens the note a step links to, making it if there is none.
     FollowStep(usize, usize),
+    /// Rolls on the roll table a step links to.
+    RollStep(usize, usize),
+    /// An edit in roll table field `.0`'s table editor.
+    FieldTable(usize, table_editor::Message),
     /// Changes one part of dice field `.0`.
     Dice(usize, DicePart),
     /// What is typed in the box for a new item of list field `.0`: a tag, or a note to
@@ -550,6 +556,9 @@ enum Input {
     Dice(DiceInput),
     List(List),
     Date(DateInput),
+    /// A roll table field, in a table editor that is always open, and whether it is the
+    /// starter table, which isn't saved until it is changed.
+    Table(Box<table_editor::Editor>, bool),
 }
 
 impl Input {
@@ -560,6 +569,12 @@ impl Input {
         let section = section.unwrap_or_default();
         match field.kind {
             Kind::Longtext => Input::Long(text_editor::Content::with_text(&section)),
+            // A section that is more than one roll table is kept as long text, so nothing
+            // in it is lost.
+            Kind::Table => match table_section(field, &section) {
+                Some(editor) => Input::Table(Box::new(editor), section.trim().is_empty()),
+                None => Input::Long(text_editor::Content::with_text(&section)),
+            },
             Kind::Steps => Input::Steps(Steps::parse(&section)),
             Kind::Checkbox => Input::Check(match value {
                 Some(Value::Bool(checked)) => *checked,
@@ -575,9 +590,13 @@ impl Input {
         }
     }
 
-    fn empty(kind: Kind) -> Self {
-        match kind {
+    fn empty(field: &Field) -> Self {
+        match field.kind {
             Kind::Longtext => Input::Long(text_editor::Content::new()),
+            Kind::Table => match starter_table(field) {
+                Some(editor) => Input::Table(Box::new(editor), true),
+                None => Input::Long(text_editor::Content::new()),
+            },
             Kind::Steps => Input::Steps(Steps::default()),
             Kind::Checkbox => Input::Check(false),
             Kind::Choice => Input::Choice(None),
@@ -587,6 +606,55 @@ impl Input {
             Kind::Text | Kind::Number | Kind::Link => Input::Text(String::new()),
         }
     }
+}
+
+/// The table editor for roll table field `field`, if its `section` is just a roll table.
+fn table_section(field: &Field, section: &str) -> Option<table_editor::Editor> {
+    if section.trim().is_empty() {
+        return starter_table(field);
+    }
+    let found = tables::find(section);
+    let [table] = found.as_slice() else {
+        return None;
+    };
+    let outside = format!(
+        "{}{}",
+        &section[..table.range.start],
+        &section[table.range.end..]
+    );
+    if !outside.trim().is_empty() || table.heading.is_some() {
+        return None;
+    }
+    let editor = table_editor::Editor::new(section, table, &field.label(), None);
+    Some(editor.embedded(&table_field_prefix(field)))
+}
+
+/// A d6 roll table to start roll table field `field` with.
+fn starter_table(field: &Field) -> Option<table_editor::Editor> {
+    let text = tables::markdown(&tables::Blank {
+        die: "d6".into(),
+        columns: vec!["Result".into()],
+        rows: None,
+        pasted: String::new(),
+    });
+    let table = tables::find(&text).into_iter().next()?;
+    let editor = table_editor::Editor::new(&text, &table, &field.label(), None);
+    Some(editor.embedded(&table_field_prefix(field)))
+}
+
+/// The text roll table field `editor` is saved as: nothing for the starter table
+/// (`fresh`) until it is changed.
+fn table_text(editor: &table_editor::Editor, fresh: bool) -> String {
+    if fresh && !editor.changed() {
+        String::new()
+    } else {
+        editor.markdown()
+    }
+}
+
+/// What the widget ids of roll table field `field`'s editor start with.
+fn table_field_prefix(field: &Field) -> String {
+    format!("table-field-{}", field.key)
 }
 
 pub struct Form {
@@ -613,6 +681,8 @@ pub struct Form {
     locked: bool,
     /// The long text field whose roll table is in the table editor, and the editor.
     table: Option<(usize, Box<table_editor::Editor>)>,
+    /// See [`Self::take_finished_table`].
+    finished: Option<(String, Box<table_editor::Editor>)>,
 }
 
 /// Where the table picked for a field is remembered: its type and key, like `npcs/name`.
@@ -738,6 +808,7 @@ impl Form {
             locked: false,
             front: note.front,
             table: None,
+            finished: None,
         };
 
         Form {
@@ -777,17 +848,103 @@ impl Form {
             return false;
         };
         let text = content.text();
-        if !editor.changed() || text.get(editor.range.clone()).is_none() {
+        if text.get(editor.range.clone()).is_none() {
             return false;
         }
-        let new = format!(
-            "{}{}{}",
-            &text[..editor.range.start],
-            editor.markdown(),
-            &text[editor.range.end..]
-        );
+        let mut new = match editor.changed() {
+            true => format!(
+                "{}{}{}",
+                &text[..editor.range.start],
+                editor.markdown(),
+                &text[editor.range.end..]
+            ),
+            false => text.clone(),
+        };
+        // A renamed table renames its heading.
+        if let Some((old, heading)) = editor.heading()
+            && !heading.is_empty()
+            && old != heading
+            && let Some(renamed) =
+                table_editor::rename_heading(&new, editor.range.start, old, heading)
+        {
+            new = renamed;
+        }
+        self.finished = Some((self.fields[index].label(), editor));
+        if new == text {
+            return false;
+        }
         self.inputs[index] = Input::Long(text_editor::Content::with_text(&new));
         true
+    }
+
+    /// The table editor, if it is open on a roll table in long text field `index`.
+    /// Or the roll table field `index`'s.
+    fn table_at(&self, index: usize) -> Option<&table_editor::Editor> {
+        match (&self.table, self.inputs.get(index)) {
+            (Some((at, editor)), _) if *at == index => Some(editor),
+            (_, Some(Input::Table(editor, _))) => Some(editor),
+            _ => None,
+        }
+    }
+
+    /// Like [`Self::table_at`], to change it.
+    fn table_at_mut(&mut self, index: usize) -> Option<&mut table_editor::Editor> {
+        match (&mut self.table, self.inputs.get_mut(index)) {
+            (Some((at, editor)), _) if *at == index => Some(editor),
+            (_, Some(Input::Table(editor, _))) => Some(editor),
+            _ => None,
+        }
+    }
+
+    /// The roll table fields' editors that haven't been given the settings for their
+    /// tables yet, with the fields' labels, which are the tables' headings.
+    pub fn unset_tables(&mut self) -> Vec<(String, &mut table_editor::Editor)> {
+        self.fields
+            .iter()
+            .zip(&mut self.inputs)
+            .filter_map(|(field, input)| match input {
+                Input::Table(editor, _) if !editor.has_settings() => {
+                    Some((field.label(), editor.as_mut()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Roll table field `index`'s editor, with the field's label.
+    pub fn field_table_mut(&mut self, index: usize) -> Option<(String, &mut table_editor::Editor)> {
+        let label = self.fields.get(index)?.label();
+        match self.inputs.get_mut(index)? {
+            Input::Table(editor, _) => Some((label, editor)),
+            _ => None,
+        }
+    }
+
+    /// Whether the box last typed in is a result in a roll table.
+    pub fn typing_in_table(&self) -> bool {
+        self.focus.and_then(|index| self.table_at(index)).is_some()
+    }
+
+    /// The table editor, if it is open, and the label of the field its table is in.
+    pub fn table_editor_mut(&mut self) -> Option<(String, &mut table_editor::Editor)> {
+        let (index, editor) = self.table.as_mut()?;
+        Some((self.fields[*index].label(), editor))
+    }
+
+    /// The label of the field the table editor's table is in, and the heading the table
+    /// is under in the field, if any.
+    pub fn table_heading(&self) -> Option<(String, Option<String>)> {
+        let (index, editor) = self.table.as_ref()?;
+        Some((
+            self.fields[*index].label(),
+            editor.heading().map(|(old, _)| old.to_string()),
+        ))
+    }
+
+    /// The table editor that Done was last clicked in, with the label of the field its
+    /// table is in, so what it set can be kept. Once.
+    pub fn take_finished_table(&mut self) -> Option<(String, Box<table_editor::Editor>)> {
+        self.finished.take()
     }
 
     /// The box in the table editor to focus, once, after the last message.
@@ -913,6 +1070,15 @@ impl Form {
                 }
                 return changed;
             }
+            Message::FieldTable(index, message) => {
+                let Some(Input::Table(editor, _)) = self.inputs.get_mut(index) else {
+                    return false;
+                };
+                self.focus = Some(index);
+                let before = editor.markdown();
+                editor.update(message);
+                return editor.markdown() != before;
+            }
             Message::Table(message) => {
                 let Some((_, editor)) = &mut self.table else {
                     return false;
@@ -940,7 +1106,8 @@ impl Form {
             | Message::Roll(..)
             | Message::RollTable(..)
             | Message::PickTable(..)
-            | Message::FollowStep(..) => return false,
+            | Message::FollowStep(..)
+            | Message::RollStep(..) => return false,
             Message::StepText(index, step, value) => {
                 let Some(Input::Steps(steps)) = self.inputs.get_mut(index) else {
                     return false;
@@ -1116,7 +1283,7 @@ impl Form {
                 .position(|f| type_order(&f.key) > target)
                 .unwrap_or(self.own);
 
-            self.inputs.insert(index, Input::empty(field.kind));
+            self.inputs.insert(index, Input::empty(&field));
             self.fields.insert(index, field);
             self.own += 1;
             self.focus = None;
@@ -1137,16 +1304,18 @@ impl Form {
 
         // Obsidian's other names for a note are a list under `aliases`.
         if label.eq_ignore_ascii_case(ALIASES_KEY) {
-            self.fields.push(Field {
+            let field = Field {
                 label: None,
                 ..Field::for_note(ALIASES_KEY, Kind::Tags)
-            });
-            self.inputs.push(Input::empty(Kind::Tags));
+            };
+            self.inputs.push(Input::empty(&field));
+            self.fields.push(field);
             return Ok(());
         }
 
-        self.fields.push(Field::for_note(label, kind));
-        self.inputs.push(Input::empty(kind));
+        let field = Field::for_note(label, kind);
+        self.inputs.push(Input::empty(&field));
+        self.fields.push(field);
         Ok(())
     }
 
@@ -1209,6 +1378,9 @@ impl Form {
     /// in a long text field, or what a link field holds. The flag is true for a link field.
     pub fn link_query(&self) -> Option<(String, bool)> {
         let index = self.focus?;
+        if let Some(editor) = self.table_at(index) {
+            return editor.link_query().map(|query| (query, false));
+        }
         match (&self.inputs[index], self.fields[index].kind) {
             (Input::Long(content), _) => links::query(content).map(|query| (query, false)),
             (Input::Text(value), Kind::Link) if !value.trim().is_empty() => {
@@ -1232,6 +1404,15 @@ impl Form {
             .filter(|field| field.kind.links())
     }
 
+    /// What the links in step `step` of steps field `index` point to, headings and all,
+    /// like `Encounters#Marsh`.
+    pub fn step_targets(&self, index: usize, step: usize) -> Vec<String> {
+        match self.inputs.get(index) {
+            Some(Input::Steps(steps)) => tables::link_targets(steps.text(step)),
+            _ => Vec::new(),
+        }
+    }
+
     /// Steps field `index` and the note step `step` of it links to.
     pub fn step_link(&self, index: usize, step: usize) -> Option<(&Field, String)> {
         let (Some(field), Some(Input::Steps(steps))) =
@@ -1247,6 +1428,12 @@ impl Form {
     /// The widget id of the input last typed in, to focus it again.
     pub fn focused_id(&self) -> Option<String> {
         let index = self.focus?;
+        if let Some(id) = self
+            .table_at(index)
+            .and_then(table_editor::Editor::focused_id)
+        {
+            return Some(id);
+        }
         Some(match self.inputs[index] {
             Input::Steps(_) => step_id(index, self.step),
             Input::Dice(_) => dice_id(index, self.step),
@@ -1278,6 +1465,9 @@ impl Form {
                         (None, true) => 3,
                     };
                     stops.extend((0..parts).map(|part| (index, part, dice_id(index, part))));
+                }
+                Input::Table(editor, _) => {
+                    stops.extend(editor.tab_ids().into_iter().map(|id| (index, 0, id)))
                 }
                 Input::Check(_) | Input::Choice(_) => {}
             }
@@ -1358,6 +1548,9 @@ impl Form {
         let Some(index) = self.focus else {
             return false;
         };
+        if let Some(editor) = self.table_at_mut(index) {
+            return editor.complete_link(link).is_some();
+        }
         match &mut self.inputs[index] {
             Input::Long(content) => {
                 links::complete(content, link);
@@ -1390,17 +1583,24 @@ impl Form {
 
     /// The long text field last typed in, for cutting, copying and pasting.
     pub fn focused_text(&self) -> Option<&text_editor::Content> {
-        match &self.inputs[self.focus?] {
+        let index = self.focus?;
+        if let Some(editor) = self.table_at(index) {
+            return editor.focused_cell();
+        }
+        match &self.inputs[index] {
             Input::Long(content) => Some(content),
             _ => None,
         }
     }
 
-    /// Like [`Self::focused_text`], to change it, with the field's index.
-    pub fn focused_text_mut(&mut self) -> Option<(usize, &mut text_editor::Content)> {
+    /// Like [`Self::focused_text`], to change it, with its widget id.
+    pub fn focused_text_mut(&mut self) -> Option<(&mut text_editor::Content, String)> {
         let index = self.focus?;
+        if self.table_at(index).is_some() {
+            return self.table_at_mut(index)?.focused_cell_mut();
+        }
         match &mut self.inputs[index] {
-            Input::Long(content) => Some((index, content)),
+            Input::Long(content) => Some((content, field_id(index))),
             _ => None,
         }
     }
@@ -1450,7 +1650,7 @@ impl Form {
             Input::Dice(_) => FieldValue::Dice,
             Input::List(_) => FieldValue::List,
             Input::Date(_) => FieldValue::Date,
-            Input::Long(_) | Input::Steps(_) => return None,
+            Input::Long(_) | Input::Steps(_) | Input::Table(..) => return None,
         };
         Some((index, &self.fields[index], value))
     }
@@ -1475,6 +1675,7 @@ impl Form {
         let value = match &self.inputs[index] {
             Input::Long(content) => Some(Value::String(content.text())),
             Input::Steps(steps) => Some(Value::String(steps.to_markdown())),
+            Input::Table(editor, fresh) => Some(Value::String(table_text(editor, *fresh))),
             Input::Check(checked) => checked.then_some(Value::Bool(true)),
             _ => self.front_value(index)?,
         };
@@ -1523,7 +1724,7 @@ impl Form {
         let keep_empty = index >= self.own;
 
         let value = match &self.inputs[index] {
-            Input::Long(_) | Input::Steps(_) => None,
+            Input::Long(_) | Input::Steps(_) | Input::Table(..) => None,
             Input::Check(checked) => {
                 (*checked || keep_empty || self.front.contains_key(field.key.as_str()))
                     .then_some(Value::Bool(*checked))
@@ -1629,6 +1830,7 @@ impl Form {
                 let body = match input {
                     Input::Long(content) => self.long_text(index, content),
                     Input::Steps(steps) => steps.to_markdown(),
+                    Input::Table(editor, fresh) => table_text(editor, *fresh),
                     _ => return None,
                 };
                 Some(Section {
@@ -1656,6 +1858,7 @@ impl Form {
         on_menu: fn(Point) -> M,
         roll_icon: &'a svg::Handle,
         known_tags: &'a KnownTags,
+        table_links: &'a BTreeSet<String>,
         picks: &'a tables::Settings,
     ) -> Element<'a, M> {
         // The Other box takes the same shortcuts as the fields.
@@ -1672,12 +1875,14 @@ impl Form {
                 on_menu,
                 roll_icon,
                 known_tags,
+                table_links,
                 picks,
                 None,
             );
             // The table editor needs the room of a whole row.
-            let width = match &self.table {
-                Some((editing, _)) if *editing == index => Width::Full,
+            let width = match (&self.table, &self.inputs[index]) {
+                (Some((editing, _)), _) if *editing == index => Width::Full,
+                (_, Input::Table(..)) => Width::Full,
                 _ => self.fields[index].width,
             };
             (width, widget)
@@ -1759,6 +1964,7 @@ impl Form {
         on_menu: fn(Point) -> M,
         roll_icon: &'a svg::Handle,
         known_tags: &'a KnownTags,
+        table_links: &'a BTreeSet<String>,
         picks: &'a tables::Settings,
         submit: Option<M>,
     ) -> Element<'a, M> {
@@ -1925,19 +2131,35 @@ impl Form {
                 .into(),
             Input::Steps(steps) => column![
                 label(index, field.label()),
-                self.steps_view(c, map, index, steps, &accept),
+                self.steps_view(c, map, index, steps, &accept, roll_icon, table_links),
             ]
             .spacing(6)
             .into(),
             Input::Long(_) if self.table.as_ref().is_some_and(|(at, _)| *at == index) => {
                 let editor = self.table.as_ref().map(|(_, editor)| {
-                    editor.view(c, move |message| map(Message::Table(message)), shortcut)
+                    editor.view(
+                        c,
+                        move |message| map(Message::Table(message)),
+                        shortcut,
+                        link_colors.clone(),
+                    )
                 });
                 column![label(index, field.label())]
                     .push(editor)
                     .spacing(6)
                     .into()
             }
+            Input::Table(editor, _) => column![
+                label(index, field.label()),
+                editor.view(
+                    c,
+                    move |message| map(Message::FieldTable(index, message)),
+                    shortcut,
+                    link_colors.clone(),
+                ),
+            ]
+            .spacing(6)
+            .into(),
             Input::Long(content) => column![
                 label(index, field.label()),
                 context_menu::area(
@@ -2313,6 +2535,7 @@ impl Form {
 
     /// The steps of steps field `index`, each with a box to tick it, then a box to type a
     /// new one in. Enter in a step that links to a note being typed sends `accept`.
+    #[allow(clippy::too_many_arguments)]
     fn steps_view<'a, M: Clone + 'a>(
         &'a self,
         c: Colors,
@@ -2320,6 +2543,8 @@ impl Form {
         index: usize,
         steps: &'a Steps,
         accept: &Option<M>,
+        roll_icon: &'a svg::Handle,
+        table_links: &'a BTreeSet<String>,
     ) -> Element<'a, M> {
         let typing = |step: usize| self.focus == Some(index) && self.step == step;
         // Enter finishes the link being typed, if there are notes it could be.
@@ -2352,6 +2577,25 @@ impl Form {
                     .style(style::secondary(c))
                     .on_press(map(Message::FollowStep(index, step)))
             });
+            // A step that links to a roll table can roll it, as for an encounter.
+            let roll = tables::link_targets(value)
+                .into_iter()
+                .find(|target| table_links.contains(&tables::link_key(target)))
+                .map(|target| {
+                    // A table under a heading goes by the heading, as in the Roll Tables list.
+                    let name = match target.split_once('#') {
+                        Some((_, heading)) if !heading.trim().is_empty() => heading,
+                        _ => target.as_str(),
+                    };
+                    let name = name.trim();
+                    dice::table_button(
+                        c,
+                        roll_icon,
+                        name,
+                        false,
+                        map(Message::RollStep(index, step)),
+                    )
+                });
             list = list.push(
                 row![
                     checkbox(*done)
@@ -2360,6 +2604,7 @@ impl Form {
                     input,
                 ]
                 .push(open)
+                .push(roll)
                 .push(small(
                     "↑",
                     (step > 0).then_some(Message::StepMove(index, step, true)),
@@ -2401,7 +2646,7 @@ impl Form {
 
 /// An operation that moves the keyboard's focus from the input in `ids` that has it to the
 /// next (or, with `back`, the one before), going round at the ends, and scrolls the form
-/// to show it. With none focused, the first (or last) gets it. Its output is the position
+/// (or the reading view) to show it. With none focused, the first (or last) gets it. Its output is the position
 /// in `ids` of the input it focused. With one id, it focuses that input and shows it.
 pub fn tab(ids: Vec<String>, back: bool) -> impl Operation<usize> {
     struct Find {
@@ -2663,6 +2908,41 @@ mod tests {
             .map(|s| s.heading.as_str())
             .collect();
         assert_eq!(headings, ["History", "Secrets"]);
+    }
+
+    #[test]
+    fn roll_table_fields_are_tables_in_sections() {
+        let mut ty = item_type();
+        ty.fields.push(Field::for_note("Encounters", Kind::Table));
+        let mut form = Form::blank(ty.clone());
+        let index = form.index_of("Encounters").unwrap();
+        // The starter table isn't saved until it is changed.
+        assert_eq!(form.to_markdown().unwrap(), "---\ntype: item\n---\n");
+        let paste = text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+            "Wolves".into(),
+        )));
+        assert!(form.update(Message::FieldTable(
+            index,
+            table_editor::Message::Cell(0, 0, paste)
+        )));
+        let text = form.to_markdown().unwrap();
+        assert!(text.contains("## Encounters\n\n| d6  | Result |"), "{text}");
+        assert!(text.contains("| 1   | Wolves |"), "{text}");
+
+        // It reads back as a table, and is rolled as the table under its heading.
+        let again = Form::from_note(ty, note::parse(&text).unwrap());
+        let index = again.index_of("Encounters").unwrap();
+        assert!(matches!(again.inputs[index], Input::Table(..)));
+        let tables = tables::find(&text);
+        assert_eq!(tables[0].heading.as_deref(), Some("Encounters"));
+
+        // A section with more than a table in it is kept as long text.
+        let field = Field::for_note("Encounters", Kind::Table);
+        let section = "Roll at dusk.\n\n| d4 | Result |\n| -- | -- |\n| 1-4 | Bats |\n";
+        assert!(matches!(
+            Input::read(&field, None, Some(section.into())),
+            Input::Long(_)
+        ));
     }
 
     #[test]

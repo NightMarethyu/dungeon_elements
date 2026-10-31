@@ -7,7 +7,7 @@
 //! Unticked, the numbers are typed, like `2-3` or `12+`. Either way the table is written
 //! back as an ordinary Markdown table, over the one it was read from.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use iced::keyboard::{Key, Modifiers, key};
@@ -24,32 +24,28 @@ use crate::theme::Colors;
 
 /// The choice in the die list that lets any die be typed.
 const OTHER: &str = "Other...";
-/// The widget id of the box the die is typed in.
-const DIE_ID: &str = "table-editor-die";
 /// How wide the Rolls, Takes and Chance columns are, so the rows line up.
 const ROLLS_WIDTH: f32 = 72.0;
 const TAKES_WIDTH: f32 = 92.0;
 const CHANCE_WIDTH: f32 = 52.0;
 /// The room the buttons at the end of each row take.
-const ACTIONS_WIDTH: f32 = 96.0;
-
-/// The widget id of the box for column `column` of row `row`.
-pub fn cell_id(row: usize, column: usize) -> String {
-    format!("table-cell-{row}-{column}")
-}
-
-/// The widget id of the box row `row`'s numbers are typed in.
-fn numbers_id(row: usize) -> String {
-    format!("table-numbers-{row}")
-}
-
-/// The widget id of the box column `column`'s header is typed in.
-fn column_id(column: usize) -> String {
-    format!("table-column-{column}")
-}
+const ACTIONS_WIDTH: f32 = 130.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    /// The table's heading, for a table under one.
+    Heading(String),
+    /// Whether the table a result links to (by its [`tables::link_key`]) is rolled too.
+    RollsOn(String, bool),
+    /// Starts a link at the end of a row's first result, to pick a note or table for.
+    InsertLink(usize),
+    /// Typing in the box to paste a list of results into, one a line.
+    Paste(text_editor::Action),
+    /// Shows or hides the box to paste a list into.
+    ShowPaste(bool),
+    AddPasted,
+    /// Rolls the table as it is in the editor.
+    Roll,
     /// A die picked from the list, or [`OTHER`] to type one.
     PickDie(String),
     /// The die typed in the Other box.
@@ -119,6 +115,25 @@ pub struct Editor {
     /// The box to focus after the last message.
     focus: Option<String>,
     changed: bool,
+    /// The heading the table is under, if any, and what it is changed to.
+    heading: Option<(String, String)>,
+    /// The [`tables::link_key`]s of every table a result could link to, so links to
+    /// them get a Rolls on box.
+    table_links: BTreeSet<String>,
+    /// The tables its results link to that aren't rolled.
+    not_rolled: BTreeSet<String>,
+    /// The result box last typed or clicked in.
+    focused: Option<(usize, usize)>,
+    /// The Paste a List box, if it shows.
+    paste: Option<text_editor::Content>,
+    /// What its widget ids start with, so editors that show at once don't share them.
+    prefix: String,
+    /// Whether it is part of a form, always open: it has no Done or Cancel then.
+    embedded: bool,
+    /// Whether [`Self::set_settings`] was called.
+    has_settings: bool,
+    /// Whether the heading can be renamed here: not when other tables are under it too.
+    renamable: bool,
 }
 
 #[derive(Debug)]
@@ -205,8 +220,167 @@ impl Editor {
             each_column,
             removing_column: None,
             newline: ends.ends_with('\n'),
-            focus: Some(cell_id(0, 0)),
+            focus: Some("table-cell-0-0".into()),
             changed: false,
+            heading: table
+                .heading
+                .clone()
+                .map(|heading| (heading.clone(), heading)),
+            table_links: BTreeSet::new(),
+            not_rolled: table.not_rolled.clone(),
+            focused: None,
+            paste: None,
+            prefix: "table".into(),
+            embedded: false,
+            has_settings: false,
+            renamable: true,
+        }
+    }
+
+    /// Leaves the heading the table is under as it is, with no box to rename it.
+    pub fn keep_heading(&mut self) {
+        self.renamable = false;
+    }
+
+    /// Makes it part of a form, always open, with widget ids that start with `prefix`.
+    pub fn embedded(mut self, prefix: &str) -> Self {
+        self.prefix = prefix.to_string();
+        self.embedded = true;
+        self.focus = None;
+        self
+    }
+
+    /// The widget id of its part `part`.
+    fn id(&self, part: &str) -> String {
+        format!("{}-{part}", self.prefix)
+    }
+
+    /// The widget id of the box for column `column` of row `row`.
+    pub fn cell_id(&self, row: usize, column: usize) -> String {
+        self.id(&format!("cell-{row}-{column}"))
+    }
+
+    /// The widget id of the box row `row`'s numbers are typed in.
+    fn numbers_id(&self, row: usize) -> String {
+        self.id(&format!("numbers-{row}"))
+    }
+
+    /// The widget id of the box column `column`'s header is typed in.
+    fn column_id(&self, column: usize) -> String {
+        self.id(&format!("column-{column}"))
+    }
+
+    /// Gives the editor the tables results can link to, as [`tables::link_key`]s, so
+    /// those links get a Rolls on box.
+    pub fn set_table_links(&mut self, links: BTreeSet<String>) {
+        self.table_links = links;
+    }
+
+    /// Gives the editor what the settings keep for the table: whether it rolls each
+    /// column on its own, if that can be set here, and the links it doesn't roll.
+    pub fn set_settings(&mut self, each_column: Option<bool>, not_rolled: BTreeSet<String>) {
+        self.each_column = each_column;
+        self.not_rolled = not_rolled;
+        self.has_settings = true;
+    }
+
+    /// Whether it was given the settings for its table, with [`Self::set_settings`].
+    pub fn has_settings(&self) -> bool {
+        self.has_settings
+    }
+
+    /// The tables the results link to that aren't rolled: only those still linked.
+    pub fn not_rolled(&self) -> BTreeSet<String> {
+        let linked = self.linked_tables();
+        self.not_rolled
+            .iter()
+            .filter(|key| linked.iter().any(|(link, _)| link == *key))
+            .cloned()
+            .collect()
+    }
+
+    /// The tables the results link to, as `(link key, name as written)`, in order.
+    fn linked_tables(&self) -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = Vec::new();
+        for row in &self.rows {
+            for (key, written) in self.row_tables(row) {
+                if !found.iter().any(|(other, _)| *other == key) {
+                    found.push((key, written));
+                }
+            }
+        }
+        found
+    }
+
+    /// The tables a row's results link to.
+    fn row_tables(&self, row: &Row) -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = Vec::new();
+        for cell in &row.cells {
+            for target in tables::link_targets(&cell.text()) {
+                let key = tables::link_key(&target);
+                if self.table_links.contains(&key) && !found.iter().any(|(other, _)| *other == key)
+                {
+                    found.push((key, target));
+                }
+            }
+        }
+        found
+    }
+
+    /// The heading the table was under and the one it is changed to, if it is under one.
+    pub fn heading(&self) -> Option<(&str, &str)> {
+        self.heading
+            .as_ref()
+            .map(|(old, new)| (old.as_str(), new.trim()))
+    }
+
+    /// The link being typed in the result box last typed in, if any.
+    pub fn link_query(&self) -> Option<String> {
+        let (row, column) = self.focused?;
+        crate::links::query(self.rows.get(row)?.cells.get(column)?)
+    }
+
+    /// Finishes the link being typed with `link`. Gives the box to focus again.
+    pub fn complete_link(&mut self, link: &str) -> Option<String> {
+        let (cell, id) = self.focused_cell_mut()?;
+        crate::links::complete(cell, link);
+        Some(id)
+    }
+
+    /// The result box last typed in.
+    pub fn focused_cell(&self) -> Option<&text_editor::Content> {
+        let (row, column) = self.focused?;
+        self.rows.get(row)?.cells.get(column)
+    }
+
+    /// The widget id of the result box last typed in.
+    pub fn focused_id(&self) -> Option<String> {
+        self.focused_cell()?;
+        self.focused.map(|(row, column)| self.cell_id(row, column))
+    }
+
+    /// The result box last typed in, and its widget id, to change it.
+    pub fn focused_cell_mut(&mut self) -> Option<(&mut text_editor::Content, String)> {
+        let (row, column) = self.focused?;
+        let id = self.cell_id(row, column);
+        let cell = self.rows.get_mut(row)?.cells.get_mut(column)?;
+        self.changed = true;
+        Some((cell, id))
+    }
+
+    /// The table as it is in the editor, to roll.
+    pub fn table(&self) -> Option<Table> {
+        let mut table = tables::find(&self.markdown()).into_iter().next()?;
+        table.not_rolled = self.not_rolled.clone();
+        table.heading = self.heading().map(|(_, new)| new.to_string());
+        Some(table)
+    }
+
+    /// The table's name as it is in the editor.
+    pub fn name(&self) -> String {
+        match self.heading() {
+            Some((_, new)) if !new.is_empty() => new.to_string(),
+            _ => self.name.clone(),
         }
     }
 
@@ -229,14 +403,14 @@ impl Editor {
     pub fn tab_ids(&self) -> Vec<String> {
         let mut ids = Vec::new();
         if self.typing_die {
-            ids.push(DIE_ID.to_string());
+            ids.push(self.id("die"));
         }
-        ids.extend((0..self.columns.len()).map(column_id));
+        ids.extend((0..self.columns.len()).map(|column| self.column_id(column)));
         for row in 0..self.rows.len() {
             if !self.calculate {
-                ids.push(numbers_id(row));
+                ids.push(self.numbers_id(row));
             }
-            ids.extend((0..self.columns.len()).map(|column| cell_id(row, column)));
+            ids.extend((0..self.columns.len()).map(|column| self.cell_id(row, column)));
         }
         ids
     }
@@ -426,6 +600,9 @@ impl Editor {
             Message::Done
                 | Message::Cancel
                 | Message::Click
+                | Message::Roll
+                | Message::ShowPaste(_)
+                | Message::Paste(_)
                 | Message::Cell(..)
                 | Message::RemoveColumn(_)
                 | Message::ConfirmRemoveColumn(false)
@@ -435,7 +612,7 @@ impl Editor {
             Message::PickDie(die) => {
                 if die == OTHER {
                     self.typing_die = true;
-                    self.focus = Some(DIE_ID.into());
+                    self.focus = Some(self.id("die"));
                 } else {
                     self.typing_die = false;
                     self.set_die(die);
@@ -488,7 +665,7 @@ impl Editor {
                 for row in &mut self.rows {
                     row.cells.push(text_editor::Content::new());
                 }
-                self.focus = Some(column_id(self.columns.len() - 1));
+                self.focus = Some(self.column_id(self.columns.len() - 1));
             }
             Message::MoveColumn(index, left) => {
                 let other = if left {
@@ -537,6 +714,7 @@ impl Editor {
             }
             Message::Cell(row, column, action) => {
                 self.changed |= action.is_edit();
+                self.focused = Some((row, column));
                 if let Some(cell) = self
                     .rows
                     .get_mut(row)
@@ -547,11 +725,11 @@ impl Editor {
             }
             Message::AddRow => {
                 self.add_row(self.rows.len());
-                self.focus = Some(cell_id(self.rows.len() - 1, 0));
+                self.focus = Some(self.cell_id(self.rows.len() - 1, 0));
             }
             Message::AddRowAfter(index) => {
                 self.add_row(index + 1);
-                self.focus = Some(cell_id(index + 1, 0));
+                self.focus = Some(self.cell_id(index + 1, 0));
             }
             Message::MoveRow(index, up) => {
                 let other = if up {
@@ -567,7 +745,7 @@ impl Editor {
             Message::BackspaceRow(index) => {
                 if index > 0 {
                     self.remove_row(index);
-                    self.focus = Some(cell_id(index - 1, self.columns.len() - 1));
+                    self.focus = Some(self.cell_id(index - 1, self.columns.len() - 1));
                 }
             }
             Message::RemoveExtraRows => {
@@ -575,7 +753,48 @@ impl Editor {
                     self.rows.retain(|row| row.takes > 0);
                 }
             }
-            Message::Click => {}
+            Message::Click | Message::Roll => {}
+            Message::Heading(heading) => {
+                if let Some((_, new)) = &mut self.heading {
+                    *new = heading;
+                }
+            }
+            Message::RollsOn(key, on) => {
+                if on {
+                    self.not_rolled.remove(&key);
+                } else {
+                    self.not_rolled.insert(key);
+                }
+            }
+            Message::InsertLink(row) => {
+                if let Some(cell) = self.rows.get_mut(row).and_then(|row| row.cells.first_mut()) {
+                    cell.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    if !cell.text().trim().is_empty() && !cell.text().ends_with(' ') {
+                        cell.perform(text_editor::Action::Edit(text_editor::Edit::Insert(' ')));
+                    }
+                    crate::links::insert(cell);
+                    self.focused = Some((row, 0));
+                    self.focus = Some(self.cell_id(row, 0));
+                }
+            }
+            Message::ShowPaste(show) => {
+                self.paste = show.then(text_editor::Content::new);
+                if show {
+                    self.focus = Some(self.id("paste"));
+                }
+            }
+            Message::Paste(action) => {
+                if let Some(paste) = &mut self.paste {
+                    paste.perform(action);
+                }
+            }
+            Message::AddPasted => {
+                if let Some(pasted) = self.paste.take() {
+                    self.add_pasted(&pasted.text());
+                }
+            }
+            // One in a form is always open.
+            Message::Done | Message::Cancel if self.embedded => {}
             Message::Done => return Outcome::Done,
             Message::Cancel => return Outcome::Cancel,
         }
@@ -706,6 +925,57 @@ impl Editor {
         self.rows.insert(index, row);
     }
 
+    /// Adds a row for each line of `pasted`, splitting a line into the columns at tabs or
+    /// `|`. Numbers or ranges at the start of every line, like `1.` or `3-4`, are kept as
+    /// the rows' numbers. Empty rows are replaced.
+    fn add_pasted(&mut self, pasted: &str) {
+        let lines = tables::pasted_lines(pasted);
+        if lines.is_empty() {
+            return;
+        }
+        self.rows.retain(|row| !row.is_empty());
+        let high = self.bounds().map_or(0, |(_, high)| high);
+        let numbered = lines.iter().all(|(numbers, _)| numbers.is_some());
+        let mut weights: Vec<i64> = self.rows.iter().map(|row| row.takes.max(1)).collect();
+        for (numbers, result) in lines {
+            let mut row = Row::new(1, String::new(), self.columns.len());
+            let parts: Vec<&str> = if self.columns.len() > 1 {
+                result.split(['\t', '|']).map(str::trim).collect()
+            } else {
+                vec![result.as_str()]
+            };
+            for (cell, part) in row.cells.iter_mut().zip(parts) {
+                *cell = text_editor::Content::with_text(part);
+            }
+            let span = numbers
+                .as_deref()
+                .filter(|_| numbered)
+                .and_then(|numbers| tables::numbers(numbers, high));
+            weights.push(span.map_or(1, |(start, end)| end - start + 1));
+            if !self.calculate {
+                row.numbers = match (&numbers, numbered) {
+                    (Some(numbers), true) => numbers.clone(),
+                    _ => {
+                        let next = self
+                            .spans()
+                            .iter()
+                            .flatten()
+                            .map(|(_, end)| end + 1)
+                            .max()
+                            .or(self.bounds().map(|(low, _)| low));
+                        next.filter(|next| *next <= high)
+                            .map(|next| self.numbers_text(Some((next, next))))
+                            .unwrap_or_default()
+                    }
+                };
+            }
+            self.rows.push(row);
+        }
+        if self.calculate {
+            self.share(&weights);
+        }
+    }
+
     /// Removes row `index`. Its numbers go to the row above, or the one below if it was
     /// first.
     fn remove_row(&mut self, index: usize) {
@@ -761,6 +1031,7 @@ impl Editor {
         c: Colors,
         map: impl Fn(Message) -> M + Copy + 'a,
         shortcut: fn(&Key, Modifiers) -> Option<M>,
+        link_colors: crate::links::Colors,
     ) -> Element<'a, M> {
         let small = |label: &'a str, message: Option<Message>| {
             button(text(label).size(12))
@@ -787,26 +1058,65 @@ impl Editor {
         } else {
             self.die.clone()
         };
-        let title = row![
-            text(format!("{} table", self.name))
+        // A table under a heading is named by it, and can be renamed here.
+        let name: Element<'a, M> = match self.heading.as_ref().filter(|_| self.renamable) {
+            Some((_, heading)) => row![
+                text("Name").size(13).color(c.text_muted),
+                text_input("The table's name", heading)
+                    .id(self.id("heading"))
+                    .on_input(move |value| map(Message::Heading(value)))
+                    .size(14)
+                    .padding([4, 8])
+                    .width(280)
+                    .style(style::input(c)),
+            ]
+            .spacing(8)
+            .align_y(Center)
+            .into(),
+            None => text(format!("{} table", self.name))
                 .size(14)
                 .color(c.text)
                 .font(iced::Font {
                     weight: iced::font::Weight::Bold,
                     ..iced::Font::DEFAULT
-                }),
-            space::horizontal(),
-            button(text("Cancel").size(13))
-                .padding([4, 10])
-                .style(style::secondary(c))
-                .on_press(map(Message::Cancel)),
-            button(text("Done").size(13))
-                .padding([4, 12])
-                .style(style::primary(c))
-                .on_press(map(Message::Done)),
-        ]
-        .spacing(8)
-        .align_y(Center);
+                })
+                .into(),
+        };
+        // One in a form has the field's label for a name, and is always open.
+        let name = (!self.embedded).then_some(name);
+        let finish = (!self.embedded).then(|| {
+            row![
+                button(text("Cancel").size(13))
+                    .padding([4, 10])
+                    .style(style::secondary(c))
+                    .on_press(map(Message::Cancel)),
+                button(text("Done").size(13))
+                    .padding([4, 12])
+                    .style(style::primary(c))
+                    .on_press(map(Message::Done)),
+            ]
+            .spacing(8)
+        });
+        let roll = || {
+            hint(
+                button(text("Roll").size(13))
+                    .padding([4, 10])
+                    .style(style::secondary(c))
+                    .on_press(map(Message::Roll))
+                    .into(),
+                "Roll the table as it is here, to try it",
+            )
+        };
+        // One in a form has its Roll button at the end of the die's row instead.
+        let title = (!self.embedded).then(|| {
+            row![]
+                .push(name)
+                .push(space::horizontal())
+                .push(roll())
+                .push(finish)
+                .spacing(8)
+                .align_y(Center)
+        });
         let mut top = row![
             text("Die").size(13).color(c.text_muted),
             pick_list(dice, Some(picked), move |die| map(Message::PickDie(die)))
@@ -820,7 +1130,7 @@ impl Editor {
         if self.typing_die {
             top = top.push(
                 text_input("like 3d6 or d30", &self.die)
-                    .id(DIE_ID)
+                    .id(self.id("die"))
                     .on_input(move |die| map(Message::TypeDie(die)))
                     .size(13)
                     .padding([4, 8])
@@ -857,6 +1167,10 @@ impl Editor {
             );
         }
 
+        if self.embedded {
+            top = top.push(space::horizontal()).push(roll());
+        }
+
         // The headers: Rolls, Takes, Chance, then a box for each column's.
         let label = |label: &'a str, width: f32| {
             text(label)
@@ -872,7 +1186,7 @@ impl Editor {
         let last_column = self.columns.len() - 1;
         for (index, name) in self.columns.iter().enumerate() {
             let input = text_input("Column name", name)
-                .id(column_id(index))
+                .id(self.column_id(index))
                 .on_input(move |value| map(Message::Column(index, value)))
                 .size(13)
                 .padding([4, 6])
@@ -919,7 +1233,7 @@ impl Editor {
                     .into()
             } else {
                 text_input("2-3", &row.numbers)
-                    .id(numbers_id(index))
+                    .id(self.numbers_id(index))
                     .on_input(move |value| map(Message::Numbers(index, value)))
                     .size(13)
                     .padding([4, 6])
@@ -966,10 +1280,14 @@ impl Editor {
             for (column, cell) in row.cells.iter().enumerate() {
                 line = line.push(
                     text_editor(cell)
-                        .id(cell_id(index, column))
+                        .id(self.cell_id(index, column))
                         .placeholder(if column == 0 { "Result" } else { "" })
                         .on_action(move |action| map(Message::Cell(index, column, action)))
                         .key_binding(cell_keys(map, shortcut, index, empty))
+                        .highlight_with::<crate::links::Highlighter>(
+                            link_colors.clone(),
+                            crate::links::format,
+                        )
                         .size(13)
                         .padding([4, 6])
                         .style(style::field_editor(c)),
@@ -983,20 +1301,52 @@ impl Editor {
                         (index < last_row).then_some(Message::MoveRow(index, false))
                     ),
                     small("×", Some(Message::RemoveRow(index))),
+                    hint(
+                        small("Link", Some(Message::InsertLink(index))).into(),
+                        "Link a note or another roll table in this result",
+                    ),
                 ]
                 .spacing(0)
                 .width(Length::Fixed(ACTIONS_WIDTH)),
             );
-            rows = rows.push(line);
+            // A result that links to another roll table rolls it too, unless unticked.
+            let linked = self.row_tables(row);
+            if linked.is_empty() {
+                rows = rows.push(line);
+            } else {
+                let mut boxes = row![space().width(Length::Fixed(ROLLS_WIDTH))].spacing(16);
+                for (key, written) in linked {
+                    let rolls = !self.not_rolled.contains(&key);
+                    boxes = boxes.push(hint(
+                        checkbox(rolls)
+                            .label(format!("Rolls on {written}"))
+                            .text_size(12)
+                            .on_toggle(move |on| map(Message::RollsOn(key.clone(), on)))
+                            .style(style::check(c))
+                            .into(),
+                        "Ticked, rolling this row rolls the linked table too. Unticked, the result is only a link",
+                    ));
+                }
+                rows = rows.push(column![line, boxes].spacing(4));
+            }
         }
 
-        let mut editor = column![title, top, header, rows].spacing(10);
+        let mut editor = column![]
+            .push(title)
+            .push(top)
+            .push(header)
+            .push(rows)
+            .spacing(10);
         editor = editor.push(
             row![
                 button(text("+ Add Row").size(13))
                     .padding([4, 10])
                     .style(style::secondary(c))
                     .on_press(map(Message::AddRow)),
+                button(text("Paste a List...").size(13))
+                    .padding([4, 10])
+                    .style(style::secondary(c))
+                    .on_press(map(Message::ShowPaste(self.paste.is_none()))),
                 text("Enter adds a row, Shift+Enter a new line in a result")
                     .size(12)
                     .color(c.text_muted),
@@ -1004,6 +1354,35 @@ impl Editor {
             .spacing(12)
             .align_y(Center),
         );
+
+        if let Some(paste) = &self.paste {
+            editor = editor.push(
+                column![
+                    text("Paste results, one a line. Numbers at the start of every line, like 1. or 3-4, are kept. Tabs or | split a line into the columns.")
+                        .size(12)
+                        .color(c.text_muted),
+                    text_editor(paste)
+                        .id(self.id("paste"))
+                        .on_action(move |action| map(Message::Paste(action)))
+                        .min_height(80)
+                        .size(13)
+                        .padding(6)
+                        .style(style::field_editor(c)),
+                    row![
+                        button(text("Add the Rows").size(12))
+                            .padding([3, 8])
+                            .style(style::primary(c))
+                            .on_press(map(Message::AddPasted)),
+                        button(text("Cancel").size(12))
+                            .padding([3, 8])
+                            .style(style::secondary(c))
+                            .on_press(map(Message::ShowPaste(false))),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(6),
+            );
+        }
 
         if let Some(index) = self.removing_column {
             let name = self.columns.get(index).map_or("", String::as_str);
@@ -1090,6 +1469,36 @@ fn cell_keys<M: Clone>(
         }
         text_editor::Binding::from_key_press(key_press)
     }
+}
+
+/// `text` with the last heading before `before` renamed from `old` to `new`, keeping its
+/// level, or `None` if that heading isn't `old`.
+pub fn rename_heading(text: &str, before: usize, old: &str, new: &str) -> Option<String> {
+    let mut start = 0;
+    let mut found = None;
+    for line in text[..before.min(text.len())].split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            let level = trimmed.len() - trimmed.trim_start_matches('#').len();
+            let name = trimmed[level..].trim();
+            if trimmed[level..].starts_with([' ', '\t']) || name.is_empty() {
+                found = Some((start, line, level, name));
+            }
+        }
+        start += line.len();
+    }
+    let (at, line, level, name) = found?;
+    if !name.eq_ignore_ascii_case(old.trim()) {
+        return None;
+    }
+    let ending = &line[line.trim_end().len()..];
+    let indent = &line[..line.len() - line.trim_start().len()];
+    let heading = format!("{indent}{} {}{ending}", "#".repeat(level), new.trim());
+    Some(format!(
+        "{}{heading}{}",
+        &text[..at],
+        &text[at + line.len()..]
+    ))
 }
 
 /// `values`, in order, as runs: `1`, `4-6`, listed to read.
@@ -1286,5 +1695,68 @@ mod tests {
         let source = "| d2 | Coin |\n| --- | --- |\n| 1 | Heads |\n| 2 | Tails |";
         let editor = editor(source);
         assert!(!editor.markdown().ends_with('\n'));
+    }
+
+    #[test]
+    fn pasted_lists_add_rows() {
+        let mut editor = editor(WEATHER);
+        editor.add_pasted("Fog\nSnow\n");
+        assert_eq!(editor.rows.len(), 5);
+        assert_eq!(editor.rows[3].cells[0].text(), "Fog");
+        // Calculate ranges shares the die out again, keeping the rows' weighting.
+        assert_eq!(numbers(&editor), ["1", "2", "3-4", "5", "6"]);
+
+        // Numbers on every line are kept when ranges are typed.
+        let mut editor = editor_unticked();
+        editor.add_pasted("1. Ash\n2-6. Birch\n");
+        let added: Vec<&str> = editor.rows[3..]
+            .iter()
+            .map(|row| row.numbers.as_str())
+            .collect();
+        assert_eq!(added, ["1", "2-6"]);
+    }
+
+    fn editor_unticked() -> Editor {
+        let mut editor = editor(WEATHER);
+        editor.update(Message::Calculate(false));
+        editor
+    }
+
+    #[test]
+    fn rolls_on_boxes_keep_links_that_dont_roll() {
+        let mut editor = editor(WEATHER);
+        assert!(editor.not_rolled().is_empty());
+        editor.set_table_links(["storms".to_string()].into());
+        editor.update(Message::RollsOn("storms".into(), false));
+        assert_eq!(editor.not_rolled(), ["storms".to_string()].into());
+        assert!(editor.table().unwrap().not_rolled.contains("storms"));
+        // A link that is taken out isn't kept.
+        editor.update(Message::Cell(2, 0, text_editor::Action::SelectAll));
+        editor.update(Message::Cell(
+            2,
+            0,
+            text_editor::Action::Edit(text_editor::Edit::Delete),
+        ));
+        assert!(editor.not_rolled().is_empty());
+    }
+
+    #[test]
+    fn renames_the_heading_above_a_table() {
+        let text = "# Swamp\n\n## Weather\n\n| d6 | Weather |\n| -- | -- |\n| 1-6 | Fog |\n";
+        let start = tables::find(text)[0].range.start;
+        assert_eq!(
+            rename_heading(text, start, "weather", " Climate ").as_deref(),
+            Some("# Swamp\n\n## Climate\n\n| d6 | Weather |\n| -- | -- |\n| 1-6 | Fog |\n")
+        );
+        // Only the heading the table is under, by the name it had.
+        assert_eq!(rename_heading(text, start, "Swamp", "Marsh"), None);
+    }
+
+    #[test]
+    fn an_editor_in_a_form_stays_open() {
+        let mut editor = editor(WEATHER).embedded("field");
+        assert!(matches!(editor.update(Message::Done), Outcome::Editing));
+        assert!(matches!(editor.update(Message::Cancel), Outcome::Editing));
+        assert_eq!(editor.cell_id(1, 0), "field-cell-1-0");
     }
 }

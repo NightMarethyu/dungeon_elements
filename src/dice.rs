@@ -1362,6 +1362,45 @@ fn tip<'a>(
     .into()
 }
 
+/// A small button beside a field that rolls on the roll table `table` to fill the field in.
+pub fn table_button<'a, M: Clone + 'a>(
+    c: Colors,
+    icon: &svg::Handle,
+    table: &str,
+    inspire: bool,
+    on_press: M,
+) -> Element<'a, M> {
+    let (name, tip) = if inspire {
+        (
+            "Inspire me".to_string(),
+            format!("Roll on {table} for an idea"),
+        )
+    } else {
+        (
+            table.to_string(),
+            format!("Roll on {table} to fill this in"),
+        )
+    };
+    let label = row![
+        Svg::new(icon.clone()).width(16).height(16),
+        text(name).size(13),
+    ]
+    .spacing(4)
+    .align_y(Center);
+
+    tooltip(
+        button(label)
+            .padding([3, 8])
+            .style(style::secondary(c))
+            .on_press(on_press),
+        container(text(tip).size(12))
+            .padding([2, 6])
+            .style(style::dropdown(c)),
+        tooltip::Position::Top,
+    )
+    .into()
+}
+
 /// A table in an Inspire Me dropdown, shown by its [`tables::label`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pick {
