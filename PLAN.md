@@ -91,6 +91,8 @@ Stretch goal:
 
 The campaign's people and plots. Everything here is notes, types and links, built on Phase 1's wiki, so it needs no new kinds of panes.
 
+**Phase 2 is closed to new items.** The menu bar review and Undo and Redo are its last two. Anything new goes into Phase 3 or later.
+
 - [x] Help menu improvements: a Help window (F1) with a search box, opened from the Help menu and the start screen
   - [x] Show all the keyboard shortcuts (Help > Keyboard Shortcuts, Ctrl+/). The list is in `src/help.rs`, and a test fails if a menu shows a shortcut that isn't in it
   - [x] Basic how-tos (Help > How-To Guides, F1): getting started, notes and fields, links, reading and formatting, dice, and your files. Each guide is a Markdown file in `help/en/` built into the app, so a new guide only takes a new file (see `help/README.md`); guides link to each other with `[text](guide:id)`
