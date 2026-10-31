@@ -25,6 +25,7 @@ mod recent;
 mod search;
 mod settings;
 mod style;
+mod table_editor;
 mod tables;
 mod tags;
 mod templates;
@@ -519,6 +520,11 @@ enum ReadEdit {
     },
     /// The field with this front matter key, edited straight in the form.
     Field(String),
+    /// The roll table that is block `index`, in the table editor.
+    Table {
+        index: usize,
+        editor: Box<table_editor::Editor>,
+    },
 }
 
 impl Tab {
@@ -528,6 +534,18 @@ impl Tab {
             (None, Some(form)) => format!("New {}", form.ty.label()),
             (None, None) => "Untitled".into(),
         }
+    }
+
+    /// Whether block `index` of the reading view is a roll table.
+    fn is_table_block(&self, index: usize) -> bool {
+        let Some(preview) = &self.preview else {
+            return false;
+        };
+        preview.block_range(index).is_some_and(|range| {
+            tables::find(preview.source())
+                .iter()
+                .any(|table| table.range.start == range.start)
+        })
     }
 
     /// Whether the form shows, rather than the Markdown source or the reading view.
@@ -813,6 +831,9 @@ enum Message {
     Tables(tables::Message),
     /// The reading view's Roll button above the roll table at this place in the note.
     RollTable(usize),
+    /// Edit Table on the roll table that is block `.0` of the reading view.
+    EditTable(usize),
+    TableEditor(table_editor::Message),
     /// The reading view's roll button of the field with this key, which rolls on its table.
     RollIntoField(String, String),
     /// Puts the roll waiting in the Replace dialog into its field: in place of what is
@@ -2705,8 +2726,14 @@ impl Workspace {
         let Some(tab) = self.active_tab_mut() else {
             return 0;
         };
-        let Some(ReadEdit::Block { range, content, .. }) = tab.edit.take() else {
-            return 0;
+        let (range, edited, table) = match tab.edit.take() {
+            Some(ReadEdit::Block { range, content, .. }) => (range, content.text(), None),
+            Some(ReadEdit::Table { editor, .. }) => (
+                editor.range.clone(),
+                editor.markdown(),
+                Some((editor.changed(), editor.each_column())),
+            ),
+            _ => return 0,
         };
         let Some(preview) = &tab.preview else {
             return 0;
@@ -2718,16 +2745,74 @@ impl Workspace {
             return 0;
         }
 
-        let new = replace_block(&text, range, &content.text());
-        if new == text {
-            return 0;
+        let new = match table {
+            // A table goes back exactly where it was, and only if it was changed.
+            Some((changed, _)) if !changed => text.clone(),
+            Some(_) => format!("{}{edited}{}", &text[..range.start], &text[range.end..]),
+            None => replace_block(&text, range.clone(), &edited),
+        };
+        let mut added = 0;
+        if new != text {
+            tab.set_text(&new);
+            tab.modified = true;
+            let preview = tab.make_preview(&root, &index);
+            added = preview.block_count() as isize - blocks as isize;
+            tab.preview = Some(preview);
         }
-        tab.set_text(&new);
-        tab.modified = true;
-        let preview = tab.make_preview(&root, &index);
-        let added = preview.block_count() as isize - blocks as isize;
-        tab.preview = Some(preview);
+        if let Some((_, Some(each_column))) = table {
+            let path = tab.note_path();
+            let heading = tables::find(&new)
+                .into_iter()
+                .find(|table| table.range.start == range.start)
+                .and_then(|table| table.heading);
+            if self.rolls_each_column(&path, heading.as_deref()) != each_column {
+                self.set_each_column(&path, range.start, each_column);
+            }
+        }
         added
+    }
+
+    /// Opens the table editor on the roll table that is block `index` of the active tab's
+    /// reading view, if it is one, finishing what was being edited first.
+    fn edit_table(&mut self, index: usize) -> Task<Message> {
+        let editing = match self.active_tab().and_then(|tab| tab.edit.as_ref()) {
+            Some(ReadEdit::Block { index, .. } | ReadEdit::Table { index, .. }) => Some(*index),
+            _ => None,
+        };
+        let added = self.finish_editing();
+        let index = match editing {
+            Some(edited) if index > edited => index.saturating_add_signed(added),
+            _ => index,
+        };
+        let Some(tab) = self.active_tab() else {
+            return Task::none();
+        };
+        let Some(preview) = &tab.preview else {
+            return Task::none();
+        };
+        let Some(range) = preview.block_range(index) else {
+            return Task::none();
+        };
+        let source = preview.source().to_string();
+        let Some(table) = tables::find(&source)
+            .into_iter()
+            .find(|table| table.range.start == range.start)
+        else {
+            return Task::none();
+        };
+        let path = tab.note_path();
+        let name = table.name(&self.tree_name(&path, false));
+        let each_column = self.rolls_each_column(&path, table.heading.as_deref());
+        let editor = table_editor::Editor::new(&source, &table, &name, Some(each_column));
+        let mut editor = Box::new(editor);
+        let focus = editor.take_focus();
+        if let Some(tab) = self.active_tab_mut() {
+            tab.edit = Some(ReadEdit::Table { index, editor });
+        }
+        match focus {
+            Some(id) => iced::widget::operation::focus(id),
+            None => Task::none(),
+        }
     }
 
     /// Formats the active tab's note again if it changed while in the reading view, like
@@ -4423,6 +4508,31 @@ impl Workspace {
                     Task::none()
                 }
             },
+            Message::EditTable(index) => self.edit_table(index),
+            Message::TableEditor(message) => {
+                let Some(tab) = self.active_tab_mut() else {
+                    return Task::none();
+                };
+                let Some(ReadEdit::Table { editor, .. }) = &mut tab.edit else {
+                    return Task::none();
+                };
+                match editor.update(message) {
+                    table_editor::Outcome::Editing => match editor.take_focus() {
+                        Some(id) => {
+                            iced::advanced::widget::operate(form::tab(vec![id], false)).discard()
+                        }
+                        None => Task::none(),
+                    },
+                    table_editor::Outcome::Done => {
+                        self.finish_editing();
+                        Task::none()
+                    }
+                    table_editor::Outcome::Cancel => {
+                        tab.edit = None;
+                        Task::none()
+                    }
+                }
+            }
             Message::RollTable(start) => {
                 if let Some(path) = self.active_tab().map(Tab::note_path) {
                     self.roll_table(&path, start);
@@ -4958,6 +5068,13 @@ impl Workspace {
                     let link = link.clone();
                     return self.update(Message::CompleteLink(link));
                 }
+                // In the table editor, Tab goes through its boxes.
+                if let Some(ReadEdit::Table { editor, .. }) =
+                    self.active_tab().and_then(|tab| tab.edit.as_ref())
+                {
+                    return iced::advanced::widget::operate(form::tab(editor.tab_ids(), back))
+                        .discard();
+                }
                 let Some(form) = self
                     .active_tab()
                     .filter(|tab| tab.shows_form() && tab.edit.is_none() && !tab.reading())
@@ -5030,6 +5147,10 @@ impl Workspace {
                     {
                         return self.follow_link(&target);
                     }
+                    if let Some(id) = form.take_table_focus() {
+                        return iced::advanced::widget::operate(form::tab(vec![id], false))
+                            .discard();
+                    }
                     if moves_focus && let Some(id) = form.focused_id() {
                         // Focus the step, scrolling to it if it moved out of sight.
                         return iced::advanced::widget::operate(form::tab(vec![id], false))
@@ -5091,6 +5212,7 @@ impl Workspace {
                         }
                         return iced::widget::operation::focus(FIELD_EDITOR);
                     }
+                    Some(ReadEdit::Table { .. }) => return Task::none(),
                     None if reading => return Task::none(),
                     None => {}
                 }
@@ -5168,8 +5290,17 @@ impl Workspace {
                 Task::none()
             }
             Message::EditBlock(index) => {
+                // A roll table is edited in the table editor, not as Markdown.
+                if self
+                    .active_tab()
+                    .is_some_and(|tab| tab.is_table_block(index))
+                {
+                    return self.edit_table(index);
+                }
                 let editing = match self.active_tab().and_then(|tab| tab.edit.as_ref()) {
-                    Some(ReadEdit::Block { index, .. }) => Some(*index),
+                    Some(ReadEdit::Block { index, .. } | ReadEdit::Table { index, .. }) => {
+                        Some(*index)
+                    }
                     _ => None,
                 };
                 let added = self.finish_editing();
@@ -6527,7 +6658,7 @@ impl Workspace {
                         links::query(content).map(|query| (query, false))
                     }
                     (_, Some(form)) => form.link_query(),
-                    (Some(ReadEdit::Field(_)), None) => None,
+                    (Some(ReadEdit::Field(_) | ReadEdit::Table { .. }), None) => None,
                     (None, None) if tab.reading() => None,
                     (None, None) => links::query(&tab.content).map(|query| (query, false)),
                 };
@@ -7986,7 +8117,7 @@ impl Workspace {
         let tab = self.active_tab()?;
         match &tab.edit {
             Some(ReadEdit::Block { content, .. }) => Some(content),
-            Some(ReadEdit::Field(_)) => None,
+            Some(ReadEdit::Field(_) | ReadEdit::Table { .. }) => None,
             None if tab.reading() => None,
             None if tab.shows_form() => tab.form.as_ref()?.focused_text(),
             None => Some(&tab.content),
@@ -8000,7 +8131,7 @@ impl Workspace {
         let shows_form = tab.shows_form();
         match &mut tab.edit {
             Some(ReadEdit::Block { content, .. }) => Some((content, BLOCK_EDITOR.into())),
-            Some(ReadEdit::Field(_)) => None,
+            Some(ReadEdit::Field(_) | ReadEdit::Table { .. }) => None,
             None if reading => None,
             None if shows_form => {
                 let (index, content) = tab.form.as_mut()?.focused_text_mut()?;
@@ -8107,6 +8238,7 @@ impl Workspace {
                 on_roll: Message::RollField,
                 roll_icon: dice.field.clone(),
                 on_roll_table: Message::RollTable,
+                on_edit_table: Message::EditTable,
                 on_roll_into: Message::RollIntoField,
                 on_each_column: Message::TableEachColumn,
                 each_column: self.each_column_tables(&tab.note_path(), preview.source()),
@@ -8126,6 +8258,9 @@ impl Workspace {
                         .as_ref()
                         .and_then(|form| field_input(c, form, key, accept.clone(), &self.tags))
                         .map(|input| (key.clone(), column![input, chips()].spacing(4).into()));
+                }
+                Some(ReadEdit::Table { index, editor }) => {
+                    editing.block = Some((*index, editor.view(c, Message::TableEditor, shortcut)));
                 }
                 None => {}
             }

@@ -50,6 +50,8 @@ pub struct Table {
     pub unread: Vec<String>,
     /// Where the table is in the note's text.
     pub range: Range<usize>,
+    /// Every row's cells as written, the header first, for the table editor.
+    pub written: Vec<Vec<String>>,
 }
 
 /// One row of a roll table: the numbers it covers and its results.
@@ -136,17 +138,83 @@ pub fn find(text: &str) -> Vec<Table> {
     tables
 }
 
-/// A cell's text as written, without the pipes around it and with `\|` as `|`.
+/// A cell's text as written, without the pipes around it, with `\|` as `|` and a `<br>`
+/// as a new line.
 fn cell_text(raw: &str) -> String {
-    raw.trim()
+    let text = raw
+        .trim()
         .trim_start_matches('|')
         .trim_end_matches('|')
         .trim()
-        .replace("\\|", "|")
+        .replace("\\|", "|");
+    BREAKS.iter().fold(text, |text, br| text.replace(br, "\n"))
+}
+
+/// How a line break in a cell can be written. [`write`] writes the first.
+const BREAKS: [&str; 6] = ["<br>", "<br/>", "<br />", "<BR>", "<BR/>", "<BR />"];
+
+/// A cell's text as Markdown: a `|` as `\|` so it doesn't end the cell, and each line
+/// break as `<br>`, which Obsidian shows as one.
+pub fn cell_markdown(cell: &str) -> String {
+    cell.trim()
+        .replace("\r\n", "\n")
+        .replace('|', "\\|")
+        .replace('\n', BREAKS[0])
+}
+
+/// A Markdown table of `rows` of cells, the header first, with the columns padded so it
+/// reads well as text too. Each cell is written with [`cell_markdown`].
+pub fn write(rows: &[Vec<String>]) -> String {
+    let count = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|cells| {
+            (0..count)
+                .map(|index| {
+                    cells
+                        .get(index)
+                        .map_or(String::new(), |cell| cell_markdown(cell))
+                })
+                .collect()
+        })
+        .collect();
+    let widths: Vec<usize> = (0..count)
+        .map(|index| {
+            rows.iter()
+                .map(|cells| cells[index].chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(3)
+        })
+        .collect();
+    let line = |cells: Vec<String>| format!("| {} |\n", cells.join(" | "));
+    let pad = |cells: &[String]| {
+        cells
+            .iter()
+            .zip(&widths)
+            .map(|(cell, width)| {
+                let extra = width.saturating_sub(cell.chars().count());
+                format!("{cell}{}", " ".repeat(extra))
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut out = String::new();
+    let mut rows = rows.iter();
+    if let Some(header) = rows.next() {
+        out.push_str(&line(pad(header)));
+    }
+    out.push_str(&line(
+        widths.iter().map(|width| "-".repeat(*width)).collect(),
+    ));
+    for cells in rows {
+        out.push_str(&line(pad(cells)));
+    }
+    out
 }
 
 /// The roll table in `rows` of cells (the header first), if its first header is a die.
 fn read(heading: Option<String>, rows: Vec<Vec<String>>, range: Range<usize>) -> Option<Table> {
+    let written = rows.clone();
     let mut rows = rows.into_iter();
     let header = rows.next()?;
     let die = die(header.first()?)?;
@@ -158,6 +226,7 @@ fn read(heading: Option<String>, rows: Vec<Vec<String>>, range: Range<usize>) ->
         rows: Vec::new(),
         unread: Vec::new(),
         range,
+        written,
     };
     for cells in rows {
         let Some(first) = cells.first() else {
@@ -177,7 +246,7 @@ fn read(heading: Option<String>, rows: Vec<Vec<String>>, range: Range<usize>) ->
 }
 
 /// The die a header names, like `d6`, `2d6` or `d%`. A modifier like `+2` isn't one.
-fn die(header: &str) -> Option<Expression> {
+pub fn die(header: &str) -> Option<Expression> {
     let header = header.trim();
     if header.starts_with(['+', '-']) || !header.contains(['d', 'D']) {
         return None;
@@ -187,7 +256,7 @@ fn die(header: &str) -> Option<Expression> {
 
 /// The numbers a row's first cell covers: `4`, `2-3`, `2–3`, `01-05`, `5+` (5 and up),
 /// with `00` as 100 on a d100. `highest` is the most the die rolls.
-fn numbers(cell: &str, highest: i64) -> Option<(i64, i64)> {
+pub fn numbers(cell: &str, highest: i64) -> Option<(i64, i64)> {
     let cell = cell.trim().trim_end_matches('.').trim();
     let number = |part: &str| -> Option<i64> {
         let part = part.trim();

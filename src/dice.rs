@@ -6,6 +6,7 @@
 //! Expressions are also found in a note's fields (see [`Expression::find`]), so a field
 //! like `1d8+3 slashing` or `+5` can be rolled from the note.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
 
@@ -269,6 +270,45 @@ impl Expression {
         .total()
     }
 
+    /// The chance of each total it can roll, from 0 to 1, or `None` when it has too many
+    /// ways to roll to work them all out.
+    pub fn odds(&self) -> Option<BTreeMap<i64, f64>> {
+        /// The most totals, or rolls of kept dice, worked through.
+        const LIMIT: u64 = 200_000;
+        let mut odds = BTreeMap::from([(0, 1.0)]);
+        for term in &self.terms {
+            let term_odds: BTreeMap<i64, f64> = match *term {
+                Term::Number(number) => BTreeMap::from([(number, 1.0)]),
+                Term::Dice {
+                    negative,
+                    count,
+                    sides,
+                    keep,
+                } => {
+                    let sign = if negative { -1 } else { 1 };
+                    let dice = match keep {
+                        None => {
+                            if u64::from(count) * u64::from(sides) > LIMIT {
+                                return None;
+                            }
+                            let one: BTreeMap<i64, f64> = (1..=i64::from(sides))
+                                .map(|side| (side, 1.0 / f64::from(sides)))
+                                .collect();
+                            (0..count)
+                                .fold(BTreeMap::from([(0, 1.0)]), |sum, _| add_odds(&sum, &one))
+                        }
+                        Some(keep) => kept_odds(count, sides, keep, LIMIT)?,
+                    };
+                    dice.into_iter()
+                        .map(|(total, chance)| (total * sign, chance))
+                        .collect()
+                }
+            };
+            odds = add_odds(&odds, &term_odds);
+        }
+        Some(odds)
+    }
+
     /// How many dice it rolls.
     fn dice_count(&self) -> u32 {
         self.terms
@@ -528,6 +568,45 @@ impl fmt::Display for Dice {
 /// Reads the longest expression at the start of `text`, and where it ends: an expression,
 /// or why the dice in it can't be rolled (too many, or a die with no sides). `None` when
 /// `text` doesn't start with one.
+/// The chances of `a` and `b` added together.
+fn add_odds(a: &BTreeMap<i64, f64>, b: &BTreeMap<i64, f64>) -> BTreeMap<i64, f64> {
+    let mut sum = BTreeMap::new();
+    for (x, p) in a {
+        for (y, q) in b {
+            *sum.entry(x + y).or_insert(0.0) += p * q;
+        }
+    }
+    sum
+}
+
+/// The chances of the totals of `count` dice with `sides` sides, keeping only some, from
+/// every way they can roll, or `None` if there are more than `limit` ways.
+fn kept_odds(count: u32, sides: u32, keep: Keep, limit: u64) -> Option<BTreeMap<i64, f64>> {
+    let ways = u64::from(sides)
+        .checked_pow(count)
+        .filter(|ways| *ways <= limit)?;
+    let mut odds = BTreeMap::new();
+    let mut dice = vec![1i64; count as usize];
+    for _ in 0..ways {
+        let mut sorted = dice.clone();
+        sorted.sort_unstable();
+        let total: i64 = match keep {
+            Keep::Highest(kept) => sorted.iter().rev().take(kept as usize).sum(),
+            Keep::Lowest(kept) => sorted.iter().take(kept as usize).sum(),
+        };
+        *odds.entry(total).or_insert(0.0) += 1.0 / ways as f64;
+        // The next way they can roll, like counting.
+        for die in &mut dice {
+            if *die < i64::from(sides) {
+                *die += 1;
+                break;
+            }
+            *die = 1;
+        }
+    }
+    Some(odds)
+}
+
 fn scan(text: &str) -> Option<(Result<Expression, String>, usize)> {
     let mut scanner = Scanner { text, at: 0 };
     let mut terms = Vec::new();
@@ -1362,6 +1441,31 @@ mod tests {
                 Entry::Table(_) => panic!("not a roll of dice"),
             }
         }
+    }
+
+    /// The chance of `total`, in 1/`ways`ths.
+    fn ways(expression: &str, total: i64, ways: f64) -> i64 {
+        let odds = Expression::parse(expression).unwrap().odds().unwrap();
+        (odds.get(&total).copied().unwrap_or(0.0) * ways).round() as i64
+    }
+
+    #[test]
+    fn odds_of_each_total() {
+        assert_eq!(ways("d6", 4, 6.0), 1);
+        assert_eq!(ways("2d6", 7, 36.0), 6);
+        assert_eq!(ways("2d6", 2, 36.0), 1);
+        assert_eq!(ways("2d6+1", 13, 36.0), 1);
+        // Keep the highest of two d20s: 20 comes up 39 ways in 400.
+        assert_eq!(ways("2d20kh1", 20, 400.0), 39);
+        assert_eq!(ways("1d4-1d4", 0, 16.0), 4);
+        let total: f64 = Expression::parse("3d6")
+            .unwrap()
+            .odds()
+            .unwrap()
+            .values()
+            .sum();
+        assert!((total - 1.0).abs() < 1e-9);
+        assert!(Expression::parse("20d20kh3").unwrap().odds().is_none());
     }
 
     fn parse(text: &str) -> String {

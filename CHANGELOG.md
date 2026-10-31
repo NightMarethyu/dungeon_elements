@@ -4,6 +4,16 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Roll table editor
+
+- Roll tables can be changed without touching their Markdown. Click a roll table in the reading view, or **Edit Table** above it, and it opens in an editor: the die, the columns and a line for each row, with a box for each result.
+- **Calculate ranges** works out which numbers each row covers. Each row's **−** and **+** say how many of the die's numbers it takes, and the rows below make room. Untick it to type your own ranges, like 2-3 or 12+; anything missing or in two rows is pointed out as you type. A table written elsewhere with gaps or ranges of its own opens unticked, just as it was written.
+- Each row shows its chance of being rolled, worked out from the real dice, so on 2d6 a row for 7 shows 17% and one for 2 shows 3%.
+- Changing the die keeps each row's share of it: a d6 table turned into a d20 table keeps its weighting. **Spread Evenly** gives every row the same share.
+- **Enter** adds a row, **Shift+Enter** starts a new line in a result, **Tab** moves to the next box, and rows and columns can be added, moved and removed. **Done** puts the table back into the note; **Cancel** leaves it as it was.
+- It works on any roll table in any note, like the encounter tables in a chapter of a sourcebook, and only that table changes. A long text field in the form with a roll table in it has **Edit Table** too.
+- Tables are still ordinary Markdown tables that Obsidian and other apps read. A line break in a result is saved as `<br>`, and shows as a line break in the reading view.
+
 ### More generators
 
 - New built-in roll tables for building a world: **Campaign names**, **Threats**, **Tone**, **World names**, **Peoples**, **Historic events**, **Aftermath**, **Faiths**, **Deity names**, **Domains**, **Wonders**, **Sources of power** and **Costs and limits**. They're written to fit any genre.
