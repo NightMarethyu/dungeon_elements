@@ -88,10 +88,11 @@ struct Property {
     /// The dice in its value, like `1d8+3`, `+5` or a dice field's `1d20+5 advantage`, each
     /// with a button to roll it.
     rolls: Vec<String>,
-    /// The roll tables the field rolls on to fill it in, and whether its button reads
-    /// Inspire me (a long text field with one table).
+    /// The roll tables the field rolls on to fill it in, what its Inspire Me button
+    /// gives, and where the table picked for it is remembered.
     tables: Vec<String>,
-    inspire: bool,
+    inspire: Option<String>,
+    pick_key: String,
 }
 
 /// A paragraph, heading, list, table, or other top-level piece of the note's body.
@@ -156,6 +157,11 @@ pub struct Editing<'a, M> {
     pub on_roll_table: fn(usize) -> M,
     /// The roll button of the field with this key, which rolls on this roll table.
     pub on_roll_into: fn(String, String) -> M,
+    /// A table was picked in a field's Inspire Me dropdown: where it is remembered (see
+    /// [`crate::form::pick_key`]), and the table.
+    pub on_pick: fn(String, String) -> M,
+    /// The tables picked for fields before.
+    pub picks: &'a tables::Settings,
     /// Edit Table was clicked on the roll table that is block `index`.
     pub on_edit_table: fn(usize) -> M,
     /// The roll table at this place was set to roll each column on its own, or not.
@@ -210,8 +216,10 @@ impl Preview {
                 tables: field(ty, &key)
                     .map(|field| field.tables().into_iter().map(String::from).collect())
                     .unwrap_or_default(),
-                inspire: field(ty, &key)
-                    .is_some_and(|field| field.tables().len() == 1 && field.kind == Kind::Longtext),
+                inspire: field(ty, &key).and_then(|field| field.inspire.clone()),
+                pick_key: ty
+                    .map(|ty| crate::form::pick_key(ty, &key))
+                    .unwrap_or_default(),
                 key,
                 label,
                 value: value.map(|value| markdown::Content::parse(&value)),
@@ -570,13 +578,19 @@ impl Preview {
                         })
                     })
                     .collect();
-                for table in &property.tables {
-                    buttons.push(dice::table_button(
+                if !property.tables.is_empty() {
+                    let (on_pick, on_roll_into) = (edit.on_pick, edit.on_roll_into);
+                    let (pick_key, key) = (property.pick_key.clone(), property.key.clone());
+                    buttons.push(dice::inspire(
                         c,
                         &edit.roll_icon,
-                        table,
-                        property.inspire,
-                        (edit.on_roll_into)(property.key.clone(), table.clone()),
+                        &property.tables,
+                        edit.picks
+                            .picked(&property.pick_key, &property.tables)
+                            .map(String::as_str),
+                        property.inspire.as_deref(),
+                        move |table| on_pick(pick_key.clone(), table),
+                        |table| on_roll_into(key.clone(), table),
                     ));
                 }
                 column![value, row(buttons).spacing(6).wrap()]

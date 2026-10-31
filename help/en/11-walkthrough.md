@@ -19,7 +19,7 @@ On the right is one question, with the box you answer in. Under it, **Goes into*
 - **Next** writes the answer and goes on. In a one-line answer, **Enter** does the same, and in a long one, **Ctrl+Enter**.
 - **Back** goes to the question before.
 - **Skip** leaves the question for later, and **Skip Chapter** leaves the rest of the chapter.
-- **Inspire me** rolls on a roll table for an idea and puts it in the answer, like a name for a faction or an opening scene for the first session. Every question has a table of its own, apart from the ones only you can answer, like which game you'll play. Roll again for another. If the answer already has something in it, you're asked whether to replace it or add the roll on a new line.
+- **Inspire Me** rolls on a roll table for an idea and puts it in the answer, like a name for a faction or an opening scene for the first session. Every question has a table of its own, apart from the ones only you can answer, like which game you'll play. Roll again for another. A question with several tables has a dropdown beside the button to pick one, like **Norse - Male** for a name. Your pick is remembered for that field, here and in the note's form. If the answer already has something in it, you're asked whether to replace it or add the roll on a new line.
 
 An empty answer writes nothing, so pressing **Next** without typing is the same as skipping.
 
@@ -30,7 +30,7 @@ Some questions ask for names: the campaign's, the world's, or a list like the re
 - Type a name and press **Enter** for a box for the next one, or click **Add Another**. Pressing **Enter** in an empty box at the end goes on to the next question.
 - Click **✕** to take a name out.
 - **Paste a list** to fill a box for each name: names on separate lines, like a list copied from a name generator website, or between commas. Names copied all in lower case get capital letters.
-- **Inspire me** rolls a name into the next empty box.
+- **Inspire Me - Names** rolls a name into the next empty box, from the culture picked in the dropdown beside it.
 
 Your players can write up their own characters. Click **Add Characters from Files...** under "Who are the players' characters?" and pick their Markdown files, or drag the files onto the window. Each is copied into the players folder as a player character, and added to the list. The file itself stays where it was. When you press **Next**, the character is added to the campaign's Players, and fields it left empty, like Status and Home, are filled in. Fields the player filled in are kept.
 
@@ -70,10 +70,11 @@ A template can bring questions of its own, made for its folders, and a campaign 
 
 1. A campaign starts out asking the built-in questions, which get better as the app updates. Click **Start from the Default Questions** to make a copy of them for this campaign to change.
 2. The chapters are listed on the left. Click one to see its questions, or **Add Chapter** for a new one. A chapter has a title, a line shown at its top, and **↑**, **↓** and **Remove**.
-3. Each question has its text, a hint under it if you like, and three choices:
+3. Each question has its text, a hint under it if you like, and two choices:
    - **Goes into**: the note the answer is written into, like *factions: several new Factions*.
    - **Field**: which of that note's fields the answer fills. **Its name** (or **Their names**, for several notes) asks for the note's name instead.
-   - **Inspire me from**: the roll table **Inspire me** rolls on. **Automatic** uses the field's own table, and **No Inspire me** leaves the button out.
+
+   Under them, **Inspire Me rolls on the field's tables** is ticked to use the tables the field has in Edit > Types. Untick it to pick the question's own: **Add a table...** adds a table, a part of one, like **English - Female**, or all its parts at once, and clicking a table takes it out. With more than one, the person answering picks from a dropdown; the first is picked to start with. **Button says** adds a word to the button, like Names for **Inspire Me - Names**. With no tables, the question has no Inspire Me button.
 
    Write `{name}` in a question about several notes, like "What do {name} want?", and it is asked about each one. A question whose field links to other notes can offer notes from other folders too: add them under **Pick from**. A question that asks for the names of several notes can have a button that adds notes from Markdown files, like the heroes question does.
 4. **Notes it makes** lists the notes the questions write into. Each has a short name the questions use, its folder, whether a list of names makes several, and how a single note is named: asked for, after the campaign, or always the same name, like Session 1. **Fill In a Field** gives a field a value when the note is made. A value that is the short name of another of these notes links to it. **Also link to it from** adds a link to it in a field of another note, like the campaign's Players for each hero.

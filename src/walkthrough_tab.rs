@@ -9,13 +9,17 @@
 
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, column, container, row, rule, scrollable, space, text, text_input};
+use iced::widget::{
+    button, column, container, row, rule, scrollable, space, svg, text, text_input,
+};
 use iced::{Center, Element, Fill};
 use serde_yaml_ng::Value;
 
+use crate::dice;
 use crate::form::Form;
 use crate::note;
 use crate::style;
+use crate::tables;
 use crate::theme::Colors;
 use crate::types::{ContentType, Field, Kind, Width};
 use crate::walkthrough::{self, Answer, Campaign, Current, Progress, Question, Questions, Written};
@@ -35,6 +39,8 @@ pub enum Message {
     Open(PathBuf),
     /// Rolls on a table for ideas and puts the roll in the answer.
     Inspire(String),
+    /// Picks which of the question's tables Inspire Me rolls on.
+    PickTable(String),
     /// Name `index` of a list of names was typed in.
     Name(usize, String),
     /// Text was pasted into name `index`, which is now this. The app then reads the
@@ -116,8 +122,13 @@ pub struct Walkthrough {
     /// The note the answer goes into, if it is made.
     pub subject: Option<PathBuf>,
     subject_name: Option<String>,
-    /// Tables to roll on for ideas, shown as Inspire me buttons under the answer.
+    /// Tables to roll on for ideas, shown as an Inspire Me button under the answer, with
+    /// a dropdown of them when there are several.
     tables: Vec<String>,
+    /// What the Inspire Me button gives, like Names.
+    inspire: Option<String>,
+    /// Where the table picked is remembered (see [`crate::form::pick_key`]).
+    pub pick_key: String,
     /// The notes made in the chapter (or the whole walkthrough) a summary is for.
     made: Vec<(String, PathBuf)>,
     /// What the answer was when the question was shown, so an answer left as it was
@@ -155,6 +166,8 @@ impl Walkthrough {
             subject: None,
             subject_name: None,
             tables: Vec::new(),
+            inspire: None,
+            pick_key: String::new(),
             made: Vec::new(),
             loaded: None,
             error: None,
@@ -308,6 +321,8 @@ impl Walkthrough {
         self.subject = None;
         self.subject_name = None;
         self.tables = Vec::new();
+        self.inspire = None;
+        self.pick_key = String::new();
         self.made = Vec::new();
         self.loaded = None;
 
@@ -354,6 +369,11 @@ impl Walkthrough {
                 _ => Vec::new(),
             };
             self.tables = question.tables(None, &ty);
+            self.inspire = question.inspire(&ty);
+            self.pick_key = question
+                .filled(&ty)
+                .map(|field| crate::form::pick_key(&ty, &field.key))
+                .unwrap_or_default();
             if spec.many {
                 self.names_label = "Names".into();
                 let mut boxes = names;
@@ -406,6 +426,8 @@ impl Walkthrough {
             },
         };
         self.tables = question.tables(Some(field), &ty);
+        self.inspire = question.inspire(&ty);
+        self.pick_key = crate::form::pick_key(&ty, &field.key);
         // The tables show as Inspire me buttons, not as the field's own die buttons too.
         let mut shown = ty.clone();
         if let Some(field) = shown.fields.iter_mut().find(|field| &field.key == key) {
@@ -682,6 +704,8 @@ impl Walkthrough {
         c: Colors,
         answer: Option<Element<'a, M>>,
         chips: Option<Element<'a, M>>,
+        roll_icon: &'a svg::Handle,
+        picks: &'a tables::Settings,
         on: fn(Message) -> M,
     ) -> Element<'a, M> {
         let current = self.chapter();
@@ -791,16 +815,17 @@ impl Walkthrough {
                     body = body.push(chips);
                 }
                 if !self.tables.is_empty() {
-                    body = body.push(
-                        row(self.tables.iter().map(|table| -> Element<'a, M> {
-                            button(text(format!("Inspire me: {table}")).size(13))
-                                .padding([4, 10])
-                                .style(style::secondary(c))
-                                .on_press(on(Message::Inspire(table.clone())))
-                                .into()
-                        }))
-                        .spacing(6),
-                    );
+                    body = body.push(dice::inspire(
+                        c,
+                        roll_icon,
+                        &self.tables,
+                        picks
+                            .picked(&self.pick_key, &self.tables)
+                            .map(String::as_str),
+                        self.inspire.as_deref(),
+                        move |table| on(Message::PickTable(table)),
+                        |table| on(Message::Inspire(table)),
+                    ));
                 }
                 if let Some(error) = &self.error {
                     body = body.push(text(error).size(13).color(c.danger));

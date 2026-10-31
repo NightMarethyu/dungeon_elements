@@ -12,6 +12,7 @@ use iced::widget::{
 use iced::{Center, Element, Fill};
 
 use crate::style;
+use crate::table_picker;
 use crate::theme::Colors;
 use crate::types::{self, ContentType, Field, Kind, Types, Width};
 
@@ -38,7 +39,7 @@ pub enum Message {
     /// Whether a date field picks its date from a calendar.
     FieldCalendar(usize, bool),
     /// The roll table a text field rolls on, as typed.
-    FieldTable(usize, String),
+    FieldTables(usize, table_picker::Edit),
     MoveUp(usize),
     MoveDown(usize),
     RemoveField(usize),
@@ -103,6 +104,8 @@ pub struct Editor {
     selected: usize,
     /// The types saved for any campaign to use.
     saved: Vec<SavedType>,
+    /// The roll tables a text field can roll on: the built-in ones, then the campaign's.
+    tables: Vec<table_picker::Choice>,
     pub error: Option<String>,
     /// What an export or import did.
     pub notice: Option<String>,
@@ -153,8 +156,10 @@ struct FieldDraft {
     folder: Option<String>,
     /// Whether a date field picks its date from a calendar.
     calendar: bool,
-    /// The roll table a text field rolls on, as typed.
+    /// The roll tables a text field rolls on, with commas between them.
     table: String,
+    /// What its Inspire Me button gives, like Names.
+    inspire: String,
 }
 
 impl FieldDraft {
@@ -168,6 +173,7 @@ impl FieldDraft {
             folder: field.folder.clone(),
             calendar: field.calendar != Some(false),
             table: field.table.clone().unwrap_or_default(),
+            inspire: field.inspire.clone().unwrap_or_default(),
         }
     }
 
@@ -198,6 +204,8 @@ impl FieldDraft {
                 .filter(|_| self.kind.links() || self.kind == Kind::Tags)
                 .filter(|folder| !folder.trim().is_empty()),
             calendar: (self.kind == Kind::Date && !self.calendar).then_some(false),
+            inspire: Some(self.inspire.trim().to_string())
+                .filter(|inspire| !inspire.is_empty() && self.kind.rolls_tables()),
             table: Some(self.table.trim().to_string())
                 .filter(|table| !table.is_empty() && self.kind.rolls_tables()),
         }
@@ -257,9 +265,15 @@ impl Editor {
             folders,
             selected: 0,
             saved: Vec::new(),
+            tables: Vec::new(),
             error: None,
             notice: None,
         }
+    }
+
+    /// Offers these roll tables to text fields (see [`table_picker::choices`]).
+    pub fn set_tables(&mut self, tables: Vec<table_picker::Choice>) {
+        self.tables = tables;
     }
 
     /// Offers `saved` to folders with no type.
@@ -455,9 +469,14 @@ impl Editor {
                     field.calendar = value;
                 }
             }
-            Message::FieldTable(index, value) => {
+            Message::FieldTables(index, edit) => {
                 if let Some(field) = fields.get_mut(index) {
-                    field.table = value;
+                    match edit {
+                        table_picker::Edit::Tables(tables) => {
+                            field.table = table_picker::join(&tables);
+                        }
+                        table_picker::Edit::Inspire(word) => field.inspire = word,
+                    }
                 }
             }
             Message::MoveUp(index) => {
@@ -938,19 +957,13 @@ impl Editor {
                 );
             }
             if field.kind.rolls_tables() {
-                block = block.push(
-                    row![
-                        text("Rolls on").size(13).color(c.text_muted),
-                        input("Roll tables, like Female names, Male names", &field.table)
-                            .on_input(move |value| Message::FieldTable(index, value))
-                            .width(220),
-                        text("Gives the field a die button that rolls on the table and fills the field in.")
-                            .size(12)
-                            .color(c.text_muted),
-                    ]
-                    .spacing(8)
-                    .align_y(Center),
-                );
+                block = block.push(table_picker::view(
+                    c,
+                    &table_picker::split(&field.table),
+                    &field.inspire,
+                    &self.tables,
+                    move |edit| Message::FieldTables(index, edit),
+                ));
             }
             if field.kind == Kind::Tags && field.key != crate::form::ALIASES_KEY {
                 block = block.push(

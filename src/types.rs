@@ -180,6 +180,9 @@ pub struct Field {
     /// the field rolls on, to fill the field in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<String>,
+    /// What its Inspire Me button gives, like `Names` for Inspire Me - Names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inspire: Option<String>,
 }
 
 impl Field {
@@ -194,6 +197,7 @@ impl Field {
             folder: None,
             calendar: None,
             table: None,
+            inspire: None,
         }
     }
 
@@ -611,7 +615,7 @@ mod tests {
             for field in &parse(yaml).unwrap().fields {
                 for table in field.tables() {
                     assert!(
-                        crate::tables::built_in(table).is_some(),
+                        crate::tables::built_in_link(table).is_some(),
                         "{folder}: {table}"
                     );
                 }

@@ -9,7 +9,9 @@
 # Each question fills the `field` (its key in the folder's type) of its `note`, or with no
 # field asks for the note's name, or the names of a `many` note. A field question on a
 # `many` note is asked once for each of them, with `{name}` filled in. `table` is what
-# Inspire me rolls on, and an empty one (`table: ""`) leaves Inspire me out. An answer that
+# Inspire Me rolls on (a dropdown picks one when there are several; `Note#Heading` is the
+# table under that heading), `inspire` is the word on its button, like Names, and an empty
+# `table: ""` leaves Inspire Me out. An answer that
 # links to notes offers the notes of its field's folder to pick from, or of the `pick`
 # folders, where a new name can be made too. A list of names with `import` has a button
 # of that label that adds notes from Markdown files. Questions whose folder or field a campaign doesn't have are left out.
@@ -147,7 +149,8 @@ chapters:
         hint: Type a name to make an NPC for them.
         note: factions
         field: leader
-        table: Female names, Male names
+        table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
+        inspire: Names
       - ask: Which faiths matter?
         note: religions
         table: Faiths
@@ -194,7 +197,8 @@ chapters:
         pick: [factions, npcs]
       - ask: Name some people the heroes will meet there.
         note: locals
-        table: Female names, Male names
+        table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
+        inspire: Names
       - ask: What does {name} want?
         note: locals
         field: wants
@@ -222,7 +226,8 @@ chapters:
       - ask: Who are the players' characters?
         hint: Type their names, or add characters your players wrote up in Markdown files.
         note: heroes
-        table: Female names, Male names
+        table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
+        inspire: Names
         import: Add Characters from Files...
       - ask: Who plays {name}?
         note: heroes
@@ -232,7 +237,8 @@ chapters:
         hint: Type names to link NPCs, or make new ones.
         note: heroes
         field: bonds
-        table: Female names, Male names
+        table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
+        inspire: Names
 
   - id: first_session
     title: The first session

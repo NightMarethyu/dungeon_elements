@@ -4,6 +4,14 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Inspire Me dropdown
+
+- A field or walkthrough question that rolls on several tables has one **Inspire Me** button with a dropdown beside it, in place of a button for each table. For names, the dropdown lists **Any**, **Mixed** and each culture, for women and men: **English - Female**, **Norse - Male** and so on.
+- The table picked is remembered for that field in the campaign, so after picking Norse - Male every NPC name rolls Norse men's names until you pick another.
+- **Mixed female names** and **Mixed male names** take the first name from one culture and the family name from another, like Isaac Akinaka. A link in a roll table's column now rolls only the column of the same name in the table it links to, which is how they work, and your own tables can do the same.
+- Every table button reads **Inspire Me**, and can have a word after it, like **Inspire Me - Names**.
+- **Edit > Types...** and **Edit > Walkthrough Questions...** pick a field's or question's tables from a list, with no table names to type: whole tables, a part under a heading, like English - Female, or all its parts at once. A box sets the word on the button.
+
 ### Roll table editor
 
 - Roll tables can be changed without touching their Markdown. Click a roll table in the reading view, or **Edit Table** above it, and it opens in an editor: the die, the columns and a line for each row, with a box for each result.
