@@ -518,7 +518,7 @@ macro_rules! built_in {
 }
 
 /// The tables built into the app, in the order the Roll Tables list shows them.
-pub const BUILT_IN: [BuiltIn; 21] = [
+pub const BUILT_IN: [BuiltIn; 34] = [
     built_in!("Names", false),
     built_in!("Female names", false),
     built_in!("Male names", false),
@@ -540,6 +540,19 @@ pub const BUILT_IN: [BuiltIn; 21] = [
     built_in!("What's here", false),
     built_in!("Feel of a place", false),
     built_in!("Action and Theme", true),
+    built_in!("Campaign names", true),
+    built_in!("Threats", false),
+    built_in!("Tone", false),
+    built_in!("World names", true),
+    built_in!("Peoples", true),
+    built_in!("Historic events", true),
+    built_in!("Aftermath", false),
+    built_in!("Faiths", true),
+    built_in!("Deity names", true),
+    built_in!("Domains", false),
+    built_in!("Wonders", true),
+    built_in!("Sources of power", false),
+    built_in!("Costs and limits", false),
 ];
 
 /// The built-in table called `name`, ignoring case.
