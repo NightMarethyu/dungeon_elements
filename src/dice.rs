@@ -12,8 +12,8 @@ use std::ops::Range;
 
 use iced::font::{self, Font};
 use iced::widget::{
-    Svg, button, checkbox, column, container, rich_text, row, rule, scrollable, space, span, svg,
-    text, text_input, tooltip,
+    Svg, button, checkbox, column, container, pick_list, rich_text, row, rule, scrollable, space,
+    span, svg, text, text_input, tooltip,
 };
 use iced::{Center, Element, Fill, padding};
 
@@ -1398,6 +1398,85 @@ pub fn table_button<'a, M: Clone + 'a>(
             .style(style::dropdown(c)),
         tooltip::Position::Top,
     )
+    .into()
+}
+
+/// A table in an Inspire Me dropdown, shown by its [`tables::label`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pick {
+    pub table: String,
+    label: String,
+}
+
+impl fmt::Display for Pick {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+/// The Inspire Me button of a field or question that rolls on `tables`, which rolls on
+/// `picked`: alone for one table, and beside a dropdown of them for more. `name` is the
+/// author's word for what it gives, shown after a dash, like Inspire Me - Names.
+pub fn inspire<'a, M: Clone + 'a>(
+    c: Colors,
+    icon: &svg::Handle,
+    tables: &[String],
+    picked: Option<&str>,
+    name: Option<&str>,
+    on_pick: impl Fn(String) -> M + 'a,
+    on_roll: impl Fn(String) -> M,
+) -> Element<'a, M> {
+    let Some(first) = tables.first() else {
+        return space().into();
+    };
+    let picked = picked
+        .and_then(|picked| {
+            tables
+                .iter()
+                .find(|table| table.eq_ignore_ascii_case(picked))
+        })
+        .unwrap_or(first);
+    let words = match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("Inspire Me - {name}"),
+        None => "Inspire Me".to_string(),
+    };
+    let label = row![
+        Svg::new(icon.clone()).width(16).height(16),
+        text(words).size(13),
+    ]
+    .spacing(4)
+    .align_y(Center);
+    let roll = tooltip(
+        button(label)
+            .padding([3, 8])
+            .style(style::secondary(c))
+            .on_press(on_roll(picked.clone())),
+        container(text(format!("Roll on {} for an idea", tables::label(picked))).size(12))
+            .padding([2, 6])
+            .style(style::dropdown(c)),
+        tooltip::Position::Top,
+    );
+    if tables.len() == 1 {
+        return roll.into();
+    }
+    let picks: Vec<Pick> = tables
+        .iter()
+        .map(|table| Pick {
+            table: table.clone(),
+            label: tables::label(table),
+        })
+        .collect();
+    let selected = picks.iter().find(|pick| &pick.table == picked).cloned();
+    row![
+        pick_list(picks, selected, move |pick: Pick| on_pick(pick.table))
+            .text_size(13)
+            .padding([3, 8])
+            .style(style::choice(c))
+            .menu_style(style::choice_menu(c)),
+        roll,
+    ]
+    .spacing(6)
+    .align_y(Center)
     .into()
 }
 

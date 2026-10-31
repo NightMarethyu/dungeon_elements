@@ -16,6 +16,7 @@ use serde_yaml_ng::{Mapping, Value};
 
 use crate::note;
 use crate::style;
+use crate::table_picker;
 use crate::theme::Colors;
 use crate::types::{self, ContentType};
 use crate::walkthrough::{self, AddTo, Chapter, NoteSpec, Question, Questions};
@@ -39,7 +40,9 @@ pub enum Message {
     Hint(usize, String),
     GoesInto(usize, Choice),
     Field(usize, Choice),
-    Table(usize, Choice),
+    /// The question rolls on tables of its own (these to start with), or on its field's.
+    OwnTables(usize, Option<String>),
+    Tables(usize, table_picker::Edit),
     AddPick(usize, Choice),
     RemovePick(usize, usize),
     Import(usize, bool),
@@ -107,8 +110,8 @@ pub struct Editor {
     root: PathBuf,
     /// The campaign's folders, like `locations/settlements`, with the type of their notes.
     folders: Vec<(String, Option<ContentType>)>,
-    /// The roll tables Inspire me can roll on: the built-in ones, then the campaign's.
-    tables: Vec<String>,
+    /// The roll tables Inspire Me can roll on: the built-in ones, then the campaign's.
+    tables: Vec<table_picker::Choice>,
     /// The questions being edited, or `None` while the walkthrough asks the built-in ones.
     draft: Option<Draft>,
     /// Why the campaign's own questions can't be read, if they can't.
@@ -189,6 +192,7 @@ struct QuestionDraft {
     note: String,
     field: Option<String>,
     table: Option<String>,
+    inspire: String,
     pick: Vec<String>,
     import: Option<String>,
 }
@@ -240,6 +244,7 @@ impl Draft {
                             note: question.note.clone(),
                             field: question.field.clone(),
                             table: question.table.clone(),
+                            inspire: question.inspire.clone().unwrap_or_default(),
                             pick: question.pick.clone(),
                             import: question.import.clone(),
                         })
@@ -301,6 +306,8 @@ impl Draft {
                             note: question.note.clone(),
                             field: question.field.clone(),
                             table: question.table.clone(),
+                            inspire: optional(&question.inspire)
+                                .filter(|_| question.table.is_some()),
                             pick: question.pick.clone(),
                             import: question.import.clone(),
                         })
@@ -345,20 +352,9 @@ impl Editor {
     pub fn new(
         root: &Path,
         folders: Vec<(String, Option<ContentType>)>,
-        campaign_tables: Vec<String>,
+        campaign_tables: Vec<(String, Option<String>)>,
     ) -> Self {
-        let mut tables: Vec<String> = crate::tables::BUILT_IN
-            .iter()
-            .map(|table| table.name.to_string())
-            .collect();
-        for table in campaign_tables {
-            if !tables
-                .iter()
-                .any(|other| other.eq_ignore_ascii_case(&table))
-            {
-                tables.push(table);
-            }
-        }
+        let tables = table_picker::choices(campaign_tables);
 
         let file = root.join(walkthrough::FILE);
         let (draft, broken) = match fs::read_to_string(&file) {
@@ -618,6 +614,7 @@ impl Editor {
                         note,
                         field: None,
                         table: None,
+                        inspire: String::new(),
                         pick: Vec::new(),
                         import: None,
                     });
@@ -657,7 +654,8 @@ impl Editor {
             | Message::Hint(index, _)
             | Message::GoesInto(index, _)
             | Message::Field(index, _)
-            | Message::Table(index, _)
+            | Message::OwnTables(index, _)
+            | Message::Tables(index, _)
             | Message::AddPick(index, _)
             | Message::RemovePick(index, _)
             | Message::Import(index, _)
@@ -688,7 +686,16 @@ impl Editor {
                     question.import = None;
                 }
             }
-            Message::Table(_, table) => question.table = table.value,
+            Message::OwnTables(_, tables) => {
+                question.table = tables.clone();
+                question.inspire.clear();
+            }
+            Message::Tables(_, table_picker::Edit::Tables(tables)) => {
+                question.table = Some(table_picker::join(&tables));
+            }
+            Message::Tables(_, table_picker::Edit::Inspire(word)) => {
+                question.inspire = word.clone();
+            }
             Message::AddPick(_, folder) => {
                 if let Some(folder) = folder.value
                     && !question.pick.contains(&folder)
@@ -1100,11 +1107,6 @@ impl Editor {
             .iter()
             .map(|note| Choice::new(&note.key, self.describe(note)))
             .collect();
-        let mut tables = vec![
-            Choice::none("Automatic (the field's table)"),
-            Choice::new("", "No Inspire me"),
-        ];
-        tables.extend(self.tables.iter().map(|table| Choice::new(table, table)));
         let chapters: Vec<Choice> = draft
             .chapters
             .iter()
@@ -1124,21 +1126,14 @@ impl Editor {
                 None => fields[0].clone(),
                 Some(key) => Self::chosen(&fields, key),
             };
-            let table = match &question.table {
-                None => tables[0].clone(),
-                // Several tables, like "Female names, Male names", roll one each.
-                Some(table)
-                    if table.contains(',')
-                        && table.split(',').all(|part| {
-                            self.tables
-                                .iter()
-                                .any(|known| known.eq_ignore_ascii_case(part.trim()))
-                        }) =>
-                {
-                    Choice::new(table, table.clone())
-                }
-                Some(table) => Self::chosen(&tables, table),
-            };
+            // The field's own tables, which the question's start from.
+            let field_tables = self.type_of(folder).and_then(|ty| {
+                let field = match &question.field {
+                    Some(key) => ty.fields.iter().find(|field| &field.key == key),
+                    None => ty.name_field().map(|index| &ty.fields[index]),
+                };
+                field.and_then(|field| field.table.clone())
+            });
 
             let pick = |label: &'static str, element: Element<'a, Message>| {
                 column![text(label).size(12).color(c.text_muted), element]
@@ -1186,14 +1181,42 @@ impl Editor {
                         .into()
                     ),
                     pick("Field", list(fields, field, Message::Field).into()),
-                    pick(
-                        "Inspire me from",
-                        list(tables.clone(), table, Message::Table).into()
-                    ),
                 ]
                 .spacing(8),
             ]
             .spacing(8);
+
+            // Inspire Me rolls on the field's tables, or on the question's own.
+            let own = question.table.is_some();
+            let seed = field_tables.clone().unwrap_or_default();
+            let mut inspire = column![
+                checkbox(!own)
+                    .label(match &field_tables {
+                        Some(tables) => format!(
+                            "Inspire Me rolls on the field's tables ({})",
+                            table_picker::split(tables)
+                                .iter()
+                                .map(|table| crate::tables::label(table))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        None => "Inspire Me rolls on the field's tables".to_string(),
+                    })
+                    .on_toggle(move |on| Message::OwnTables(at, (!on).then(|| seed.clone())))
+                    .text_size(13)
+                    .style(style::check(c)),
+            ]
+            .spacing(6);
+            if let Some(tables) = &question.table {
+                inspire = inspire.push(table_picker::view(
+                    c,
+                    &table_picker::split(tables),
+                    &question.inspire,
+                    &self.tables,
+                    move |edit| Message::Tables(at, edit),
+                ));
+            }
+            card = card.push(inspire);
 
             // A field that links to notes offers notes to pick from.
             let links = question.field.as_ref().is_some_and(|key| {

@@ -26,6 +26,7 @@ mod search;
 mod settings;
 mod style;
 mod table_editor;
+mod table_picker;
 mod tables;
 mod tags;
 mod templates;
@@ -848,6 +849,9 @@ enum Message {
     Tables(tables::Message),
     /// The reading view's Roll button above the roll table at this place in the note.
     RollTable(usize),
+    /// Remembers the table picked in an Inspire Me dropdown: where (see
+    /// [`form::pick_key`]), and the table.
+    PickTable(String, String),
     /// Edit Table on the roll table that is block `.0` of the reading view.
     EditTable(usize),
     TableEditor(table_editor::Message),
@@ -2047,6 +2051,14 @@ impl Workspace {
     /// The table a link to `target` in the note at `from` names: `[[Note]]` is the
     /// note's first table, `[[Note#Heading]]` the one under that heading. A name no note
     /// has can be a built-in table's.
+    /// The campaign's roll tables, by the name of the note each is in and its heading.
+    fn table_refs(&self) -> Vec<(String, Option<String>)> {
+        self.all_tables()
+            .iter()
+            .map(|entry| (entry.note.clone(), entry.table.heading.clone()))
+            .collect()
+    }
+
     fn linked_table(&self, target: &str, from: &Path) -> Option<(String, tables::Table, bool)> {
         let (note, heading) = match target.split_once('#') {
             Some((note, heading)) => (note.trim(), Some(heading.trim())),
@@ -5404,6 +5416,7 @@ impl Workspace {
                 collect_folders(&self.tree, &mut folders);
                 let mut editor = types_editor::Editor::new(&self.root, &folders, &self.own_types);
                 editor.set_saved(templates::saved_types());
+                editor.set_tables(table_picker::choices(self.table_refs()));
                 editor.select(&folder);
                 self.dialog = Some(Dialog::Types(editor));
                 Task::none()
@@ -5423,7 +5436,7 @@ impl Workspace {
                         (name, ty.cloned())
                     })
                     .collect();
-                let tables = self.all_tables().iter().map(tables::Entry::name).collect();
+                let tables = self.table_refs();
                 self.dialog = Some(Dialog::Walkthrough(walkthrough_editor::Editor::new(
                     &self.root, folders, tables,
                 )));
@@ -5667,6 +5680,23 @@ impl Workspace {
             }
             Message::Form(form::Message::RollTable(index, table)) => {
                 self.roll_into_field(index, &table);
+                Task::none()
+            }
+            Message::Form(form::Message::PickTable(index, table)) => {
+                match self
+                    .active_tab()
+                    .and_then(|tab| tab.form.as_ref())
+                    .and_then(|form| form.pick_key_of(index))
+                {
+                    Some(key) => self.update(Message::PickTable(key, table)),
+                    None => Task::none(),
+                }
+            }
+            Message::PickTable(key, table) => {
+                self.table_settings.picked.insert(key, table);
+                if let Err(error) = self.table_settings.save(&self.root) {
+                    self.status = format!("Couldn't remember the table picked: {error}");
+                }
                 Task::none()
             }
             Message::RollIntoField(key, table) => {
@@ -7934,6 +7964,20 @@ impl Workspace {
                 let files = files.clone();
                 return self.import_into_walkthrough(&files);
             }
+            Step::PickTable(table) => {
+                let key = self
+                    .walkthrough
+                    .as_ref()
+                    .map(|walkthrough| walkthrough.pick_key.clone())
+                    .unwrap_or_default();
+                if key.is_empty() {
+                    return Task::none();
+                }
+                // The answer keeps the keyboard.
+                return self
+                    .update(Message::PickTable(key, table.clone()))
+                    .chain(self.focus_walkthrough());
+            }
             Step::Pick(link) => {
                 let link = link.clone();
                 return self.walkthrough_pick_link(&link);
@@ -8508,6 +8552,7 @@ impl Workspace {
                     &dice.field,
                     &self.tags,
                     &self.table_keys,
+                    &self.table_settings,
                     Some(Message::Walkthrough(walkthrough_tab::Message::Next)),
                 )
             });
@@ -8560,7 +8605,14 @@ impl Workspace {
                 .into(),
             )
         });
-        walkthrough.view(c, answer, chips, Message::Walkthrough)
+        walkthrough.view(
+            c,
+            answer,
+            chips,
+            &dice.field,
+            &self.table_settings,
+            Message::Walkthrough,
+        )
     }
 
     /// Renames the note at `path` to `name`, in the same folder. Its name field changes
@@ -8908,6 +8960,8 @@ impl Workspace {
                 on_roll_table: Message::RollTable,
                 on_edit_table: Message::EditTable,
                 on_roll_into: Message::RollIntoField,
+                on_pick: Message::PickTable,
+                picks: &self.table_settings,
                 on_each_column: Message::TableEachColumn,
                 each_column: self.each_column_tables(&tab.note_path(), preview.source()),
                 on_add: Message::AddText,
@@ -8959,6 +9013,7 @@ impl Workspace {
                 &dice.field,
                 &self.tags,
                 &self.table_keys,
+                &self.table_settings,
             ))
             .width(Fill)
             .height(Fill)

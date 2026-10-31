@@ -364,21 +364,7 @@ impl Rolled {
     pub fn text(&self) -> String {
         let filled = self.results.iter().filter(|(_, value)| !value.is_empty());
         if self.results.len() == 1 || self.each_column {
-            // A result starting with a hyphen joins the one before it: Ash and -ford
-            // make Ashford.
-            let mut text = String::new();
-            for (_, value) in filled {
-                match value.strip_prefix('-').filter(|rest| !rest.is_empty()) {
-                    Some(rest) => text.push_str(rest),
-                    None => {
-                        if !text.is_empty() {
-                            text.push(' ');
-                        }
-                        text.push_str(value);
-                    }
-                }
-            }
-            text
+            joined(filled.map(|(_, value)| value.as_str()))
         } else {
             filled
                 .map(|(column, value)| format!("{column}: {value}"))
@@ -406,6 +392,24 @@ impl Rolled {
         let values: Vec<String> = self.values.iter().map(i64::to_string).collect();
         format!("{} ({}): {}", self.name, values.join(", "), self.text())
     }
+}
+
+/// Results in a row, with spaces between them. A result starting with a hyphen joins the
+/// one before it: Ash and -ford make Ashford.
+fn joined<'a>(values: impl Iterator<Item = &'a str>) -> String {
+    let mut text = String::new();
+    for value in values {
+        match value.strip_prefix('-').filter(|rest| !rest.is_empty()) {
+            Some(rest) => text.push_str(rest),
+            None => {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(value);
+            }
+        }
+    }
+    text
 }
 
 /// Finds the table a link names, for results that roll on other tables: its name, the
@@ -455,7 +459,15 @@ fn roll_at(
         let result = match row {
             Some(row) => {
                 let cell = row.cells.get(index).map_or("", String::as_str);
-                expand(cell, &table.not_rolled, rng, lookup, depth, &mut inner)
+                expand(
+                    cell,
+                    column,
+                    &table.not_rolled,
+                    rng,
+                    lookup,
+                    depth,
+                    &mut inner,
+                )
             }
             None => format!("(no row for {value})"),
         };
@@ -473,8 +485,13 @@ fn roll_at(
 
 /// A result's text with its links to tables rolled (unless they are in `not_rolled`), its
 /// other links shown as their names, and its dice rolled.
+///
+/// A link in a column rolls only the column of the same name in the table it links to,
+/// when that table has one, so a name's family name can come from another table than its
+/// first name.
 fn expand(
     cell: &str,
+    column: &str,
     not_rolled: &BTreeSet<String>,
     rng: &mut fastrand::Rng,
     lookup: &mut Lookup<'_>,
@@ -497,16 +514,61 @@ fn expand(
         let rolls = depth < MAX_DEPTH && !not_rolled.contains(&link_key(target));
         let table = rolls.then(|| lookup(target)).flatten();
         match table {
-            Some((name, table, each_column)) => {
-                let rolled = roll_at(&name, &table, each_column, rng, lookup, depth + 1);
-                out.push_str(&rolled.text());
-                inner.push(rolled);
-            }
+            Some((name, table, each_column)) => match columns_named(&table, column) {
+                Some(columns) => {
+                    let table = Table {
+                        columns: table.columns[columns.clone()].to_vec(),
+                        rows: table
+                            .rows
+                            .iter()
+                            .map(|row| Row {
+                                cells: row.cells.get(columns.clone()).unwrap_or_default().to_vec(),
+                                ..row.clone()
+                            })
+                            .collect(),
+                        ..table
+                    };
+                    let rolled = roll_at(&name, &table, false, rng, lookup, depth + 1);
+                    out.push_str(&joined(
+                        rolled.results.iter().map(|(_, value)| value.as_str()),
+                    ));
+                    inner.push(rolled);
+                }
+                None => {
+                    let rolled = roll_at(&name, &table, each_column, rng, lookup, depth + 1);
+                    out.push_str(&rolled.text());
+                    inner.push(rolled);
+                }
+            },
             None => out.push_str(shown),
         }
     }
     out.push_str(&roll_dice(&cell[last..], rng));
     out
+}
+
+/// The columns of `table` that a link from the column headed `header` rolls: the one with
+/// the same header, and the ones after it that join it (each result starts with a hyphen,
+/// like a Norse name's -sson). None when the table has no column of that name.
+fn columns_named(table: &Table, header: &str) -> Option<Range<usize>> {
+    if header.trim().is_empty() || !table.has_columns() {
+        return None;
+    }
+    let start = table
+        .columns
+        .iter()
+        .position(|column| column.trim().eq_ignore_ascii_case(header.trim()))?;
+    let mut end = start + 1;
+    while end < table.columns.len()
+        && table.rows.iter().all(|row| {
+            row.cells
+                .get(end)
+                .is_some_and(|cell| cell.trim_start().starts_with('-'))
+        })
+    {
+        end += 1;
+    }
+    Some(start..end)
 }
 
 /// A link's target as it is compared to say whether the link rolls its table:
@@ -574,6 +636,10 @@ pub fn key(root: &Path, path: &Path, heading: Option<&str>) -> String {
 pub struct Settings {
     #[serde(default)]
     pub each_column: BTreeSet<String>,
+    /// The table last picked for a field or question that rolls on several, by where it
+    /// is, like `npcs/name`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub picked: BTreeMap<String, String>,
     /// For each table, the tables its results link to that it doesn't roll.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub not_rolled: BTreeMap<String, BTreeSet<String>>,
@@ -614,6 +680,57 @@ impl Settings {
             self.each_column.remove(key);
         }
     }
+
+    /// Which of `tables` the field or question `key` rolls on: the one picked for it
+    /// last, or the first.
+    pub fn picked<'a>(&self, key: &str, tables: &'a [String]) -> Option<&'a String> {
+        self.picked
+            .get(key)
+            .and_then(|picked| {
+                tables
+                    .iter()
+                    .find(|table| table.eq_ignore_ascii_case(picked))
+            })
+            .or_else(|| tables.first())
+    }
+}
+
+/// How a table that a field or question rolls on shows in its dropdown: `English
+/// names#Female` as English - Female, `Female names` as Any - Female, `Mixed male names` as
+/// Mixed - Male, and any other table by its name, with a heading after a dash.
+pub fn label(table: &str) -> String {
+    let table = table.trim();
+    let without_names = |name: &str| -> String {
+        let lower = name.to_lowercase();
+        match lower.strip_suffix(" names") {
+            Some(_) if lower.len() > " names".len() => {
+                name[..name.len() - " names".len()].to_string()
+            }
+            _ => name.to_string(),
+        }
+    };
+    let capital = |word: &str| -> String {
+        let mut chars = word.chars();
+        chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default()
+    };
+    if let Some((note, heading)) = table.split_once('#') {
+        return format!("{} - {}", without_names(note.trim()), heading.trim());
+    }
+    let short = without_names(table);
+    if short.len() == table.len() {
+        return table.to_string();
+    }
+    let lower = short.to_lowercase();
+    if lower == "female" || lower == "male" {
+        format!("Any - {}", capital(&short))
+    } else if let Some(rest) = lower.strip_prefix("mixed ") {
+        format!("Mixed - {}", capital(rest))
+    } else {
+        table.to_string()
+    }
 }
 
 /// A roll table built into the app, used where a campaign has no note of its name.
@@ -636,10 +753,12 @@ macro_rules! built_in {
 }
 
 /// The tables built into the app, in the order the Roll Tables list shows them.
-pub const BUILT_IN: [BuiltIn; 40] = [
+pub const BUILT_IN: [BuiltIn; 42] = [
     built_in!("Names", false),
     built_in!("Female names", false),
     built_in!("Male names", false),
+    built_in!("Mixed female names", true),
+    built_in!("Mixed male names", true),
     built_in!("English names", true),
     built_in!("Norse names", true),
     built_in!("Celtic names", true),
@@ -1431,5 +1550,75 @@ mod tests {
         settings.set_not_rolled("a", BTreeSet::new());
         let yaml = serde_yaml_ng::to_string(&settings).unwrap();
         assert!(!yaml.contains("not_rolled"), "{yaml}");
+    }
+
+    #[test]
+    fn a_link_in_a_column_rolls_that_column_of_the_table() {
+        let names = find(
+            "| d2 | First | Family | Ending |\n| --- | --- | --- | --- |\n| 1 | Astrid | Arne | -sdottir |\n| 2 | Astrid | Arne | -sdottir |\n",
+        )
+        .remove(0);
+        let other = find("| d2 | Given |\n| --- | --- |\n| 1 | Isaac |\n| 2 | Isaac |\n").remove(0);
+        let mixed = find(
+            "| d2 | First | Family |\n| --- | --- | --- |\n| 1 | [[Norse]] | [[Norse]] |\n| 2 | [[Other]] | [[Norse]] |\n",
+        )
+        .remove(0);
+        let mut lookup = |name: &str| match name {
+            "Norse" => Some(("Norse".to_string(), names.clone(), true)),
+            "Other" => Some(("Other".to_string(), other.clone(), false)),
+            _ => None,
+        };
+        let mut rng = fastrand::Rng::with_seed(1);
+        for _ in 0..20 {
+            let rolled = roll("Mixed", &mixed, true, &mut rng, &mut lookup);
+            // The family name takes the Family column and the ending that joins it; a
+            // table with no First column gives its whole row.
+            let first = &rolled.results[0].1;
+            assert!(first == "Astrid" || first == "Isaac", "{first}");
+            assert_eq!(rolled.results[1].1, "Arnesdottir");
+        }
+    }
+
+    #[test]
+    fn mixed_names_can_come_from_two_cultures() {
+        let table = built_in("Mixed male names").unwrap();
+        let mut rng = fastrand::Rng::with_seed(3);
+        let mut lookup = built_in_link;
+        let rolled = roll(
+            table.name,
+            &table.table().unwrap(),
+            true,
+            &mut rng,
+            &mut lookup,
+        );
+        let text = rolled.text();
+        assert_eq!(rolled.results.len(), 2, "{text}");
+        assert!(!text.contains("[[") && !text.contains(':'), "{text}");
+    }
+
+    #[test]
+    fn labels_tables_for_a_dropdown() {
+        assert_eq!(label("English names#Female"), "English - Female");
+        assert_eq!(label("Norse names#Male"), "Norse - Male");
+        assert_eq!(label("Female names"), "Any - Female");
+        assert_eq!(label("Male names"), "Any - Male");
+        assert_eq!(label("Mixed female names"), "Mixed - Female");
+        assert_eq!(label("Rumors"), "Rumors");
+        assert_eq!(label("Place names"), "Place names");
+        assert_eq!(label("Weather#Storms"), "Weather - Storms");
+    }
+
+    #[test]
+    fn remembers_the_table_picked() {
+        let tables = vec!["Female names".to_string(), "Norse names#Male".to_string()];
+        let mut settings = Settings::default();
+        assert_eq!(settings.picked("npcs/name", &tables), Some(&tables[0]));
+        settings
+            .picked
+            .insert("npcs/name".into(), "norse names#male".into());
+        assert_eq!(settings.picked("npcs/name", &tables), Some(&tables[1]));
+        // A pick no longer in the list falls back to the first.
+        settings.picked.insert("npcs/name".into(), "Gone".into());
+        assert_eq!(settings.picked("npcs/name", &tables), Some(&tables[0]));
     }
 }

@@ -72,7 +72,9 @@ A table that rolls on itself stops after 10 rolls.
 
 A table with more than one result column, like `| d20 | Name | Description |`, gives a whole row: each column's header and result.
 
-Tick **Roll each column**, above the table in the reading view or under it in the Roll Tables list, to roll the die again for every column instead. A name table with First, Middle and Last columns then makes any mix of names, like "Wren Ash Halloway". Which tables roll each column is kept in the campaign, in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
+Tick **Roll each column**, above the table in the reading view or under it in the Roll Tables list, to roll the die again for every column instead. A name table with First, Middle and Last columns then makes any mix of names, like "Wren Ash Halloway".
+
+A link in a column rolls just the column of the same name in the table it links to, when that table has one. So a table with a First and a Family column, each listing `[[English names#Male]]`, `[[Japanese names#Male]]` and so on, takes a first name from one culture and a family name from another, like Isaac Akinaka. Columns after it whose results start with a hyphen, like a Norse name's -sson, come along too. Which tables roll each column is kept in the campaign, in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 
 Rolling each column puts the results together with spaces. A result that starts with a hyphen joins the one before it instead: `Ash` and `-ford` make "Ashford".
 
@@ -81,6 +83,7 @@ Rolling each column puts the results together with spaces. A result that starts 
 Some tables come with the app, listed under **Built in** in the Roll Tables list:
 
 - **Names**, which picks one of the name tables below at random, and **Female names** and **Male names**, which do the same for women's or men's names.
+- **Mixed female names** and **Mixed male names**, which roll the first name and the family name on cultures of their own, so they can differ, like a family with roots in more than one place.
 - Names by culture: **English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese names**. Each has a **Female** and a **Male** table, with a first and a family name, so `[[Celtic names#Female]]` rolls a woman's name. Norse family names are built from the father's name and -sdottir or -sson, like Sigrid Haraldsdottir.
 - **Fantasy names**, made-up names built from a start and an ending, like Aelwen or Kaeldor.
 - **Place names** (like Ashford or Ravenmoor), **Inn and shop names** (The Crooked Lantern) and **Group names**, for factions, crews and ships (The Silent Hand).
@@ -95,17 +98,19 @@ Roll them like any other table, link to them from your own (`[[Norse names]]`, `
 
 ## Fields that roll on a table
 
-A text or long text field can roll on a table to fill itself in. In **Edit > Types...**, type the table's name in the field's **Rolls on** box. The field then has a die button with the table's name, in the form and in the reading view. On a long text field the button reads **Inspire me**. For a button for each of several tables, put commas between them: `Female names, Male names`.
+A text or long text field can roll on a table to fill itself in. In **Edit > Types...**, pick the field's tables from **Add a table...**: a whole table, a part of one under a heading, like **English - Female**, or all its parts at once. Click a table to take it out. The first one is picked to start with. The field then has an **Inspire Me** button, in the form, in the reading view and in the walkthrough. Type a word in **Button says**, like Names, and it reads **Inspire Me - Names**.
+
+With several tables, a dropdown beside the button picks which one it rolls on: **Any - Female**, **Mixed - Male**, **Norse - Female** and so on. The table picked is remembered for that field in this campaign, in `.dungeon_elements/tables.yaml`, until you pick another. In the type's file the tables are written with commas between them, like `table: Female names, Norse names#Male`.
 
 - An empty field is filled with the result.
 - A field with something in it asks first: **Replace** what's there, or **Cancel**. A long text field can also **Add on a New Line**.
 
 The result shows in the dice roller too, so you can copy it or roll again. In new campaigns:
 
-- An NPC's Name has a button for **Female names** and one for **Male names**, and Wants rolls on **Wants**.
+- An NPC's Name has **Inspire Me - Names**, with a dropdown of any, mixed or one culture's women's or men's names, and Wants rolls on **Wants**.
 - A location's Name rolls on **Place names**, First impression on **Feel of a place**, and Description on **What's here**.
 - A faction's Name rolls on **Group names**, and Goal on **Wants**.
-- A quest's Name rolls on **Quest names**, and its Hook has a button for **Rumors** and one for **Plot hooks**.
+- A quest's Name rolls on **Quest names**, and its Hook has a dropdown of **Rumors** and **Plot hooks**.
 - A site's Name rolls on **Dangerous places**, and a session's Strong start on **Opening scenes**.
 - Secrets on NPCs, factions, locations and lore notes roll on **Secrets**.
 - The campaign note's Name rolls on **Campaign names**, Big picture on **Threats**, and Themes and tone on **Tone**.

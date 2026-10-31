@@ -113,6 +113,10 @@ pub struct Question {
     /// empty one leaves Inspire me out, for answers no table could give, like who plays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<String>,
+    /// What its Inspire Me button gives, like `Names` for Inspire Me - Names. With no
+    /// tables of its own, the field's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspire: Option<String>,
     /// For an answer that links to notes: the folders whose notes are offered to pick
     /// from, and where a new name can be made. With none, the field's own link folder.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -145,6 +149,25 @@ impl Question {
             Some(name) => self.ask.replace("{name}", name),
             None => self.ask.replace("{name}", "it"),
         }
+    }
+
+    /// The field this question fills (or, with no field, the name field of type `ty`).
+    pub fn filled<'a>(&self, ty: &'a ContentType) -> Option<&'a Field> {
+        match &self.field {
+            Some(key) => ty.fields.iter().find(|field| &field.key == key),
+            None => ty.name_field().map(|index| &ty.fields[index]),
+        }
+    }
+
+    /// What this question's Inspire Me button gives, like Names: its own, or with no
+    /// tables of its own, the field's.
+    pub fn inspire(&self, ty: &ContentType) -> Option<String> {
+        match (&self.inspire, &self.table) {
+            (Some(inspire), _) => Some(inspire.clone()),
+            (None, None) => self.filled(ty).and_then(|field| field.inspire.clone()),
+            (None, Some(_)) => None,
+        }
+        .filter(|inspire| !inspire.trim().is_empty())
     }
 
     /// The tables Inspire me rolls on for this question, which fills `field` (or, with no
@@ -1531,7 +1554,10 @@ mod tests {
                     Some("") => {}
                     Some(_) => {
                         for table in question.tables(field, &ty) {
-                            assert!(crate::tables::built_in(&table).is_some(), "{ask}: {table}");
+                            assert!(
+                                crate::tables::built_in_link(&table).is_some(),
+                                "{ask}: {table}"
+                            );
                         }
                     }
                     None => {
@@ -1564,7 +1590,10 @@ mod tests {
             .unwrap();
 
         let locals = question(&questions, "locals");
-        assert_eq!(locals.tables(None, &npc), ["Female names", "Male names"]);
+        let names = locals.tables(None, &npc);
+        assert_eq!(names[..2], ["Female names", "Male names"]);
+        assert!(names.contains(&"Norse names#Male".to_string()));
+        assert_eq!(locals.inspire(&npc).as_deref(), Some("Names"));
 
         let mut ask = question(&questions, "locals.wants").clone();
         ask.table = None;

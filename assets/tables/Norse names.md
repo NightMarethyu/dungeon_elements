@@ -7,7 +7,7 @@ A Norse family name is the father's name and -sdottir (daughter) or -sson (son),
 
 ## Female
 
-| d20 | First | Father | Ending |
+| d20 | First | Family | Ending |
 | --- | --- | --- | --- |
 | 1 | Astrid | Arne | -sdottir |
 | 2 | Bodil | Asger | -sdottir |
@@ -32,7 +32,7 @@ A Norse family name is the father's name and -sdottir (daughter) or -sson (son),
 
 ## Male
 
-| d30 | First | Father | Ending |
+| d30 | First | Family | Ending |
 | --- | --- | --- | --- |
 | 1 | Arne | Arne | -sson |
 | 2 | Asger | Asger | -sson |

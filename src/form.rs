@@ -81,6 +81,8 @@ pub enum Message {
     Roll(usize, String),
     /// Rolls on the roll table field `index` names, to fill it in.
     RollTable(usize, String),
+    /// Picks which of its roll tables field `index` rolls on.
+    PickTable(usize, String),
     /// The text of step `.1` of steps field `.0`; the step after the last is a new one
     /// being typed.
     StepText(usize, usize, String),
@@ -683,7 +685,19 @@ pub struct Form {
     finished: Option<(String, Box<table_editor::Editor>)>,
 }
 
+/// Where the table picked for a field is remembered: its type and key, like `npcs/name`.
+pub fn pick_key(ty: &ContentType, key: &str) -> String {
+    format!("{}/{key}", ty.id)
+}
+
 impl Form {
+    /// Where the table picked for field `index` is remembered (see [`pick_key`]).
+    pub fn pick_key_of(&self, index: usize) -> Option<String> {
+        self.fields
+            .get(index)
+            .map(|field| pick_key(&self.ty, &field.key))
+    }
+
     /// An empty form for a new note. Its calendar dates are today's, like a journal
     /// entry's date.
     pub fn blank(ty: ContentType) -> Self {
@@ -1091,6 +1105,7 @@ impl Form {
             Message::FollowLink(_)
             | Message::Roll(..)
             | Message::RollTable(..)
+            | Message::PickTable(..)
             | Message::FollowStep(..)
             | Message::RollStep(..) => return false,
             Message::StepText(index, step, value) => {
@@ -1844,6 +1859,7 @@ impl Form {
         roll_icon: &'a svg::Handle,
         known_tags: &'a KnownTags,
         table_links: &'a BTreeSet<String>,
+        picks: &'a tables::Settings,
     ) -> Element<'a, M> {
         // The Other box takes the same shortcuts as the fields.
         let key_binding = key_binding(accept.clone(), shortcut);
@@ -1860,6 +1876,7 @@ impl Form {
                 roll_icon,
                 known_tags,
                 table_links,
+                picks,
                 None,
             );
             // The table editor needs the room of a whole row.
@@ -1948,6 +1965,7 @@ impl Form {
         roll_icon: &'a svg::Handle,
         known_tags: &'a KnownTags,
         table_links: &'a BTreeSet<String>,
+        picks: &'a tables::Settings,
         submit: Option<M>,
     ) -> Element<'a, M> {
         let key_binding = key_binding(accept.clone(), shortcut);
@@ -1982,8 +2000,8 @@ impl Form {
             if !self.can_remove(index) && tables.is_empty() && edit_tables.is_empty() {
                 return label.into();
             }
-            // A long text field with one table is filled with ideas from it.
-            let inspire = tables.len() == 1 && self.fields[index].kind == Kind::Longtext;
+            let field = &self.fields[index];
+            let key = pick_key(&self.ty, &field.key);
             row![label, space::horizontal()]
                 .extend(edit_tables)
                 .push(self.can_remove(index).then(|| {
@@ -1992,13 +2010,17 @@ impl Form {
                         .style(style::flat(c, false))
                         .on_press(map(Message::Remove(index)))
                 }))
-                .extend(tables.into_iter().map(|table| {
-                    dice::table_button(
+                .push((!tables.is_empty()).then(|| {
+                    let tables: Vec<String> =
+                        tables.iter().map(|table| table.to_string()).collect();
+                    dice::inspire(
                         c,
                         roll_icon,
-                        table,
-                        inspire,
-                        map(Message::RollTable(index, table.to_string())),
+                        &tables,
+                        picks.picked(&key, &tables).map(String::as_str),
+                        field.inspire.as_deref(),
+                        move |table| map(Message::PickTable(index, table)),
+                        |table| map(Message::RollTable(index, table)),
                     )
                 }))
                 .spacing(6)
