@@ -17,7 +17,7 @@ It's plain Markdown, so it shows as a table in Obsidian and anywhere else, and s
 
 ## Making a table
 
-**File > New Roll Table...** makes one in a few clicks. You can also right-click a folder and pick **New Roll Table...**, or click **+** in the Roll Tables list.
+**Tables > New Roll Table...** makes one in a few clicks. You can also right-click a folder and pick **New Roll Table...**, or click **+** in the Roll Tables list.
 
 - Give it a **Name**, and pick its **Folder** (a **tables** folder to start with, made when you make your first table).
 - Pick the **Die**: d4, d6, d8, d10, d12, d20, d100 or 2d6.
@@ -98,7 +98,7 @@ Roll them like any other table, link to them from your own (`[[Norse names]]`, `
 
 ## Fields that roll on a table
 
-A text or long text field can roll on a table to fill itself in. In **Edit > Types...**, pick the field's tables from **Add a table...**: a whole table, a part of one under a heading, like **English - Female**, or all its parts at once. Click a table to take it out. The first one is picked to start with. The field then has an **Inspire Me** button, in the form, in the reading view and in the walkthrough. Type a word in **Button says**, like Names, and it reads **Inspire Me - Names**.
+A text or long text field can roll on a table to fill itself in. In **Campaign > Note Types...**, pick the field's tables from **Add a table...**: a whole table, a part of one under a heading, like **English - Female**, or all its parts at once. Click a table to take it out. The first one is picked to start with. The field then has an **Inspire Me** button, in the form, in the reading view and in the walkthrough. Type a word in **Button says**, like Names, and it reads **Inspire Me - Names**.
 
 With several tables, a dropdown beside the button picks which one it rolls on: **Any - Female**, **Mixed - Male**, **Norse - Female** and so on. The table picked is remembered for that field in this campaign, in `.dungeon_elements/tables.yaml`, until you pick another. In the type's file the tables are written with commas between them, like `table: Female names, Norse names#Male`.
 
@@ -119,6 +119,6 @@ The result shows in the dice roller too, so you can copy it or roll again. In ne
 
 ## Roll table fields
 
-A field in **Edit > Types...** can be a **Roll table**, like Encounters on a location or Loot on a dungeon room. Each note of that type has the table editor in its form, always open, starting with a d6 table. It's saved as a `## Encounters` section with the table under it, so a step or another table can roll it with `[[Old Mill#Encounters]]`.
+A field in **Campaign > Note Types...** can be a **Roll table**, like Encounters on a location or Loot on a dungeon room. Each note of that type has the table editor in its form, always open, starting with a d6 table. It's saved as a `## Encounters` section with the table under it, so a step or another table can roll it with `[[Old Mill#Encounters]]`.
 
 If a note's section has more than just a table in it, the field shows it as long text instead, so nothing in it is lost, with **Edit Table** to change the table.

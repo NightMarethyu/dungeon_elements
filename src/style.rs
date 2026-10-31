@@ -207,12 +207,14 @@ pub fn menu_title(c: Colors, open: bool) -> impl Fn(&Theme, button::Status) -> b
     }
 }
 
-/// An item in an open dropdown menu.
-pub fn menu_item(c: Colors) -> impl Fn(&Theme, button::Status) -> button::Style {
+/// An item in an open dropdown menu, `lit` when the arrow keys are on it or its submenu
+/// is open.
+pub fn menu_item(c: Colors, lit: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_, status| {
         let (background, text_color) = match status {
-            button::Status::Hovered | button::Status::Pressed => (Some(c.accent), c.accent_text),
             button::Status::Disabled => (None, c.text_muted),
+            _ if lit => (Some(c.accent), c.accent_text),
+            button::Status::Hovered | button::Status::Pressed => (Some(c.accent), c.accent_text),
             button::Status::Active => (None, c.text),
         };
 

@@ -4,11 +4,11 @@ The folders and fields you build for one game can start your next campaign, and 
 
 ## Save your campaign's folders as a template
 
-1. Open the campaign whose folders and fields you want to reuse, and choose **Edit > Types...**.
+1. Open the campaign whose folders and fields you want to reuse, and choose **Campaign > Note Types...**.
 2. Choose **Export Campaign Structure...** at the bottom.
 3. Save it. The save window starts in your templates folder: save it there to start new campaigns from it, or anywhere else to share it.
 
-A template is an ordinary **.zip** file holding the campaign's folders and the **_type.yaml** file of each folder that has fields, subfolders and all. If the campaign has walkthrough questions of its own (see **Edit > Walkthrough Questions...** in the walkthrough guide), they go in the template too. It never holds your notes, so it's small and has no spoilers in it.
+A template is an ordinary **.zip** file holding the campaign's folders and the **_type.yaml** file of each folder that has fields, subfolders and all. If the campaign has walkthrough questions of its own (see **Campaign > Walkthrough Questions...** in the walkthrough guide), they go in the template too. It never holds your notes, so it's small and has no spoilers in it.
 
 ## Start a campaign from a template
 
@@ -18,19 +18,19 @@ In **New Campaign...**, pick the template under **Start from**. The line under i
 
 ## Share a single type
 
-1. In **Edit > Types...**, pick the folder whose fields you want to share, like Weapons.
+1. In **Campaign > Note Types...**, pick the folder whose fields you want to share, like Weapons.
 2. Choose **Export Type...** and save it. The file is named after the type, like **Weapon.type.yaml**, and holds every field the folder's notes have, including the ones it gets from the folder it's in.
 
 Types saved in your types folder (where the save window starts) can be used in any campaign:
 
-- In **Edit > Types...**, a folder with no fields can **start from a type saved for every campaign**.
+- In **Campaign > Note Types...**, a folder with no fields can **start from a type saved for every campaign**.
 - The **+** at the bottom of the file tree offers them for a new folder, marked **(saved type)**.
 
-Save your changes in **Edit > Types...** before exporting: the export buttons wait until there are none.
+Save your changes in **Campaign > Note Types...** before exporting: the export buttons wait until there are none.
 
 ## Use a template or type someone shared
 
-Choose **Import...** in **Edit > Types...** or in **New Campaign...**, and pick the file.
+Choose **Import...** in **Campaign > Note Types...** or in **New Campaign...**, and pick the file.
 
 - A **.zip** becomes a template for new campaigns. A folder zipped with your file manager works too, even with notes in it: only its folders, **_type.yaml** files and **_walkthrough.yaml** are used.
 - A **.yaml** type becomes a saved type.

@@ -1462,7 +1462,7 @@ fn cell_keys<M: Clone>(
             }
             _ => {}
         }
-        if key_press.modifiers.command()
+        if (key_press.modifiers.command() || key_press.modifiers.alt())
             && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
         {
             return Some(text_editor::Binding::Custom(message));

@@ -163,6 +163,10 @@ The items in Player Management are all things that will just be built as templat
 - [ ] Menu bar review: work out the most user-friendly menu bar for everything the earlier items added, before Phase 3 adds more
   - A **Tables** menu (new roll table, the Roll Tables list, the built-in tables)
   - The built-in tables grouped in the Roll Tables list (names, story prompts, world, adventure) instead of one long Built in group
+  - Seven menus, each holding one kind of thing: File, Edit, View, Campaign (the walkthrough, Note Types, Export Campaign Structure), Tables (the dice roller and roll tables), Maps (greyed out until the map editor) and Help. View's themes and file tree actions go in submenus, Edit gets Cut, Copy, Paste and Select All, and menus open from the keyboard with Alt and their first letter
+  - Every menu item is a named command (`src/commands.rs`) with an id, a label and its shortcut, so the Phase 3 tool pane and custom shortcuts can offer "everything the menus can do"
+  - Shortcuts: the dice roller is Ctrl+Shift+D; Ctrl+D is kept free for Duplicate (notes, and the map editor later)
+  - Built in two steps: the commands and the new menus, then the Tables menu's built-in tables and the grouped Roll Tables list
 - [ ] **Undo** and **Redo** for everything changed in the app, not only typing: a field filled from a roll, a table changed in the table editor, a note moved or renamed. Until then, **Cancel** in the table editor and closing a note without saving put things back
 
 ### Phase 3: climax
