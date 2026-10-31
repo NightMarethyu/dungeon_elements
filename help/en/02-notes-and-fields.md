@@ -4,10 +4,10 @@
 
 A folder can say which fields its notes have, like Name, Location and Status for an NPC. Its notes then open as a **form**. The fields are saved as ordinary Markdown with the short ones at the top of the file, so the note still reads well in any text editor.
 
-- **Edit > Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, a date, tags, a link to another note, links to several notes, a checkbox, long text, steps, [dice](guide:dice), or a [roll table](guide:tables).
+- **Campaign > Note Types...** lists every folder on the left and its fields on the right. Add, remove, rename and reorder fields, and choose what kind each one is: text, number, a choice from a list, a date, tags, a link to another note, links to several notes, a checkbox, long text, steps, [dice](guide:dice), or a [roll table](guide:tables).
 - A folder without fields holds plain Markdown notes.
-- To give a folder fields, pick it in **Edit > Types...** and add some.
-- **Add New**, at the bottom of the list in **Edit > Types...**, makes a new type and a folder for its notes. Name the type (like Faction) and the folder is named after it (factions), or type another name for the folder. **Discard** leaves it out. The folder is made when you choose **Save**.
+- To give a folder fields, pick it in **Campaign > Note Types...** and add some.
+- **Add New**, at the bottom of the list in **Campaign > Note Types...**, makes a new type and a folder for its notes. Name the type (like Faction) and the folder is named after it (factions), or type another name for the folder. **Discard** leaves it out. The folder is made when you choose **Save**.
 
 ## Fill in a form from the keyboard
 
@@ -20,7 +20,7 @@ A **date** field holds a date, like when a session was played. A new note starts
 
 - Type the date as year-month-day (`2026-10-28`), click **Calendar** to pick a day from a month (**‹** and **›** go to the month before or after), or click **Today**. The day of the week shows under the box.
 - It's saved as `2026-10-28`, which Obsidian reads as a date too.
-- Dates that aren't on a calendar, like a Stardate or the 3rd of Frostfall, are kept as written. For a field that only holds those, untick **Pick the date from a calendar** for it in **Edit > Types...**: it becomes a plain line of text, and new notes start with it empty.
+- Dates that aren't on a calendar, like a Stardate or the 3rd of Frostfall, are kept as written. For a field that only holds those, untick **Pick the date from a calendar** for it in **Campaign > Note Types...**: it becomes a plain line of text, and new notes start with it empty.
 
 ## Tags
 
@@ -30,14 +30,14 @@ A **tags** field groups notes. Each tag is also a note of its own, in the **tags
 - Each tag is a button that opens its note. **×** takes a tag off.
 - Saving the note makes the notes of new tags and adds a link to the note to each one. A tag taken off has the link taken out of its note. Renaming the note renames the links.
 - Tags changed in another app, like Obsidian, are noticed: a dialog lists the notes whose tags changed and offers to update their tag notes to match.
-- The tags are saved as a list under `tags:`, which Obsidian reads as tags. A tags field can keep its tag notes in another folder: set **Tag notes in** for it in **Edit > Types...**.
+- The tags are saved as a list under `tags:`, which Obsidian reads as tags. A tags field can keep its tag notes in another folder: set **Tag notes in** for it in **Campaign > Note Types...**.
 
 ## Links to several notes
 
 A **links to notes** field holds any number of links, like the people who use a kind of magic, or an NPC's allies.
 
 - Type a note's name and press **Enter** (or **Tab**) to add the note suggested. Each linked note is a button that opens it, and **Open all** opens them all at once.
-- Like a link field, it can **Link to** a folder in **Edit > Types...**, whose notes are suggested first and where a new note it names is made.
+- Like a link field, it can **Link to** a folder in **Campaign > Note Types...**, whose notes are suggested first and where a new note it names is made.
 - The links are saved as a list of `[[links]]`, which Obsidian shows as links, and each linked note lists this one under **Linked from**.
 
 ## Steps: quests made of smaller quests
@@ -49,14 +49,14 @@ A **steps** field is a checklist. Each step is a line of text, a `[[link]]` to a
 - Typing `[[` suggests notes, with the notes of the folder the field **Links to** first (quests, for Objectives). A step with a link has an **Open** button, which makes the note if there isn't one yet (a new quest, in the quests folder).
 - A step that links to a roll table, like `Cross the marsh: [[Encounters#Marsh]]`, has a die button with the table's name that rolls it.
 - Steps are saved as a Markdown task list (`- [ ] Find the map`) under a `## Objectives` heading, so Obsidian shows them as a checklist and the reading view can tick them too.
-- Campaigns made before steps existed have Objectives as long text. To use steps, pick the quests folder in **Edit > Types...** and change Objectives to **Steps** that **Links to** quests. Notes whose objectives are already a task list show them as steps.
+- Campaigns made before steps existed have Objectives as long text. To use steps, pick the quests folder in **Campaign > Note Types...** and change Objectives to **Steps** that **Links to** quests. Notes whose objectives are already a task list show them as steps.
 
 ## Subfolders are kinds of their folder
 
 A subfolder works like a child class: its notes have every field of the folder it's in, plus fields of their own. Weapons, Armor and Gear in Items are all items, with a Value and a Rarity, but a weapon also has Damage. Enemies in NPCs start out like any NPC, then add a Challenge Rating.
 
-- **Right-click** a folder and pick **New Subfolder...**. In a folder with fields, choose **A kind of Item** (named after the folder), then add its own fields in the **Edit > Types...** window that opens next. Choose **Item notes** instead for a subfolder that only sorts notes, like Waterdeep in NPCs.
-- In **Edit > Types...**, a subfolder lists the fields it inherits first. **Change** one to make it different in the subfolder only (like other choices for an Enemy's Disposition), or **Remove** it from the subfolder's notes. Fields added to the parent folder later show up in its subfolders too.
+- **Right-click** a folder and pick **New Subfolder...**. In a folder with fields, choose **A kind of Item** (named after the folder), then add its own fields in the **Campaign > Note Types...** window that opens next. Choose **Item notes** instead for a subfolder that only sorts notes, like Waterdeep in NPCs.
+- In **Campaign > Note Types...**, a subfolder lists the fields it inherits first. **Change** one to make it different in the subfolder only (like other choices for an Enemy's Disposition), or **Remove** it from the subfolder's notes. Fields added to the parent folder later show up in its subfolders too.
 - A subfolder can have subfolders of its own, like Swords in Weapons: they have every Item field, every Weapon field, and theirs.
 - Right-clicking a folder offers a new note of each of its kinds (**New Item**, **New Weapon**), and the **+** next to a folder says what it makes.
 - Moving a note into a subfolder makes it that kind of note and keeps everything you filled in. A note that says it's an Item but sits in Weapons is read as a Weapon.

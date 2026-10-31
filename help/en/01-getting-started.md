@@ -14,7 +14,15 @@ To open a campaign you already have, choose **Open Campaign...**. It lists the c
 ## Find your way around
 
 - The **file tree** on the left lists the campaign's folders and notes. Click a note to open it in a tab.
-- The **menus** at the top hold everything the app can do. **File** saves and opens, **Edit** inserts links and pictures and changes note fields, and **View** changes the theme and how notes are shown.
+- The **menus** at the top hold everything the app can do:
+  - **File** makes, saves and opens notes and campaigns.
+  - **Edit** cuts, copies and pastes, inserts links and pictures, and finds notes.
+  - **View** changes how notes are shown, which lists are open, and the theme.
+  - **Campaign** has the walkthrough and the note types: the fields each kind of note has.
+  - **Tables** has the dice roller and the roll tables.
+  - **Maps** is greyed out for now, waiting for the map editor.
+  - **Help** has these guides and the keyboard shortcuts.
+- Hold **Alt** and press a menu's first letter to open it from the keyboard (**Alt+F** for File), then use the arrow keys and **Enter**.
 - The **status bar** at the bottom says what just happened. If any notes have problems, a ⚠ there lists them.
 - **Right-click** almost anything (a note, a folder, a tab, some text) for what you can do with it.
 

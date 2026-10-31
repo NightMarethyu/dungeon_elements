@@ -4,6 +4,15 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Menus
+
+- The menu bar is sorted so each menu holds one kind of thing. A new **Campaign** menu has the walkthrough, the walkthrough questions, **Note Types...** (once Edit > Types...), **Export Campaign Structure...** and **Show Campaign Folder**. A new **Tables** menu has the Roll Tables list, the dice roller, **New Roll Table...** and **Add Roll Table Here**. **Maps** is there, greyed out, for the map editor to come.
+- **Edit** has **Cut**, **Copy**, **Paste** and **Select All**, and **Search Notes** is now **Find in Notes**.
+- **View** is shorter: the themes are in a **Theme** submenu and the file tree's Refresh, Expand All and Collapse All in a **File Tree** one.
+- **File > New Campaign...** and **Open Campaign...** work while a campaign is open, closing it first.
+- The dice roller opens and closes with **Ctrl+Shift+D**, or from **View** or **Tables**.
+- Hold **Alt** and press a menu's first letter to open it (**Alt+F** for File), then move about with the arrow keys and pick with **Enter**.
+
 ### Inspire Me dropdown
 
 - A field or walkthrough question that rolls on several tables has one **Inspire Me** button with a dropdown beside it, in place of a button for each table. For names, the dropdown lists **Any**, **Mixed** and each culture, for women and men: **English - Female**, **Norse - Male** and so on.

@@ -1,6 +1,6 @@
 # Searching your notes
 
-The search box at the top of the file tree finds notes as you type. Click in it, or press **Ctrl+Shift+F** (**Edit > Search Notes**).
+The search box at the top of the file tree finds notes as you type. Click in it, or press **Ctrl+Shift+F** (**Edit > Find in Notes**).
 
 ## Find a note
 

@@ -7,6 +7,7 @@ mod backlinks;
 mod campaign;
 mod check;
 mod code;
+mod commands;
 mod context_menu;
 mod date;
 mod dice;
@@ -52,6 +53,7 @@ use iced::{Center, Element, Fill, Point, Size, Subscription, Task, window};
 
 use campaign::Entry;
 use check::Problem;
+use commands::Command;
 use form::Form;
 use menu::Menu;
 use preview::Preview;
@@ -100,6 +102,11 @@ struct App {
     dice: dice::Icons,
     /// The dropdown menu that is open, if any.
     menu: Option<Menu>,
+    /// Where the arrow keys are in the open menu, and its open submenu.
+    menu_cursor: menu::Cursor,
+    /// What to do once the campaign has closed: File > New Campaign or Open Campaign
+    /// while a campaign is open.
+    after_close: Option<Message>,
     /// Whether the "About" dialog is showing.
     about: bool,
     /// The Help window, if it is open.
@@ -641,12 +648,32 @@ fn display_name(path: &Path, show_extensions: bool) -> String {
     )
 }
 
+/// A key that moves about an open menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arrow {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     // Menus and app-wide settings
     MenuOpened(Menu),
     MenuHovered(Menu),
+    /// Alt and a menu's first letter: opens it, ready for the arrow keys.
+    MenuKey(Menu),
+    /// The mouse moved onto a line of the open menu: opens its submenu, if it has one.
+    SubmenuHovered(Option<usize>),
+    /// An arrow key, Enter or Space while a menu is open.
+    MenuArrow(Arrow),
     CloseMenu,
+    /// A menu item or its keyboard shortcut.
+    Run(Command),
+    /// Campaign > Export Campaign Structure...
+    ExportStructure,
     Escape,
     ThemePicked(String),
     ReloadThemes,
@@ -720,6 +747,8 @@ enum Message {
     /// Adds a roll table after the block the reading view's right-click menu was opened
     /// on, and opens the table editor on it.
     AddTableHere,
+    /// Tables > Add Roll Table Here: at the end of the note in the reading view.
+    AddTableAtEnd,
     /// Puts what was edited in the reading view back into the note.
     FinishEditing,
     Modifiers(Modifiers),
@@ -907,6 +936,8 @@ impl App {
             ),
             dice: dice::Icons::new(theme::built_in()[0].colors),
             menu: None,
+            menu_cursor: menu::Cursor::default(),
+            after_close: None,
             about: false,
             help: None,
             window: window_settings().size,
@@ -1017,9 +1048,9 @@ impl App {
     fn subscription(&self) -> Subscription<Message> {
         let keys = match self.screen {
             Screen::Splash { .. } => keyboard::listen().filter_map(|event| match event {
-                keyboard::Event::KeyPressed { key, modifiers, .. } => {
-                    escape(&key).or_else(|| help_key(&key, modifiers))
-                }
+                keyboard::Event::KeyPressed { key, modifiers, .. } => escape(&key)
+                    .or_else(|| help_key(&key, modifiers))
+                    .or_else(|| menu_key(&key, modifiers)),
                 _ => None,
             }),
             Screen::Workspace(_) => keyboard::listen().filter_map(|event| match event {
@@ -1030,6 +1061,16 @@ impl App {
                 keyboard::Event::ModifiersChanged(modifiers) => Some(Message::Modifiers(modifiers)),
                 _ => None,
             }),
+        };
+
+        // The arrow keys move about an open menu.
+        let menu_keys = if self.menu.is_some() {
+            keyboard::listen().filter_map(|event| match event {
+                keyboard::Event::KeyPressed { key, .. } => arrow_key(&key),
+                _ => None,
+            })
+        } else {
+            Subscription::none()
         };
 
         // Coming back to the window is when files may have been edited in another app.
@@ -1076,6 +1117,7 @@ impl App {
 
         Subscription::batch([
             keys,
+            menu_keys,
             focus,
             files,
             searching,
@@ -1094,13 +1136,60 @@ impl App {
                 } else {
                     Some(menu)
                 };
+                self.menu_cursor = menu::Cursor::default();
                 return Task::none();
             }
             Message::MenuHovered(menu) => {
-                if self.menu.is_some() {
+                if self.menu.is_some() && self.menu != Some(menu) {
                     self.menu = Some(menu);
+                    self.menu_cursor = menu::Cursor::default();
                 }
                 return Task::none();
+            }
+            Message::MenuKey(menu) => {
+                if !self.can_open(menu) {
+                    return Task::none();
+                }
+                if let Screen::Workspace(workspace) = &mut self.screen {
+                    workspace.context = None;
+                }
+                if self.menu == Some(menu) {
+                    self.menu = None;
+                    return Task::none();
+                }
+                self.menu = Some(menu);
+                let entries = self.menu_entries(menu);
+                self.menu_cursor = menu::Cursor {
+                    line: menu::step(&entries, None, true),
+                    ..menu::Cursor::default()
+                };
+                // The text box being typed in would take the arrow keys for itself.
+                return iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::focusable::unfocus(),
+                );
+            }
+            Message::SubmenuHovered(line) => {
+                if let Some(open) = self.menu {
+                    let entries = self.menu_entries(open);
+                    let line = line.filter(|line| menu::is_submenu(&entries, *line));
+                    if self.menu_cursor.submenu != line {
+                        self.menu_cursor.submenu = line;
+                        self.menu_cursor.sub_line = None;
+                    }
+                }
+                return Task::none();
+            }
+            Message::MenuArrow(arrow) => {
+                let Some(open) = self.menu else {
+                    return Task::none();
+                };
+                return self.menu_arrow(open, arrow);
+            }
+            Message::Run(command) => {
+                return match self.command(command).0 {
+                    Some(message) => self.update(message),
+                    None => Task::none(),
+                };
             }
             _ => {}
         }
@@ -1119,6 +1208,7 @@ impl App {
         let mut closed = false;
         if !tracking {
             closed = self.menu.take().is_some();
+            self.menu_cursor = menu::Cursor::default();
             if let Screen::Workspace(workspace) = &mut self.screen {
                 closed |= workspace.context.take().is_some();
             }
@@ -1424,9 +1514,24 @@ impl App {
                 }
             },
             Screen::Workspace(workspace) => {
-                if let Message::CloseCampaignConfirmed(true) = message {
-                    self.screen = Screen::default();
-                    return Task::none();
+                match message {
+                    Message::CloseCampaignConfirmed(true) => {
+                        self.screen = Screen::default();
+                        return match self.after_close.take() {
+                            Some(next) => self.update(next),
+                            None => Task::none(),
+                        };
+                    }
+                    Message::CloseCampaignConfirmed(false) => {
+                        self.after_close = None;
+                        return Task::none();
+                    }
+                    // A new or other campaign takes this one's place, once it has closed.
+                    Message::ShowNewCampaign | Message::OpenCampaign => {
+                        self.after_close = Some(message);
+                        return self.update(Message::CloseCampaign);
+                    }
+                    _ => {}
                 }
                 let edit = !tracking;
                 let task = workspace.update(message);
@@ -1451,6 +1556,12 @@ impl App {
             c,
             &self.logos.0,
             self.menu,
+            |menu| self.can_open(menu),
+            |menu| match menu {
+                Menu::Maps => Some("Maps are coming with the map editor"),
+                Menu::Campaign | Menu::Tables => Some("Open a campaign first"),
+                _ => None,
+            },
             Message::MenuOpened,
             Message::MenuHovered,
         );
@@ -1501,9 +1612,16 @@ impl App {
                 Message::CloseContextMenu,
             ))
         });
-        let dropdown = self
-            .menu
-            .map(|open| menu::dropdown(c, open, self.menu_entries(open), Message::CloseMenu));
+        let dropdown = self.menu.map(|open| {
+            menu::dropdown(
+                c,
+                open,
+                self.menu_entries(open),
+                self.menu_cursor,
+                Message::CloseMenu,
+                Message::SubmenuHovered,
+            )
+        });
 
         // Every layer is always there, empty when closed, so opening one doesn't make
         // iced build the window again from scratch, which would lose the focus, the
@@ -1520,20 +1638,34 @@ impl App {
         .into()
     }
 
-    fn menu_entries(&self, open: Menu) -> Vec<menu::Entry<Message>> {
-        use menu::{Entry, item};
+    /// Whether `menu` can be opened now: Maps waits for the map editor, and Campaign
+    /// and Tables for a campaign.
+    fn can_open(&self, menu: Menu) -> bool {
+        match menu {
+            Menu::Maps => false,
+            Menu::Campaign | Menu::Tables => matches!(self.screen, Screen::Workspace(_)),
+            _ => true,
+        }
+    }
 
+    /// What `command` does now, whether it can be picked from a menu now, and whether it
+    /// shows a tick. The keyboard runs the message even when the menu greys the item out,
+    /// so a shortcut can still say why it did nothing.
+    fn command(&self, command: Command) -> (Option<Message>, bool, bool) {
         let workspace = match &self.screen {
             Screen::Workspace(workspace) => Some(workspace.as_ref()),
             Screen::Splash { .. } => None,
         };
-        let has_tab = workspace.is_some_and(|workspace| workspace.active.is_some());
+        let open = workspace.is_some();
+        let active_tab = workspace.and_then(Workspace::active_tab);
+        let has_tab = active_tab.is_some();
         let has_unsaved =
             workspace.is_some_and(|workspace| workspace.tabs.iter().any(|tab| tab.modified));
-        let active_tab = workspace.and_then(Workspace::active_tab);
         let has_form = active_tab.is_some_and(|tab| tab.form.is_some());
-        let can_read = active_tab.is_some_and(Tab::is_note);
+        let is_note = active_tab.is_some_and(Tab::is_note);
         let reading = active_tab.is_some_and(Tab::reading);
+        let text = workspace.and_then(Workspace::focused_text);
+        let selected = text.is_some_and(|text| text.selection().is_some());
         let can_link = active_tab.is_some_and(|tab| {
             tab.is_note()
                 && !tab.reading()
@@ -1543,161 +1675,275 @@ impl App {
         let shows_source =
             active_tab.is_some_and(|tab| tab.form.is_some() && tab.source && !tab.reading());
         let shows_form = active_tab.is_some_and(Tab::shows_form);
-        let when = |enabled: bool, message: Message| enabled.then_some(message);
+        let quests = workspace.is_some_and(|workspace| workspace.quests.open);
+        let tables = workspace.is_some_and(|workspace| workspace.tables.open);
+        let dice = workspace.is_some_and(|workspace| workspace.dice.open);
+        let settings = &self.settings;
+
+        // Most commands need a campaign open; these are the message and whether it can
+        // be picked, then the tick.
+        let (message, enabled, checked) = match command {
+            Command::NewNote => (Message::NewNote, open, false),
+            Command::NewFolder => (Message::ShowNewFolder, open, false),
+            Command::OpenFile => (Message::OpenFile, open, false),
+            Command::Save => (Message::Save, has_tab, false),
+            Command::SaveAs => (Message::SaveAs, has_tab, false),
+            Command::SaveAll => (Message::SaveAll, has_unsaved, false),
+            Command::CloseTab => (Message::CloseActiveTab, has_tab, false),
+            Command::CloseCampaign => (Message::CloseCampaign, open, false),
+            Command::NewCampaign => (Message::ShowNewCampaign, true, false),
+            Command::OpenCampaign => (Message::OpenCampaign, true, false),
+            Command::Exit => (Message::Exit, true, false),
+            Command::Cut => (Message::Cut, selected, false),
+            Command::Copy => (Message::Copy, selected, false),
+            Command::Paste => (Message::Paste, text.is_some(), false),
+            Command::SelectAll => (Message::SelectAll, text.is_some(), false),
+            Command::InsertLink => (Message::InsertLink, can_link, false),
+            Command::InsertPicture => (Message::InsertPicture, is_note, false),
+            Command::AddField => (Message::ShowAddField, shows_form, false),
+            Command::FindInNotes => (Message::FocusSearch, open, false),
+            Command::ReadingView => (Message::ToggleReading, is_note, reading),
+            Command::EditAsForm => (Message::SetSource(false), has_form, shows_form),
+            Command::EditAsMarkdown => (Message::ToggleSource, has_form, shows_source),
+            Command::Quests => (
+                if quests {
+                    Message::Quests(quests::Message::Close)
+                } else {
+                    Message::ShowQuests
+                },
+                open,
+                quests,
+            ),
+            Command::RollTables => (
+                if tables {
+                    Message::Tables(tables::Message::Close)
+                } else {
+                    Message::ShowTables
+                },
+                open,
+                tables,
+            ),
+            Command::DiceRoller => (Message::ToggleDice, open, dice),
+            Command::FormattingToolbar => (
+                Message::ToggleToolbar(!settings.show_toolbar),
+                true,
+                settings.show_toolbar,
+            ),
+            Command::ShowExtensions => (
+                Message::ToggleExtensions(!settings.show_extensions),
+                true,
+                settings.show_extensions,
+            ),
+            Command::ShowTypeFiles => (
+                Message::ToggleTypeFiles(!settings.show_type_files),
+                true,
+                settings.show_type_files,
+            ),
+            Command::OpenInReading => (
+                Message::ToggleOpenInReading(!settings.open_in_reading),
+                true,
+                settings.open_in_reading,
+            ),
+            Command::ReloadThemes => (Message::ReloadThemes, true, false),
+            Command::RefreshTree => (Message::RefreshTree, open, false),
+            Command::ExpandAll => (Message::ExpandAll, open, false),
+            Command::CollapseAll => (Message::CollapseAll, open, false),
+            Command::Walkthrough => (Message::ShowWalkthrough, open, false),
+            Command::WalkthroughQuestions => (Message::ShowWalkthroughEditor, open, false),
+            Command::NoteTypes => (Message::ShowTypes, open, false),
+            Command::ExportStructure => (Message::ExportStructure, open, false),
+            Command::ShowCampaignFolder => match workspace {
+                Some(workspace) => (
+                    Message::ShowInFileManager(workspace.root.clone()),
+                    true,
+                    false,
+                ),
+                None => return (None, false, false),
+            },
+            Command::NewRollTable => (Message::ShowNewTable(None), open, false),
+            Command::AddRollTableHere => (Message::AddTableAtEnd, is_note && reading, false),
+            Command::HowTo => (Message::ShowHelp(help::Page::Guide(0)), true, false),
+            Command::Shortcuts => (Message::ShowHelp(help::Page::Shortcuts), true, false),
+            Command::WhatsNew => (Message::ShowHelp(help::Page::WhatsNew), true, false),
+            Command::ReportProblem => (Message::OpenWeb(help::ISSUES_URL), true, false),
+            Command::GitHub => (Message::OpenWeb(help::PROJECT_URL), true, false),
+            Command::About => (Message::ShowAbout, true, false),
+        };
+        (Some(message), enabled, checked)
+    }
+
+    /// The menu line for `command`, greyed out when it can't be picked now.
+    fn command_entry(&self, command: Command) -> menu::Entry<Message> {
+        let (message, enabled, checked) = self.command(command);
+        let mut entry = menu::item(command.label(), message.filter(|_| enabled)).checked(checked);
+        if let Some(keys) = command.shortcut() {
+            entry = entry.shortcut(keys);
+        }
+        entry
+    }
+
+    fn menu_entries(&self, open: Menu) -> Vec<menu::Entry<Message>> {
+        use menu::Entry;
+
+        enum Line {
+            Do(Command),
+            Gap,
+        }
+        use Command::*;
+        use Line::{Do, Gap};
+
+        let lines = |lines: &[Line]| -> Vec<Entry<Message>> {
+            lines
+                .iter()
+                .map(|line| match line {
+                    Do(command) => self.command_entry(*command),
+                    Gap => Entry::Separator,
+                })
+                .collect()
+        };
 
         match open {
-            Menu::File => match workspace {
-                Some(_) => vec![
-                    item("New Note", Some(Message::NewNote)).shortcut("Ctrl+N"),
-                    item("New Folder...", Some(Message::ShowNewFolder)),
-                    item("New Roll Table...", Some(Message::ShowNewTable(None))),
-                    item("Open File...", Some(Message::OpenFile)).shortcut("Ctrl+O"),
-                    Entry::Separator,
-                    item("Campaign Walkthrough...", Some(Message::ShowWalkthrough)),
-                    Entry::Separator,
-                    item("Save", when(has_tab, Message::Save)).shortcut("Ctrl+S"),
-                    item("Save As...", when(has_tab, Message::SaveAs)).shortcut("Ctrl+Shift+S"),
-                    item("Save All", when(has_unsaved, Message::SaveAll)).shortcut("Ctrl+Alt+S"),
-                    Entry::Separator,
-                    item("Close Tab", when(has_tab, Message::CloseActiveTab)).shortcut("Ctrl+W"),
-                    item("Close Campaign", Some(Message::CloseCampaign)),
-                    Entry::Separator,
-                    item("Exit", Some(Message::Exit)),
-                ],
-                None => vec![
-                    item("New Campaign...", Some(Message::ShowNewCampaign)),
-                    item("Open Campaign...", Some(Message::OpenCampaign)),
-                    Entry::Separator,
-                    item("Exit", Some(Message::Exit)),
-                ],
-            },
-            Menu::Edit => vec![
-                item("Insert Link", when(can_link, Message::InsertLink)).shortcut("Ctrl+K"),
-                item("Insert Picture...", when(can_read, Message::InsertPicture))
-                    .shortcut("Ctrl+Shift+K"),
-                Entry::Separator,
-                item(
-                    "Add Field to This Note...",
-                    when(
-                        active_tab.is_some_and(Tab::shows_form),
-                        Message::ShowAddField,
-                    ),
-                ),
-                Entry::Separator,
-                item(
-                    "Search Notes",
-                    when(workspace.is_some(), Message::FocusSearch),
-                )
-                .shortcut("Ctrl+Shift+F"),
-                Entry::Separator,
-                item("Types...", Some(Message::ShowTypes)),
-                item(
-                    "Walkthrough Questions...",
-                    when(workspace.is_some(), Message::ShowWalkthroughEditor),
-                ),
-            ],
+            Menu::File => lines(&[
+                Do(NewNote),
+                Do(NewFolder),
+                Do(OpenFile),
+                Gap,
+                Do(Save),
+                Do(SaveAs),
+                Do(SaveAll),
+                Gap,
+                Do(CloseTab),
+                Do(CloseCampaign),
+                Gap,
+                Do(NewCampaign),
+                Do(OpenCampaign),
+                Gap,
+                Do(Exit),
+            ]),
+            Menu::Edit => lines(&[
+                Do(Cut),
+                Do(Copy),
+                Do(Paste),
+                Do(SelectAll),
+                Gap,
+                Do(InsertLink),
+                Do(InsertPicture),
+                Do(AddField),
+                Gap,
+                Do(FindInNotes),
+            ]),
             Menu::View => {
-                let mut entries = vec![Entry::Heading("Theme".into())];
-                entries.extend(self.themes.iter().enumerate().map(|(index, theme)| {
-                    item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
-                        .checked(index == self.theme)
-                }));
-                entries.extend([
-                    item("Reload Themes", Some(Message::ReloadThemes)),
-                    Entry::Separator,
-                    item(
-                        "Show File Extensions",
-                        Some(Message::ToggleExtensions(!self.settings.show_extensions)),
-                    )
-                    .checked(self.settings.show_extensions),
-                    item(
-                        "Show Type Files (.yaml)",
-                        Some(Message::ToggleTypeFiles(!self.settings.show_type_files)),
-                    )
-                    .checked(self.settings.show_type_files),
-                    item("Reading View", when(can_read, Message::ToggleReading))
-                        .shortcut("Ctrl+R")
-                        .checked(reading),
-                    item("Edit as Form", when(has_form, Message::SetSource(false)))
-                        .checked(shows_form),
-                    item("Edit as Markdown", when(has_form, Message::SetSource(true)))
-                        .shortcut("Ctrl+E")
-                        .checked(shows_source),
-                    item(
-                        "Formatting Toolbar",
-                        Some(Message::ToggleToolbar(!self.settings.show_toolbar)),
-                    )
-                    .checked(self.settings.show_toolbar),
-                    item(
-                        "Open Notes in Reading View",
-                        Some(Message::ToggleOpenInReading(!self.settings.open_in_reading)),
-                    )
-                    .checked(self.settings.open_in_reading),
-                    Entry::Separator,
-                    item(
-                        "Quests",
-                        workspace.map(|workspace| {
-                            if workspace.quests.open {
-                                Message::Quests(quests::Message::Close)
-                            } else {
-                                Message::ShowQuests
-                            }
-                        }),
-                    )
-                    .shortcut("Ctrl+Shift+Q")
-                    .checked(workspace.is_some_and(|workspace| workspace.quests.open)),
-                    item(
-                        "Roll Tables",
-                        workspace.map(|workspace| {
-                            if workspace.tables.open {
-                                Message::Tables(tables::Message::Close)
-                            } else {
-                                Message::ShowTables
-                            }
-                        }),
-                    )
-                    .shortcut("Ctrl+Shift+T")
-                    .checked(workspace.is_some_and(|workspace| workspace.tables.open)),
-                    item(
-                        "Refresh File Tree",
-                        when(workspace.is_some(), Message::RefreshTree),
-                    ),
-                    item(
-                        "Expand All Folders",
-                        when(workspace.is_some(), Message::ExpandAll),
-                    ),
-                    item(
-                        "Collapse All Folders",
-                        when(workspace.is_some(), Message::CollapseAll),
-                    ),
+                let mut entries = lines(&[
+                    Do(ReadingView),
+                    Do(EditAsForm),
+                    Do(EditAsMarkdown),
+                    Gap,
+                    Do(Quests),
+                    Do(RollTables),
+                    Do(DiceRoller),
+                    Gap,
+                    Do(FormattingToolbar),
+                    Do(ShowExtensions),
+                    Do(ShowTypeFiles),
+                    Do(OpenInReading),
+                    Gap,
                 ]);
+                let mut themes: Vec<Entry<Message>> = self
+                    .themes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, theme)| {
+                        menu::item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
+                            .checked(index == self.theme)
+                    })
+                    .collect();
+                themes.push(Entry::Separator);
+                themes.push(self.command_entry(ReloadThemes));
+                entries.push(menu::submenu("Theme", themes));
+                entries.push(menu::submenu(
+                    "File Tree",
+                    lines(&[Do(RefreshTree), Do(ExpandAll), Do(CollapseAll)]),
+                ));
                 entries
             }
-            Menu::Help => vec![
-                item(
-                    "How-To Guides",
-                    Some(Message::ShowHelp(help::Page::Guide(0))),
-                )
-                .shortcut("F1"),
-                item(
-                    "Keyboard Shortcuts",
-                    Some(Message::ShowHelp(help::Page::Shortcuts)),
-                )
-                .shortcut("Ctrl+/"),
-                item("What's New", Some(Message::ShowHelp(help::Page::WhatsNew))),
-                Entry::Separator,
-                item(
-                    "Report a Problem...",
-                    Some(Message::OpenWeb(help::ISSUES_URL)),
-                ),
-                item(
-                    "Dungeon Elements on GitHub",
-                    Some(Message::OpenWeb(help::PROJECT_URL)),
-                ),
-                Entry::Separator,
-                item("About Dungeon Elements", Some(Message::ShowAbout)),
-            ],
+            Menu::Campaign => lines(&[
+                Do(Walkthrough),
+                Do(WalkthroughQuestions),
+                Gap,
+                Do(NoteTypes),
+                Do(ExportStructure),
+                Gap,
+                Do(ShowCampaignFolder),
+            ]),
+            Menu::Tables => lines(&[
+                Do(RollTables),
+                Do(DiceRoller),
+                Gap,
+                Do(NewRollTable),
+                Do(AddRollTableHere),
+            ]),
+            Menu::Maps => Vec::new(),
+            Menu::Help => lines(&[
+                Do(HowTo),
+                Do(Shortcuts),
+                Do(WhatsNew),
+                Gap,
+                Do(ReportProblem),
+                Do(GitHub),
+                Gap,
+                Do(About),
+            ]),
         }
+    }
+
+    /// Moves about the open menu with the arrow keys, or picks the line they are on.
+    fn menu_arrow(&mut self, open: Menu, arrow: Arrow) -> Task<Message> {
+        let mut entries = self.menu_entries(open);
+        let cursor = self.menu_cursor;
+        let sub = cursor
+            .submenu
+            .and_then(|line| menu::submenu_entries(&mut entries, line));
+
+        match (arrow, sub) {
+            (Arrow::Up | Arrow::Down, Some(sub)) => {
+                self.menu_cursor.sub_line = menu::step(&sub, cursor.sub_line, arrow == Arrow::Down);
+            }
+            (Arrow::Up | Arrow::Down, None) => {
+                self.menu_cursor.line = menu::step(&entries, cursor.line, arrow == Arrow::Down);
+            }
+            (Arrow::Left, Some(_)) => {
+                self.menu_cursor.submenu = None;
+                self.menu_cursor.sub_line = None;
+            }
+            (Arrow::Right | Arrow::Enter, None)
+                if cursor
+                    .line
+                    .is_some_and(|line| menu::is_submenu(&entries, line)) =>
+            {
+                let line = cursor.line.unwrap_or_default();
+                let sub = menu::submenu_entries(&mut entries, line).unwrap_or_default();
+                self.menu_cursor.submenu = Some(line);
+                self.menu_cursor.sub_line = menu::step(&sub, None, true);
+            }
+            (Arrow::Left | Arrow::Right, _) => {
+                let step = if arrow == Arrow::Right { 1 } else { -1 };
+                let next = open.beside(step, |menu| self.can_open(menu));
+                return self.update(Message::MenuKey(next));
+            }
+            (Arrow::Enter, Some(sub)) => {
+                if let Some(message) = cursor.sub_line.and_then(|line| menu::take_press(sub, line))
+                {
+                    return self.update(message);
+                }
+            }
+            (Arrow::Enter, None) => {
+                if let Some(message) = cursor.line.and_then(|line| menu::take_press(entries, line))
+                {
+                    return self.update(message);
+                }
+            }
+        }
+        Task::none()
     }
 }
 
@@ -5523,10 +5769,7 @@ impl Workspace {
                     }
                 }
             }
-            Message::Types(types_editor::Message::ExportStructure) => {
-                let Some(Dialog::Types(editor)) = &mut self.dialog else {
-                    return Task::none();
-                };
+            Message::Types(types_editor::Message::ExportStructure) | Message::ExportStructure => {
                 match templates::Structure::read(&self.root).to_zip() {
                     Ok(bytes) => Task::perform(
                         save_export(
@@ -5537,7 +5780,11 @@ impl Workspace {
                         Message::Exported,
                     ),
                     Err(message) => {
-                        editor.error = Some(format!("Could not export it: {message}"));
+                        let message = format!("Could not export it: {message}");
+                        match &mut self.dialog {
+                            Some(Dialog::Types(editor)) => editor.error = Some(message),
+                            _ => self.status = message,
+                        }
                         Task::none()
                     }
                 }
@@ -5546,7 +5793,13 @@ impl Workspace {
                 Task::perform(pick_import(), Message::TypesImportPicked)
             }
             Message::Exported(result) => {
+                // From Campaign > Export Campaign Structure, with no dialog open.
                 let Some(Dialog::Types(editor)) = &mut self.dialog else {
+                    match result {
+                        Ok(None) => {}
+                        Ok(Some(path)) => self.status = exported_notice(&path),
+                        Err(message) => self.status = format!("Could not export it: {message}"),
+                    }
                     return Task::none();
                 };
                 match result {
@@ -5963,6 +6216,10 @@ impl Workspace {
                 Task::none()
             }
             Message::AddTableHere => self.add_table_here(),
+            Message::AddTableAtEnd => {
+                self.menu_block = None;
+                self.add_table_here()
+            }
             Message::AddText => {
                 if let Some(tab) = self.active_tab_mut()
                     && let Some(preview) = &tab.preview
@@ -9035,7 +9292,7 @@ impl Workspace {
                     return Some(binding);
                 }
                 // Every editor sees every key press, so only the focused one handles shortcuts.
-                if key_press.modifiers.command()
+                if (key_press.modifiers.command() || key_press.modifiers.alt())
                     && matches!(key_press.status, text_editor::Status::Focused { .. })
                     && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
                 {
@@ -9600,6 +9857,9 @@ fn tab_key(key: &Key, modifiers: Modifiers) -> Option<Message> {
 }
 
 fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
+    if let Some(message) = menu_key(key, modifiers) {
+        return Some(message);
+    }
     if !modifiers.command() {
         return None;
     }
@@ -9607,30 +9867,43 @@ fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     if let Key::Named(keyboard::key::Named::Enter) = key.as_ref() {
         return Some(Message::Walkthrough(walkthrough_tab::Message::Next));
     }
+    if let Some(command) = Command::from_key(key, modifiers) {
+        return Some(Message::Run(command));
+    }
 
     let Key::Character(c) = key.as_ref() else {
         return None;
     };
-
     match c.to_ascii_lowercase().as_str() {
-        "n" => Some(Message::NewNote),
-        "o" => Some(Message::OpenFile),
-        "f" if modifiers.shift() => Some(Message::FocusSearch),
-        "q" if modifiers.shift() => Some(Message::ShowQuests),
-        "t" if modifiers.shift() => Some(Message::ShowTables),
-        "s" if modifiers.alt() => Some(Message::SaveAll),
-        "s" if modifiers.shift() => Some(Message::SaveAs),
-        "s" => Some(Message::Save),
-        "w" => Some(Message::CloseActiveTab),
-        "e" => Some(Message::ToggleSource),
-        "r" => Some(Message::ToggleReading),
-        "k" if modifiers.shift() => Some(Message::InsertPicture),
-        "k" => Some(Message::InsertLink),
-        "/" => Some(Message::ShowHelp(help::Page::Shortcuts)),
         "b" => Some(Message::Format(format::Command::Bold)),
         "i" => Some(Message::Format(format::Command::Italic)),
         _ => None,
     }
+}
+
+/// Maps Alt and a menu's first letter, which opens the menu.
+fn menu_key(key: &Key, modifiers: Modifiers) -> Option<Message> {
+    if !modifiers.alt() || modifiers.command() || modifiers.shift() {
+        return None;
+    }
+    let Key::Character(c) = key.as_ref() else {
+        return None;
+    };
+    Menu::from_letter(c).map(Message::MenuKey)
+}
+
+/// Maps the keys that move about an open menu.
+fn arrow_key(key: &Key) -> Option<Message> {
+    use keyboard::key::Named;
+    let arrow = match key.as_ref() {
+        Key::Named(Named::ArrowUp) => Arrow::Up,
+        Key::Named(Named::ArrowDown) => Arrow::Down,
+        Key::Named(Named::ArrowLeft) => Arrow::Left,
+        Key::Named(Named::ArrowRight) => Arrow::Right,
+        Key::Named(Named::Enter | Named::Space) => Arrow::Enter,
+        _ => return None,
+    };
+    Some(Message::MenuArrow(arrow))
 }
 
 fn splash<'a>(c: Colors, logo: &svg::Handle, error: Option<&'a str>) -> Element<'a, Message> {
@@ -9785,7 +10058,7 @@ fn new_campaign_dialog(c: Colors, form: &NewCampaign) -> Element<'_, Message> {
                     .label("Start the walkthrough")
                     .on_toggle(Message::ToggleNewWalkthrough)
                     .style(style::check(c)),
-                text("Questions about your world, one at a time, that make your first notes. Skip any, and come back to it from the File menu.")
+                text("Questions about your world, one at a time, that make your first notes. Skip any, and come back to it from the Campaign menu.")
                     .size(12)
                     .color(c.text_muted),
             ]
@@ -10373,7 +10646,7 @@ fn block_editor(
                 return Some(text_editor::Binding::Custom(Message::FinishEditing));
             }
             // Every editor sees every key press, so only the focused one handles shortcuts.
-            if key_press.modifiers.command()
+            if (key_press.modifiers.command() || key_press.modifiers.alt())
                 && matches!(key_press.status, text_editor::Status::Focused { .. })
                 && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
             {

@@ -2806,7 +2806,7 @@ fn key_binding<M: Clone>(
         if let Some(binding) = links::tab_binding(&key_press, &accept) {
             return Some(binding);
         }
-        if key_press.modifiers.command()
+        if (key_press.modifiers.command() || key_press.modifiers.alt())
             && matches!(key_press.status, text_editor::Status::Focused { .. })
             && let Some(message) = shortcut(&key_press.key, key_press.modifiers)
         {

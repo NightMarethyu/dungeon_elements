@@ -39,6 +39,20 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Menus",
+        &[
+            (
+                "Alt+F",
+                "Open the File menu (Alt and the first letter opens any menu)",
+            ),
+            (
+                "Arrow keys",
+                "Move about an open menu, and into its submenus",
+            ),
+            ("Enter", "Pick the menu item the arrow keys are on"),
+        ],
+    ),
+    (
         "Notes and tabs",
         &[
             ("Ctrl+N", "Make a new note"),
@@ -137,7 +151,10 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     ),
     (
         "Dice",
-        &[("Enter", "In a die's Count box or the expression box, roll")],
+        &[
+            ("Ctrl+Shift+D", "Open or close the dice roller"),
+            ("Enter", "In a die's Count box or the expression box, roll"),
+        ],
     ),
 ];
 
@@ -495,6 +512,19 @@ mod tests {
             found += 1;
             assert!(listed.contains(&keys), "{keys} isn't in help::SHORTCUTS");
         }
-        assert!(found > 10, "only found {found} menu shortcuts");
+        assert!(found > 5, "only found {found} right-click menu shortcuts");
+    }
+
+    #[test]
+    fn every_command_shortcut_is_listed() {
+        let listed: Vec<&str> = SHORTCUTS
+            .iter()
+            .flat_map(|(_, keys)| keys.iter().map(|(keys, _)| *keys))
+            .collect();
+        for command in crate::commands::Command::ALL {
+            if let Some(keys) = command.shortcut() {
+                assert!(listed.contains(&keys), "{keys} isn't in help::SHORTCUTS");
+            }
+        }
     }
 }
