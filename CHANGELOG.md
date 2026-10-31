@@ -4,6 +4,10 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### App icon
+
+- A new app icon for the taskbar, the window, the Windows executable, the Linux app menu and the macOS app: the colored logo on a light grey disc, so it stands out on dark taskbars. The logo inside the app is unchanged.
+
 ### Campaign walkthrough
 
 - A walkthrough that builds your world with you, one question at a time, in seven chapters: the campaign, the world, power, the extraordinary, where it starts, the heroes and the first session. Each answer goes into a note, and the notes it needs are made for you and linked: name the factions and each gets a note, then questions about each one; name a faction's leader and an NPC is made.

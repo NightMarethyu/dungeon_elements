@@ -148,6 +148,13 @@ The items in Player Management are all things that will just be built as templat
   - Religions and faiths, and deities (names and what they hold sway over)
   - Rumors, plot hooks and quest names, for "What rumors are going around?" and quest notes
   - Peoples and races, historic events, magic and strange technology (name, source, cost), and anything else the walkthrough asks that falls back to Action and Theme today
+  - Not for questions about real-world things, like the game system or who plays a hero: those have no Inspire me button
+  - Built-in tables stay genre-light, so they fit fantasy, sci-fi and modern campaigns alike. They are a starting point and an example: the hope is that people make their own tables and share them
+- [ ] A roll table editor, so people can make and change their own tables without touching the Markdown table: the die, the columns and the rows in a form, with rows that can be added, moved and removed, and ranges kept in step with the die
+- [ ] Menu bar review: work out the most user-friendly menu bar for everything the earlier items added, before Phase 3 adds more
+  - A **Tables** menu (new roll table, the Roll Tables list, the built-in tables)
+  - The built-in tables grouped in the Roll Tables list (names, story prompts, world, adventure) instead of one long Built in group
+  - Weigh a ribbon like Microsoft Office's against menus with a toolbar
 
 ### Phase 3: climax
 
@@ -210,7 +217,7 @@ Sharing and reference: everything that leaves the campaign folder or comes in fr
 
 ## Design
 
-The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo in `reference/dungeon_elements.svg`. The reference is drawn in black and white for contrast only; the app is themed. The colored logo, `reference/dungeon_elements_colors.svg`, is the app icon (window, taskbar, and the Windows `.exe`, from `assets/dungeon_elements.ico`).
+The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo in `reference/dungeon_elements.svg`. The reference is drawn in black and white for contrast only; the app is themed. The colored logo, `reference/dungeon_elements_colors.svg` (on a light grey disc, so it shows on dark taskbars), is the app icon: the window, the taskbar, the Windows `.exe` (from `assets/dungeon_elements.ico`), the Linux app menu and the macOS app. The colored logo without the disc, `assets/die_icons/dungeon_elements_colors.svg`, is kept as artwork; inside the app, the menu bar and start screen show the outline logo in the theme's colors.
 
 ### Themes
 
