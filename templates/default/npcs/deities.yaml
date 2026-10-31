@@ -2,8 +2,12 @@ type: deity
 label: Deity
 removed_fields: [first_met]
 fields:
+  - key: name
+    label: Name
+    table: Deity names
   - key: domains
     label: Domains
+    table: Domains
   - key: symbol
     label: Symbol
   - key: worshipped_by

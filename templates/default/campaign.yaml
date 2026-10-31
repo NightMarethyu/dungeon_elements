@@ -3,6 +3,7 @@ label: Campaign
 fields:
   - key: name
     label: Name
+    table: Campaign names
   - key: pitch
     label: Pitch
   - key: system
@@ -27,6 +28,7 @@ fields:
     kind: tags
   - key: big_picture
     label: Big picture
+    table: Threats
     kind: longtext
   - key: arcs
     label: Arcs
@@ -34,6 +36,7 @@ fields:
     folder: quests
   - key: themes
     label: Themes and tone
+    table: Tone
     kind: longtext
   - key: house_rules
     label: House rules

@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### More generators
+
+- New built-in roll tables for building a world: **Campaign names**, **Threats**, **Tone**, **World names**, **Peoples**, **Historic events**, **Aftermath**, **Faiths**, **Deity names**, **Domains**, **Wonders**, **Sources of power** and **Costs and limits**. They're written to fit any genre.
+- The walkthrough's questions about the campaign, the world, power and the extraordinary each roll on a table made for them, so **Inspire me** gives ideas that fit the question. "What game or rules will you use?" has no Inspire me button, since that's for you to choose.
+- In new campaigns, the matching fields roll on them too: the campaign's Name, Big picture and Themes and tone, a people's, event's, religion's or deity's Name, an event's Consequences, a deity's Domains, and a magic note's Name, Source and Cost and limits.
+
 ### App icon
 
 - A new app icon for the taskbar, the window, the Windows executable, the Linux app menu and the macOS app: the colored logo on a light grey disc, so it stands out on dark taskbars. The logo inside the app is unchanged.

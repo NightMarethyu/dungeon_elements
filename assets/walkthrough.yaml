@@ -69,6 +69,7 @@ chapters:
     questions:
       - ask: What is your campaign called?
         note: campaign
+        table: Campaign names
       - ask: Sum it up in one sentence.
         note: campaign
         field: pitch
@@ -76,18 +77,20 @@ chapters:
       - ask: What game or rules will you use?
         note: campaign
         field: system
+        table: ""
       - ask: What is the big conflict, and what happens if the heroes do nothing?
         note: campaign
         field: big_picture
-        table: Trouble
+        table: Threats
       - ask: "What should it feel like: grim, heroic, funny, eerie...?"
         note: campaign
         field: themes
-        table: Action and Theme
+        table: Tone
       - ask: A few words to tag it with?
         hint: Tags help you find notes later, like "horror" or "sandbox".
         note: campaign
         field: tags
+        table: Tone
 
   - id: world
     title: The world
@@ -95,7 +98,7 @@ chapters:
     questions:
       - ask: What is the world called?
         note: world
-        table: Place names
+        table: World names
       - ask: What is it like at first sight?
         note: world
         field: first_impression
@@ -107,19 +110,22 @@ chapters:
       - ask: Which peoples or races live in this world?
         hint: Humans, elves and dwarves, or peoples of your own. Each gets a note to describe them.
         note: peoples
+        table: Peoples
       - ask: Where do the {name} live?
         note: peoples
         field: homelands
+        table: Place names
       - ask: What event in its history do people still talk about?
         hint: >-
           A war, a disaster, the founding of a nation, or the life of a prophet the calendar
           counts from. In our world that might be World War II; in The Wheel of Time, the
           Trolloc Wars. Give it the name people know it by, like "The Long Winter".
         note: event
+        table: Historic events
       - ask: What came of it?
         note: event
         field: consequences
-        table: Twists
+        table: Aftermath
 
   - id: power
     title: Power
@@ -144,11 +150,12 @@ chapters:
         table: Female names, Male names
       - ask: Which faiths matter?
         note: religions
-        table: Group names
+        table: Faiths
       - ask: What do the {name} worship?
         hint: Each one becomes a deity.
         note: religions
         field: deities
+        table: Deity names
 
   - id: extraordinary
     title: The extraordinary
@@ -156,19 +163,21 @@ chapters:
     questions:
       - ask: Is there magic, strange technology, or something else? What is it called?
         note: magic
+        table: Wonders
       - ask: Where does it come from?
         note: magic
         field: source
-        table: Action and Theme
+        table: Sources of power
       - ask: What does it cost, and what can it not do?
         note: magic
         field: cost
-        table: Action and Theme
+        table: Costs and limits
       - ask: Who can use it?
         hint: Pick peoples, factions or people you've made, or type new names.
         note: magic
         field: users
         pick: [lore/peoples, factions, npcs]
+        table: Group names
 
   - id: start
     title: Where it starts

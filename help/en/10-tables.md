@@ -69,6 +69,7 @@ Some tables come with the app, listed under **Built in** in the Roll Tables list
 - **Fantasy names**, made-up names built from a start and an ending, like Aelwen or Kaeldor.
 - **Place names** (like Ashford or Ravenmoor), **Inn and shop names** (The Crooked Lantern) and **Group names**, for factions, crews and ships (The Silent Hand).
 - Story prompts, a few words to spark an idea, never the whole story: **Wants** (what someone is after), **Trouble** (what's going wrong), **Twists**, **What's here** (details for a room or site) and **Feel of a place**.
+- World building, for the walkthrough's questions and your own notes: **Campaign names** (The Drowned Crown), **Threats** (a danger as big as the campaign), **Tone** (one word, like Grim or Cozy), **World names**, **Peoples** (the Ashborn, River folk), **Historic events** (The Long Winter) and their **Aftermath**, **Faiths** (The Order of the Open Hand), **Deity names** and **Domains** (what a god holds sway over), and for magic or strange technology, **Wonders** (its name, like the Weave), **Sources of power** and **Costs and limits**. They're kept genre-light, so they fit a fantasy, sci-fi or modern world.
 - **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each.
 
 Roll them like any other table, link to them from your own (`[[Norse names]]`, `[[Norse names#Male]]`), or type their names in the dice roller. To change one, click **Copy** beside it: it's copied into your **tables** folder, and your copy is used in its place from then on, everywhere it's rolled.
@@ -86,3 +87,6 @@ The result shows in the dice roller too, so you can copy it or roll again. In ne
 - A location's Name rolls on **Place names**, First impression on **Feel of a place**, and Description on **What's here**.
 - A faction's Name rolls on **Group names**, and Goal on **Wants**.
 - A quest's Hook rolls on **Trouble**.
+- The campaign note's Name rolls on **Campaign names**, Big picture on **Threats**, and Themes and tone on **Tone**.
+- A people's Name rolls on **Peoples**, an event's Name on **Historic events** and Consequences on **Aftermath**, a religion's Name on **Faiths**, and a deity's Name on **Deity names** and Domains on **Domains**.
+- Magic and technology notes roll their Name on **Wonders**, Source on **Sources of power**, and Cost and limits on **Costs and limits**.

@@ -2,6 +2,9 @@ type: religion
 label: Religion
 removed_fields: [kind]
 fields:
+  - key: name
+    label: Name
+    table: Faiths
   - key: deities
     label: Deities
     kind: links

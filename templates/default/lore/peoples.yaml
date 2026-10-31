@@ -1,6 +1,9 @@
 type: people
 label: People
 fields:
+  - key: name
+    label: Name
+    table: Peoples
   - key: homelands
     label: Homelands
     kind: links

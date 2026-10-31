@@ -1,8 +1,12 @@
 type: magic
 label: Magic and Technology
 fields:
+  - key: name
+    label: Name
+    table: Wonders
   - key: source
     label: Source
+    table: Sources of power
   - key: users
     label: Users
     kind: links
@@ -16,6 +20,7 @@ fields:
     kind: dice
   - key: cost
     label: Cost and limits
+    table: Costs and limits
     kind: longtext
   - key: signs
     label: Signs
