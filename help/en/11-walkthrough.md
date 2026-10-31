@@ -5,7 +5,7 @@ The walkthrough builds your world with you, one question at a time: what the cam
 ## Starting it
 
 - When you make a campaign, **Start the walkthrough** is ticked. Leave it ticked, and the walkthrough opens once the campaign is made.
-- **File > Campaign Walkthrough...** opens it any time, at the question you were on.
+- **Campaign > Campaign Walkthrough...** opens it any time, at the question you were on.
 - With no note open, click **Build your world with the walkthrough**.
 
 The walkthrough opens in a tab of its own. Close it like any other tab and open it again later: your answers are already in their notes, and the walkthrough remembers where you were.
@@ -66,7 +66,7 @@ A template can bring questions of its own, made for its folders, and a campaign 
 
 ## Your own questions
 
-**Edit > Walkthrough Questions...** changes the questions this campaign asks.
+**Campaign > Walkthrough Questions...** changes the questions this campaign asks.
 
 1. A campaign starts out asking the built-in questions, which get better as the app updates. Click **Start from the Default Questions** to make a copy of them for this campaign to change.
 2. The chapters are listed on the left. Click one to see its questions, or **Add Chapter** for a new one. A chapter has a title, a line shown at its top, and **↑**, **↓** and **Remove**.
@@ -74,7 +74,7 @@ A template can bring questions of its own, made for its folders, and a campaign 
    - **Goes into**: the note the answer is written into, like *factions: several new Factions*.
    - **Field**: which of that note's fields the answer fills. **Its name** (or **Their names**, for several notes) asks for the note's name instead.
 
-   Under them, **Inspire Me rolls on the field's tables** is ticked to use the tables the field has in Edit > Types. Untick it to pick the question's own: **Add a table...** adds a table, a part of one, like **English - Female**, or all its parts at once, and clicking a table takes it out. With more than one, the person answering picks from a dropdown; the first is picked to start with. **Button says** adds a word to the button, like Names for **Inspire Me - Names**. With no tables, the question has no Inspire Me button.
+   Under them, **Inspire Me rolls on the field's tables** is ticked to use the tables the field has in Campaign > Note Types. Untick it to pick the question's own: **Add a table...** adds a table, a part of one, like **English - Female**, or all its parts at once, and clicking a table takes it out. With more than one, the person answering picks from a dropdown; the first is picked to start with. **Button says** adds a word to the button, like Names for **Inspire Me - Names**. With no tables, the question has no Inspire Me button.
 
    Write `{name}` in a question about several notes, like "What do {name} want?", and it is asked about each one. A question whose field links to other notes can offer notes from other folders too: add them under **Pick from**. A question that asks for the names of several notes can have a button that adds notes from Markdown files, like the heroes question does.
 4. **Notes it makes** lists the notes the questions write into. Each has a short name the questions use, its folder, whether a list of names makes several, and how a single note is named: asked for, after the campaign, or always the same name, like Session 1. **Fill In a Field** gives a field a value when the note is made. A value that is the short name of another of these notes links to it. **Also link to it from** adds a link to it in a field of another note, like the campaign's Players for each hero.

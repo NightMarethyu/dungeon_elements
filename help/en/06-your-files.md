@@ -6,7 +6,7 @@ Your campaign is a folder of ordinary files. You can back it up, put it in a syn
 
 - The app watches the campaign folder. Notes changed, renamed or deleted in another app show up right away.
 - If a note you have open changes outside the app, it reloads. If you have unsaved changes to it, the app asks which version to keep. Saving never overwrites another app's changes without asking.
-- **View > Refresh File Tree** checks the folder again if anything looks out of date.
+- **View > File Tree > Refresh** checks the folder again if anything looks out of date.
 
 ## Using Obsidian
 
@@ -23,4 +23,4 @@ If a note was changed in a way the app can't show as intended (a word in a numbe
 
 ## Themes
 
-Pick a color theme in the **View** menu. To make your own, copy a theme file into your themes folder (**Help > About** shows where it is), change its colors, and choose **View > Reload Themes**.
+Pick a color theme in **View > Theme**. To make your own, copy a theme file into your themes folder (**Help > About** shows where it is), change its colors, and choose **View > Theme > Reload Themes**.
