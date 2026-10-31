@@ -73,6 +73,9 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     (
         "Writing",
         &[
+            ("Ctrl+Z", "Undo the last change to the note"),
+            ("Ctrl+Y", "Redo the change you undid"),
+            ("Ctrl+Shift+Z", "Redo, too"),
             ("Ctrl+B", "Make the selection (or the word) bold"),
             ("Ctrl+I", "Make the selection (or the word) italic"),
             (

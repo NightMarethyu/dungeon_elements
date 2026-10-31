@@ -877,6 +877,29 @@ impl Form {
         true
     }
 
+    /// Whether the table editor is open on a roll table in a long text field.
+    pub fn editing_table(&self) -> bool {
+        self.table.is_some()
+    }
+
+    /// Gives field `index` the focus again (after Undo), with its text box if it has
+    /// one and the widget id to focus.
+    pub fn focus_field(
+        &mut self,
+        index: usize,
+    ) -> Option<(Option<&mut text_editor::Content>, String)> {
+        if index >= self.inputs.len() {
+            return None;
+        }
+        self.focus = Some(index);
+        self.step = 0;
+        let id = self.focused_id()?;
+        Some(match &mut self.inputs[index] {
+            Input::Long(content) => (Some(content), id),
+            _ => (None, id),
+        })
+    }
+
     /// The table editor, if it is open on a roll table in long text field `index`.
     /// Or the roll table field `index`'s.
     fn table_at(&self, index: usize) -> Option<&table_editor::Editor> {
