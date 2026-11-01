@@ -9,6 +9,8 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - **Ctrl+Z** takes back the last change to a note, and **Ctrl+Y** (or **Ctrl+Shift+Z**) does it again. They are at the top of the **Edit** menu and the right-click menus, and as arrows at the left of the formatting toolbar, and they say what they would do, like **Undo Typing** or **Undo Roll**.
 - Typing is undone a burst at a time: a pause of a second, Enter or a click starts the next step. A field filled from a roll, a choice picked, Bold, a list, a ticked task, a field added or removed and a table saved from the table editor are each a step of their own.
 - Each note keeps about a thousand steps while the app is open, after saving too. Undoing back to the last save shows the note as saved. A note closed without saving can be opened again and its changes brought back with Ctrl+Z.
+- Changes to the campaign can be undone and redone too: a new note or folder, a rename, a move, a delete, Note Types, the walkthrough questions and answers, link fixes and ticked quest steps. A rename or move is undone with the links that followed it, and a deleted folder comes back with its pictures. Ctrl+Z takes back whichever came last, the open note's change or the campaign's, and the menu names it, like **Undo Rename Saltmarsh**. About two hundred campaign steps are kept while the app is open.
+- If a file changed since, maybe in another app, Undo asks before putting it back.
 - Undo keeps only the words that changed in each step, not a copy of the note, and works them out when typing pauses rather than on every key, so it doesn't slow typing down.
 
 ### Menus

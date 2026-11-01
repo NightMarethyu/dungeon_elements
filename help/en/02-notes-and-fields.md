@@ -86,6 +86,10 @@ The buttons at the top right of a note switch how you see it:
 - Undoing back to the last save shows the note as saved again.
 - In the table editor, **Cancel** puts the table back as it was.
 
+Undo takes back changes to the campaign too: a new note or folder, a rename, a move, a delete, a change to Note Types or the walkthrough questions, a walkthrough answer, a link fix or a ticked quest step. A rename or move is undone together with the links that changed to follow it, and a deleted note or folder comes back with its pictures. Ctrl+Z takes back whichever came last, the change to the open note or the change to the campaign, and the Edit menu says which, like **Undo Rename Saltmarsh**. The campaign remembers about two hundred of these steps while the app is open.
+
+If a file was changed since, maybe in another app, Undo asks first, so nothing is lost without you saying so.
+
 ## Organize notes
 
 - The big **+** at the bottom of the file tree makes a new folder, and offers fields to start from.
