@@ -15,6 +15,7 @@ mod fix;
 mod form;
 mod format;
 mod help;
+mod history;
 mod icon;
 mod links;
 mod marks;
@@ -295,7 +296,15 @@ struct Workspace {
     roll_folder: Option<PathBuf>,
     /// The world-building walkthrough, while its tab is open.
     walkthrough: Option<walkthrough_tab::Walkthrough>,
+    /// The Undo history of notes closed since the campaign opened, newest last, so
+    /// reopening one can still undo. See [`CLOSED_HISTORIES`].
+    closed: std::collections::VecDeque<(PathBuf, history::History)>,
 }
+
+/// How many closed notes keep their Undo history.
+const CLOSED_HISTORIES: usize = 50;
+/// What Undo calls putting back changes a note was closed without saving.
+const CLOSED_UNSAVED: &str = "Close Without Saving";
 
 /// What the sidebar's search box holds, and the notes it found.
 #[derive(Debug, Default)]
@@ -523,6 +532,176 @@ struct Tab {
     disk: Option<SystemTime>,
     /// Whether the file changed outside the app while this tab had unsaved changes.
     changed_outside: bool,
+    /// Undo and Redo for the note's text.
+    history: history::History,
+}
+
+/// How a message counts for Undo (see [`Workspace::update`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UndoKind {
+    /// Doesn't touch the note, and doesn't end typing (like the mouse moving).
+    Ignore,
+    /// Ends the typing before it (like a click or a cursor move), but changes nothing.
+    Boundary,
+    /// A key typed into the note. `ends` for Enter, which ends the step after it.
+    Typing { ends: bool },
+    /// A change of its own, called this in the Edit menu.
+    Step(&'static str),
+}
+
+/// Puts the cursor back at `place` in `tab`, after Undo or Redo changed its text.
+/// Returns the widget to focus, if the form or the source shows, and whether it is a
+/// one-line box (whose cursor goes to the end).
+fn put_back(tab: &mut Tab, place: history::Place) -> Option<(String, bool)> {
+    if tab.reading() {
+        return None;
+    }
+    let (content, id) = if tab.shows_form() {
+        let form = tab.form.as_mut()?;
+        form.focus_field(place.field?)?
+    } else {
+        (Some(&mut tab.content), EDITOR.to_string())
+    };
+    let one_line = content.is_none();
+    if let (Some(content), Some((line, column))) = (content, place.cursor) {
+        let last = content.line_count().saturating_sub(1);
+        let line = line.min(last);
+        let length = content
+            .line(line)
+            .map_or(0, |text| text.text.chars().count());
+        content.move_to(text_editor::Cursor {
+            position: text_editor::Position {
+                line,
+                column: column.min(length),
+            },
+            selection: None,
+        });
+    }
+    Some((id, one_line))
+}
+
+/// The form field a form message changes, for Undo to give it the focus.
+fn form_field(message: &form::Message) -> Option<usize> {
+    use form::Message as F;
+    match message {
+        F::Check(index, _)
+        | F::Choice(index, _)
+        | F::RollTable(index, _)
+        | F::Dice(index, _)
+        | F::PickDate(index, _)
+        | F::StepSubmit(index, _)
+        | F::StepMove(index, ..)
+        | F::StepRemove(index, _)
+        | F::StepCheck(index, ..)
+        | F::ListSubmit(index)
+        | F::ListAdd(index, _)
+        | F::ListRemove(index, _)
+        | F::FieldTable(index, _) => Some(*index),
+        _ => None,
+    }
+}
+
+/// How `message` counts for Undo.
+fn undo_kind(message: &Message) -> UndoKind {
+    use UndoKind::*;
+    match message {
+        Message::Edit(action) | Message::BlockEdit(action) => action_kind(action),
+        Message::Form(message) => form_undo_kind(message),
+        Message::Format(command) => Step(match command {
+            format::Command::Bold => "Bold",
+            format::Command::Italic => "Italic",
+            format::Command::Strikethrough => "Strikethrough",
+            format::Command::List(_) => "List",
+            format::Command::Text(_) => "Text Type",
+        }),
+        Message::Cut => Step("Cut"),
+        Message::Pasted(_) => Step("Paste"),
+        Message::InsertLink | Message::CompleteLink(_) | Message::TabField(_) => {
+            Step("Insert Link")
+        }
+        Message::AddPicture(_) => Step("Insert Picture"),
+        Message::ToggleTask(_) => Step("Tick Task"),
+        Message::RollIntoField(..) | Message::FillField(_) => Step("Roll"),
+        Message::AddField => Step("Add Field"),
+        Message::RestoreField(_) => Step("Bring Back Field"),
+        Message::TableEditor(table_editor::Message::Done) => Step("Table Change"),
+        Message::Fix(_) => Step("Fix Link"),
+        Message::KeepMine | Message::ReloadFromDisk => Step("Reload from Disk"),
+        // The table editor keeps its changes to itself until they are saved.
+        Message::TableEditor(_) => Ignore,
+        Message::MenuHovered(_)
+        | Message::SubmenuHovered(_)
+        | Message::Modifiers(_)
+        | Message::TreeEnter(_)
+        | Message::TreeExit(_)
+        | Message::HoverBlock(_)
+        | Message::MouseReleased
+        | Message::WindowResized(_)
+        | Message::WebPicture(..)
+        | Message::FilesChanged
+        | Message::WindowFocused
+        | Message::Undo
+        | Message::Redo => Ignore,
+        _ => Boundary,
+    }
+}
+
+/// How a text box's `action` counts for Undo.
+fn action_kind(action: &text_editor::Action) -> UndoKind {
+    use text_editor::{Action, Edit};
+    match action {
+        Action::Edit(Edit::Paste(_)) => UndoKind::Step("Paste"),
+        Action::Edit(Edit::Enter) => UndoKind::Typing { ends: true },
+        Action::Edit(_) => UndoKind::Typing { ends: false },
+        Action::Scroll { .. } => UndoKind::Ignore,
+        _ => UndoKind::Boundary,
+    }
+}
+
+/// How a form's `message` counts for Undo.
+fn form_undo_kind(message: &form::Message) -> UndoKind {
+    use UndoKind::*;
+    use form::Message as F;
+    match message {
+        F::Text(..) | F::StepText(..) => Typing { ends: false },
+        F::Long(_, action) | F::Other(action) => action_kind(action),
+        // Typed in the box for a new tag or link, which isn't in the note yet.
+        F::ListText(..) => Ignore,
+        F::Table(table_editor::Message::Done) | F::FieldTable(_, table_editor::Message::Done) => {
+            Step("Table Change")
+        }
+        F::Table(_) => Ignore,
+        // A roll table field's editor changes the note as it goes.
+        F::FieldTable(_, message) => {
+            use table_editor::Message as T;
+            match message {
+                T::Cell(_, _, action) => action_kind(action),
+                T::Heading(_) | T::Column(..) | T::Numbers(..) | T::TypeDie(_) => {
+                    Typing { ends: false }
+                }
+                T::Paste(_) | T::ShowPaste(_) => Ignore,
+                T::Click | T::Roll => Boundary,
+                _ => Step("Table Change"),
+            }
+        }
+        F::Remove(_) => Step("Remove Field"),
+        F::RollTable(..) => Step("Roll"),
+        F::StepSubmit(..) | F::StepMove(..) | F::StepRemove(..) | F::StepCheck(..) => {
+            Step("Steps Change")
+        }
+        F::ListSubmit(_) | F::ListAdd(..) | F::ListRemove(..) => Step("List Change"),
+        F::FollowLink(_)
+        | F::FollowStep(..)
+        | F::FollowItem(..)
+        | F::FollowAll(_)
+        | F::Roll(..)
+        | F::RollStep(..)
+        | F::PickTable(..)
+        | F::Calendar(_)
+        | F::CalendarMonth(..)
+        | F::EditTable(..) => Boundary,
+        F::Check(..) | F::Choice(..) | F::Dice(..) | F::PickDate(..) => Step("Field Change"),
+    }
 }
 
 /// Something being edited in place in the reading view.
@@ -598,6 +777,76 @@ impl Tab {
         let text = self.text().unwrap_or_else(|_| self.content.text());
         let ty = self.form.as_ref().map(|form| &form.ty);
         Preview::new(&text, ty, &self.note_path(), root, index)
+    }
+
+    /// The note's text as it is now, with what is being typed in a block of the reading
+    /// view in it, for Undo. A table in the table editor counts once it is saved.
+    fn current_text(&self) -> Result<String, String> {
+        let text = self.text()?;
+        match &self.edit {
+            Some(ReadEdit::Block { range, content, .. }) if text.get(range.clone()).is_some() => {
+                Ok(replace_block(&text, range.clone(), &content.text()))
+            }
+            _ => Ok(text),
+        }
+    }
+
+    /// Where the cursor is, for Undo to put it back.
+    fn place(&self) -> history::Place {
+        let field = match &self.edit {
+            Some(ReadEdit::Field(_)) => self.form.as_ref().and_then(Form::focus),
+            Some(_) => None,
+            None if self.shows_form() => self.form.as_ref().and_then(Form::focus),
+            None => None,
+        };
+        let content = match &self.edit {
+            Some(ReadEdit::Block { content, .. }) => Some(content),
+            Some(_) => None,
+            None if self.reading() => None,
+            None if self.shows_form() => self.form.as_ref().and_then(Form::focused_text),
+            None => Some(&self.content),
+        };
+        history::Place {
+            field,
+            cursor: content.map(|content| {
+                let position = content.cursor().position;
+                (position.line, position.column)
+            }),
+        }
+    }
+
+    /// Makes an Undo step of what changed in the note since the last one, called `label`
+    /// (or Typing, while typing). Returns whether there was a change.
+    fn record(&mut self, label: &'static str) -> bool {
+        self.record_at(label, None)
+    }
+
+    /// Like [`Self::record`], for a change made to form field `field` (if known), which
+    /// Undo gives the focus to.
+    fn record_at(&mut self, label: &'static str, field: Option<usize>) -> bool {
+        let Ok(text) = self.current_text() else {
+            return false;
+        };
+        let mut place = self.place();
+        if let Some(field) = field.filter(|_| self.shows_form()) {
+            place = history::Place {
+                field: Some(field),
+                cursor: None,
+            };
+        }
+        let label = if self.history.is_typing() {
+            history::TYPING
+        } else {
+            label
+        };
+        self.history.record(&text, label, place)
+    }
+
+    /// Makes an Undo step of the typing since the last one, if there was any.
+    fn end_typing(&mut self) {
+        if self.history.is_typing() {
+            self.record(history::TYPING);
+        }
     }
 
     /// The text to save.
@@ -723,6 +972,10 @@ enum Message {
     ToggleFolder(PathBuf),
     NewNoteIn(PathBuf),
     Form(form::Message),
+    /// Takes back the last change to the note.
+    Undo,
+    /// Does the last change taken back again.
+    Redo,
     ToggleSource,
     /// Edits the active tab's note in its Markdown source (true) or its form (false).
     SetSource(bool),
@@ -1694,6 +1947,16 @@ impl App {
             Command::NewCampaign => (Message::ShowNewCampaign, true, false),
             Command::OpenCampaign => (Message::OpenCampaign, true, false),
             Command::Exit => (Message::Exit, true, false),
+            Command::Undo => (
+                Message::Undo,
+                workspace.is_some_and(|workspace| workspace.undo_label(false).is_some()),
+                false,
+            ),
+            Command::Redo => (
+                Message::Redo,
+                workspace.is_some_and(|workspace| workspace.undo_label(true).is_some()),
+                false,
+            ),
             Command::Cut => (Message::Cut, selected, false),
             Command::Copy => (Message::Copy, selected, false),
             Command::Paste => (Message::Paste, text.is_some(), false),
@@ -1775,7 +2038,17 @@ impl App {
     /// The menu line for `command`, greyed out when it can't be picked now.
     fn command_entry(&self, command: Command) -> menu::Entry<Message> {
         let (message, enabled, checked) = self.command(command);
-        let mut entry = menu::item(command.label(), message.filter(|_| enabled)).checked(checked);
+        let label = match (command, &self.screen) {
+            // Undo and Redo say what they would do, like "Undo Typing".
+            (Command::Undo | Command::Redo, Screen::Workspace(workspace)) => {
+                workspace.undo_label(command == Command::Redo).map_or_else(
+                    || command.label().to_string(),
+                    |what| format!("{} {what}", command.label()),
+                )
+            }
+            _ => command.label().to_string(),
+        };
+        let mut entry = menu::item(label, message.filter(|_| enabled)).checked(checked);
         if let Some(keys) = command.shortcut() {
             entry = entry.shortcut(keys);
         }
@@ -1821,6 +2094,9 @@ impl App {
                 Do(Exit),
             ]),
             Menu::Edit => lines(&[
+                Do(Undo),
+                Do(Redo),
+                Gap,
                 Do(Cut),
                 Do(Copy),
                 Do(Paste),
@@ -2018,6 +2294,7 @@ impl Workspace {
             table_settings,
             roll_folder: None,
             walkthrough: None,
+            closed: std::collections::VecDeque::new(),
             table_keys: BTreeSet::new(),
         }
         .with_table_keys()
@@ -2992,6 +3269,23 @@ impl Workspace {
 
     /// Reads the file of the tab at `index` again, dropping any unsaved changes.
     fn reload_tab(&mut self, index: usize) -> Result<(), String> {
+        self.reload_tab_as(index, "Reload from Disk")
+    }
+
+    /// Like [`Self::reload_tab`], with the reload an Undo step called `label`.
+    fn reload_tab_as(&mut self, index: usize, label: &'static str) -> Result<(), String> {
+        // What was typed is a step of its own, so Undo can bring it back.
+        self.tabs[index].record("Change");
+        let result = self.reload_tab_quietly(index);
+        let tab = &mut self.tabs[index];
+        tab.record(label);
+        if let Ok(text) = tab.current_text() {
+            tab.history.saved(&text);
+        }
+        result
+    }
+
+    fn reload_tab_quietly(&mut self, index: usize) -> Result<(), String> {
         let Some(path) = self.tabs[index].path.clone() else {
             return Ok(());
         };
@@ -3060,7 +3354,23 @@ impl Workspace {
             folder,
             modified: false,
             changed_outside: false,
+            history: history::History::new(""),
         });
+        let tab = self.tabs.last_mut().expect("just added");
+        let text = tab.text().unwrap_or_else(|_| tab.content.text());
+        // A note closed and opened again keeps its history, if it wasn't changed in between.
+        let closed = tab.path.as_ref().and_then(|path| {
+            let at = self.closed.iter().position(|(closed, _)| closed == path)?;
+            self.closed.remove(at).map(|(_, history)| history)
+        });
+        tab.history = match closed {
+            Some(history) if history.base() == text => history,
+            Some(mut history) if history.is_saved(&text) => {
+                history.record(&text, CLOSED_UNSAVED, history::Place::default());
+                history
+            }
+            _ => history::History::new(&text),
+        };
         self.active = Some(id);
         if read {
             self.read_active_tab();
@@ -3832,7 +4142,16 @@ impl Workspace {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
             return;
         };
-        let tab = self.tabs.remove(index);
+        let mut tab = self.tabs.remove(index);
+        if let Some(path) = tab.path.clone() {
+            tab.record("Change");
+            self.closed.retain(|(closed, _)| *closed != path);
+            let history = std::mem::replace(&mut tab.history, history::History::new(""));
+            self.closed.push_back((path.clone(), history));
+            if self.closed.len() > CLOSED_HISTORIES {
+                self.closed.pop_front();
+            }
+        }
         // Its unsaved changes are gone, so what counts is what is on disk again.
         if tab.modified
             && let Some(path) = &tab.path
@@ -3913,7 +4232,7 @@ impl Workspace {
             if written != text
                 && let Some(index) = self.tabs.iter().position(|tab| tab.id == id)
             {
-                let _ = self.reload_tab(index);
+                let _ = self.reload_tab_as(index, "Name Change");
             }
             if let Some((old, new)) = renamed {
                 let done = format!(
@@ -5127,6 +5446,147 @@ impl Workspace {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // Undo steps: typing is noted as it happens and made a step later, when it pauses
+        // or something else happens; anything else that changes the note is a step of its
+        // own. Working out a step means writing the note out, so it isn't done per key.
+        let kind = undo_kind(&message);
+        let message_field = match &message {
+            Message::Form(message) => form_field(message),
+            _ => None,
+        };
+        let id = self.active;
+        let now = std::time::Instant::now();
+        if let Some(tab) = self.active_tab_mut() {
+            match kind {
+                UndoKind::Ignore => {}
+                UndoKind::Typing { .. } => {
+                    if tab.history.paused(now) {
+                        tab.end_typing();
+                    }
+                }
+                UndoKind::Boundary | UndoKind::Step(_) => tab.end_typing(),
+            }
+        }
+
+        let task = self.handle(message);
+
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == id) {
+            match kind {
+                UndoKind::Typing { ends } => {
+                    tab.history.typed(now);
+                    if ends {
+                        tab.end_typing();
+                    }
+                }
+                UndoKind::Step(label) => {
+                    tab.record_at(label, message_field);
+                }
+                UndoKind::Ignore | UndoKind::Boundary => {}
+            }
+        }
+        task
+    }
+
+    /// What Edit > Undo (or with `redo`, Redo) would do in the active tab, like "Typing",
+    /// or `None` when there is nothing to do or it can't be done now.
+    fn undo_label(&self, redo: bool) -> Option<&'static str> {
+        if self.walkthrough_shown() {
+            return None;
+        }
+        let tab = self.active_tab()?;
+        // The table editor has its own Cancel.
+        if matches!(tab.edit, Some(ReadEdit::Table { .. }))
+            || tab.form.as_ref().is_some_and(Form::editing_table)
+        {
+            return None;
+        }
+        if redo {
+            // Typing since the last undo ends what can be done again.
+            tab.history
+                .redo_label()
+                .filter(|_| !tab.history.is_typing())
+        } else if tab.history.is_typing() {
+            Some(history::TYPING)
+        } else {
+            tab.history.undo_label()
+        }
+    }
+
+    /// Takes back the active note's last change, or with `redo`, does the last change
+    /// taken back again. The cursor goes back to where it was.
+    fn undo(&mut self, redo: bool) -> Task<Message> {
+        let what = if redo { "redo" } else { "undo" };
+        if self.undo_label(redo).is_none() {
+            let editing_table = self.active_tab().is_some_and(|tab| {
+                matches!(tab.edit, Some(ReadEdit::Table { .. }))
+                    || tab.form.as_ref().is_some_and(Form::editing_table)
+            });
+            self.status = if self.walkthrough_shown() {
+                format!("There is nothing to {what} in the walkthrough")
+            } else if editing_table {
+                "The table editor's Cancel puts the table back as it was".into()
+            } else {
+                format!("Nothing to {what}")
+            };
+            return Task::none();
+        }
+        // What is typed in a block of the reading view goes into the note first.
+        if self
+            .active_tab()
+            .is_some_and(|tab| matches!(tab.edit, Some(ReadEdit::Block { .. })))
+        {
+            self.finish_editing();
+        }
+        let (root, index) = (self.root.clone(), self.index.clone());
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        tab.record("Change");
+        let label = if redo {
+            tab.history.redo_label()
+        } else {
+            tab.history.undo_label()
+        };
+        let done = if redo {
+            tab.history.redo()
+        } else {
+            tab.history.undo()
+        };
+        let (Some(label), Some((text, place))) = (label, done) else {
+            self.status = format!("Nothing to {what}");
+            return Task::none();
+        };
+
+        tab.edit = None;
+        tab.set_text(&text);
+        // A form that can't give back exactly this text shows the source instead, so
+        // the next step starts from the same text.
+        if tab.form.is_some() && !tab.source && tab.text().ok().as_deref() != Some(text.as_str()) {
+            tab.content = text_editor::Content::with_text(&text);
+            tab.source = true;
+        }
+        tab.modified = !tab.history.is_saved(&text);
+        if tab.preview.is_some() {
+            tab.preview = Some(tab.make_preview(&root, &index));
+        }
+        let focus = put_back(tab, place);
+        self.recheck_active();
+        self.status = format!("{} {label}", if redo { "Redid" } else { "Undid" });
+        match focus {
+            Some((id, one_line)) => {
+                let focus =
+                    iced::advanced::widget::operate(form::tab(vec![id.clone()], false)).discard();
+                if one_line {
+                    focus.chain(iced::widget::operation::move_cursor_to_end(id))
+                } else {
+                    focus
+                }
+            }
+            None => Task::none(),
+        }
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         // Leaving what is being edited in the reading view puts it back into the note first.
         if matches!(
             message,
@@ -6543,6 +7003,10 @@ impl Workspace {
                     tab.path = Some(path.clone());
                     tab.modified = false;
                     tab.changed_outside = false;
+                    tab.record("Change");
+                    if let Ok(text) = tab.current_text() {
+                        tab.history.saved(&text);
+                    }
                 }
                 self.rescan();
                 if let Some((fields, before)) = self.tag_saves.remove(&id)
@@ -6570,6 +7034,8 @@ impl Workspace {
                 self.context = Some((target, position));
                 Task::none()
             }
+            Message::Undo => self.undo(false),
+            Message::Redo => self.undo(true),
             Message::Copy | Message::Cut => {
                 let cut = matches!(message, Message::Cut);
                 let Some((content, id)) = self.focused_text_mut() else {
@@ -6803,6 +7269,24 @@ impl Workspace {
     }
 
     /// The items of the right-click menu for `target`.
+    /// Undo and Redo at the top of a right-click menu, saying what they would do.
+    fn undo_entries(&self) -> Vec<menu::Entry<Message>> {
+        let entry = |redo: bool| {
+            let (name, message, keys) = if redo {
+                ("Redo", Message::Redo, "Ctrl+Y")
+            } else {
+                ("Undo", Message::Undo, "Ctrl+Z")
+            };
+            let label = self.undo_label(redo);
+            menu::item(
+                label.map_or_else(|| name.to_string(), |what| format!("{name} {what}")),
+                label.map(|_| message),
+            )
+            .shortcut(keys)
+        };
+        vec![entry(false), entry(true), menu::Entry::Separator]
+    }
+
     fn context_entries(&self, target: &Target) -> Vec<menu::Entry<Message>> {
         use menu::{Entry, item};
 
@@ -6973,14 +7457,15 @@ impl Workspace {
                 let content = self.focused_text();
                 let selected = content.is_some_and(|content| content.selection().is_some());
                 let is_note = active.is_some_and(Tab::is_note);
-                let mut entries = vec![
+                let mut entries = self.undo_entries();
+                entries.extend([
                     item("Cut", when(selected, Message::Cut)).shortcut("Ctrl+X"),
                     item("Copy", when(selected, Message::Copy)).shortcut("Ctrl+C"),
                     item("Paste", when(content.is_some(), Message::Paste)).shortcut("Ctrl+V"),
                     item("Select All", when(content.is_some(), Message::SelectAll))
                         .shortcut("Ctrl+A"),
                     Entry::Separator,
-                ];
+                ]);
                 // The link that was right-clicked, if any.
                 if is_note && let Some(target) = content.and_then(links::under_cursor) {
                     let from = active.map(Tab::note_path).unwrap_or_default();
@@ -7010,12 +7495,13 @@ impl Workspace {
                 entries
             }
             Target::Form => {
-                let mut entries = vec![
+                let mut entries = self.undo_entries();
+                entries.extend([
                     item("Add Field to This Note...", Some(Message::ShowAddField)),
                     Entry::Separator,
                     item("Edit as Markdown", Some(Message::SetSource(true))).shortcut("Ctrl+E"),
                     item("Reading View", Some(Message::SetReading(true))).shortcut("Ctrl+R"),
-                ];
+                ]);
                 note_items(&mut entries);
                 entries
             }
@@ -7050,13 +7536,14 @@ impl Workspace {
                 ]
             }
             Target::Reading => {
-                let mut entries = vec![
+                let mut entries = self.undo_entries();
+                entries.extend([
                     item("Edit This Note", Some(Message::SetReading(false))).shortcut("Ctrl+R"),
                     item("Add Text at the End", Some(Message::AddText)),
                     item("Add Roll Table Here", Some(Message::AddTableHere)),
                     item("Insert Picture...", Some(Message::InsertPicture))
                         .shortcut("Ctrl+Shift+K"),
-                ];
+                ]);
                 note_items(&mut entries);
                 entries
             }
@@ -9187,6 +9674,7 @@ impl Workspace {
             c,
             types,
             content.map(|content| (format::text_type(content), format::list(content))),
+            (self.undo_label(false), self.undo_label(true)),
         ))
     }
 
@@ -10533,6 +11021,7 @@ fn format_bar<'a>(
     c: Colors,
     types: Vec<format::TextType>,
     line: Option<(Option<format::TextType>, Option<format::List>)>,
+    (undo, redo): (Option<&'static str>, Option<&'static str>),
 ) -> Element<'a, Message> {
     use format::{Command, List};
 
@@ -10591,7 +11080,39 @@ fn format_bar<'a>(
     let normal = iced::font::Weight::Normal;
     let upright = iced::font::Style::Normal;
 
+    // Undo and Redo, greyed out when there is nothing to do, saying what they would do.
+    let undo_tool = |redo_it: bool, what: Option<&'static str>| -> Element<'a, Message> {
+        let (name, keys, icon, message) = if redo_it {
+            ("Redo", "Ctrl+Y", REDO_ICON, Message::Redo)
+        } else {
+            ("Undo", "Ctrl+Z", UNDO_ICON, Message::Undo)
+        };
+        let color = if what.is_some() { c.text } else { c.text_muted };
+        let icon = icon.replace("#000", &theme::to_hex(color));
+        let icon = svg(svg::Handle::from_memory(icon.into_bytes()))
+            .width(16)
+            .height(16);
+        let hint = match what {
+            Some(what) => format!("{name} {what} ({keys})"),
+            None => format!("Nothing to {} ({keys})", name.to_lowercase()),
+        };
+        tooltip(
+            button(container(icon).center_y(20))
+                .padding([2, 6])
+                .style(style::flat(c, false))
+                .on_press_maybe(what.map(|_| message)),
+            container(text(hint).size(12))
+                .padding([2, 6])
+                .style(style::dropdown(c)),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    };
+
     let tools = row![
+        undo_tool(false, undo),
+        undo_tool(true, redo),
+        bar(),
         types,
         bar(),
         tool(
@@ -10659,6 +11180,11 @@ fn format_bar<'a>(
         .style(style::panel(c.sidebar))
         .into()
 }
+
+/// The arrow on the Undo button: back and round.
+const UNDO_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 2.5 1.5 6 5 9.5M1.5 6H10a4 4 0 0 1 0 8H6.5" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+/// The Redo button's arrow, the other way.
+const REDO_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M11 2.5 14.5 6 11 9.5M14.5 6H6a4 4 0 0 0 0 8h3.5" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
 
 /// The editor for a block of the note in the reading view.
 fn block_editor(
@@ -10830,6 +11356,76 @@ fn with_md_extension(mut path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A workspace on a new campaign folder holding `notes`, with the first one open.
+    fn workspace_with(name: &str, notes: &[(&str, &str)]) -> Workspace {
+        let root =
+            std::env::temp_dir().join(format!("dungeon_elements_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for (file, text) in notes {
+            std::fs::write(root.join(file), text).unwrap();
+        }
+        let mut workspace = Workspace::open(root.clone(), false);
+        workspace.open_file(root.join(notes[0].0));
+        workspace
+    }
+
+    fn type_text(workspace: &mut Workspace, typed: &str) {
+        for c in typed.chars() {
+            let _ = workspace.update(Message::Edit(text_editor::Action::Edit(
+                text_editor::Edit::Insert(c),
+            )));
+        }
+    }
+
+    fn shown(workspace: &Workspace) -> String {
+        workspace.active_tab().unwrap().text().unwrap()
+    }
+
+    #[test]
+    fn undo_takes_back_typing_and_redo_does_it_again() {
+        let mut workspace = workspace_with("undo_typing", &[("Inn.md", "")]);
+        type_text(&mut workspace, "The Prancing");
+        // Something other than typing ends the step, like a click.
+        let _ = workspace.update(Message::MousePressed);
+        type_text(&mut workspace, " Pony");
+        assert_eq!(workspace.undo_label(false), Some("Typing"));
+
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "The Prancing");
+        assert!(workspace.active_tab().unwrap().modified);
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "");
+        // Back at the text as saved, the note shows no unsaved changes.
+        assert!(!workspace.active_tab().unwrap().modified);
+        assert_eq!(workspace.undo_label(false), None);
+
+        let _ = workspace.update(Message::Redo);
+        let _ = workspace.update(Message::Redo);
+        assert_eq!(shown(&workspace), "The Prancing Pony");
+        assert_eq!(workspace.undo_label(true), None);
+        let _ = std::fs::remove_dir_all(&workspace.root);
+    }
+
+    #[test]
+    fn closing_without_saving_can_be_undone() {
+        let mut workspace = workspace_with("undo_closed", &[("Inn.md", "An inn")]);
+        let path = workspace.root.join("Inn.md");
+        type_text(&mut workspace, "Old ");
+        let typed = shown(&workspace);
+        assert_eq!(typed, "Old An inn");
+        let id = workspace.active.unwrap();
+        workspace.remove_tab(id);
+
+        workspace.open_file(path);
+        assert_eq!(shown(&workspace), "An inn");
+        assert_eq!(workspace.undo_label(false), Some(CLOSED_UNSAVED));
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), typed);
+        assert!(workspace.active_tab().unwrap().modified);
+        let _ = std::fs::remove_dir_all(&workspace.root);
+    }
 
     #[test]
     fn edited_blocks_go_back_into_the_note() {

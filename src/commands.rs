@@ -21,6 +21,8 @@ pub enum Command {
     OpenCampaign,
     Exit,
     // Edit
+    Undo,
+    Redo,
     Cut,
     Copy,
     Paste,
@@ -65,7 +67,7 @@ pub enum Command {
 use Command::*;
 
 impl Command {
-    pub const ALL: [Command; 46] = [
+    pub const ALL: [Command; 48] = [
         NewNote,
         NewFolder,
         OpenFile,
@@ -77,6 +79,8 @@ impl Command {
         NewCampaign,
         OpenCampaign,
         Exit,
+        Undo,
+        Redo,
         Cut,
         Copy,
         Paste,
@@ -141,6 +145,10 @@ impl Command {
     /// Cut, Copy, Paste and Select All are left to the text boxes, which do them on
     /// their own; the menus only show their keys.
     pub fn from_key(key: &Key, modifiers: Modifiers) -> Option<Command> {
+        // Redo's other keys, which many programs use.
+        if matches_key(REDO_TOO, key, modifiers) {
+            return Some(Redo);
+        }
         Command::ALL.into_iter().find(|command| {
             !matches!(command, Cut | Copy | Paste | SelectAll)
                 && command
@@ -199,6 +207,18 @@ impl Command {
                 None,
             ),
             Exit => ("exit", "Exit", "Quit Dungeon Elements", None),
+            Undo => (
+                "undo",
+                "Undo",
+                "Take back the last change to the note",
+                Some("Ctrl+Z"),
+            ),
+            Redo => (
+                "redo",
+                "Redo",
+                "Do the last change taken back again",
+                Some("Ctrl+Y"),
+            ),
             Cut => ("cut", "Cut", "Cut the selected text", Some("Ctrl+X")),
             Copy => ("copy", "Copy", "Copy the selected text", Some("Ctrl+C")),
             Paste => ("paste", "Paste", "Paste text", Some("Ctrl+V")),
@@ -398,6 +418,9 @@ impl Command {
     }
 }
 
+/// Redo's second shortcut, besides the one the menu shows.
+pub const REDO_TOO: &str = "Ctrl+Shift+Z";
+
 /// Whether `keys`, written like "Ctrl+Shift+T", is `key` pressed with `modifiers`.
 fn matches_key(keys: &str, key: &Key, modifiers: Modifiers) -> bool {
     let mut parts: Vec<&str> = keys.split('+').collect();
@@ -458,6 +481,12 @@ mod tests {
             Some(SaveAll)
         );
         assert_eq!(Command::from_key(&key("n"), Modifiers::empty()), None);
+        assert_eq!(Command::from_key(&key("z"), ctrl), Some(Undo));
+        assert_eq!(Command::from_key(&key("y"), ctrl), Some(Redo));
+        assert_eq!(
+            Command::from_key(&key("Z"), ctrl | Modifiers::SHIFT),
+            Some(Redo)
+        );
         // Ctrl+D is kept for Duplicate.
         assert_eq!(Command::from_key(&key("d"), ctrl), None);
         // Text boxes do their own copying.

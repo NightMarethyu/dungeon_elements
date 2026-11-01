@@ -76,6 +76,16 @@ The buttons at the top right of a note switch how you see it:
 - **Markdown** shows the note's text as it is saved (Ctrl+E switches between the two).
 - **Read** shows it formatted, like a wiki page (Ctrl+R). See [Reading and formatting notes](guide:reading-and-formatting).
 
+## Undo and Redo
+
+**Ctrl+Z** takes back the last change to the note, and **Ctrl+Y** (or Ctrl+Shift+Z) does it again. The arrows at the left of the formatting toolbar, the **Edit** menu and the right-click menus do the same, and say what they would undo, like **Undo Typing** or **Undo Roll**.
+
+- Typing is taken back a burst at a time: a pause of a second, Enter, or a click starts the next one.
+- Everything else that changes the note is a step of its own: a field filled from a roll, Bold, a list, a ticked task, a field added or removed, a table saved from the table editor.
+- Each note remembers about a thousand steps while the app is open, even after you save, and even after you close its tab and open it again. Closing a note without saving can be undone too: open it again and press Ctrl+Z.
+- Undoing back to the last save shows the note as saved again.
+- In the table editor, **Cancel** puts the table back as it was.
+
 ## Organize notes
 
 - The big **+** at the bottom of the file tree makes a new folder, and offers fields to start from.
