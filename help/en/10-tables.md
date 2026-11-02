@@ -44,6 +44,17 @@ Click a roll table in the reading view, or **Edit Table** above it, and it opens
 
 Tables are still ordinary Markdown tables that Obsidian and other apps read. A line break in a result is saved as `<br>`. Which links don't roll is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 
+## Roll tables and information tables
+
+Not every table is for rolling. A list of prices, a calendar or the party's names is an **information table**: it has no Roll button, and it isn't in the Roll Tables list or offered when you pick a table to roll on.
+
+- A table whose first column is a die, like `d6` or `2d6`, starts as a roll table. Any other table starts as an information table.
+- Click an information table, or **Edit Table** above it, and it opens in the table editor too, with just its columns and rows: no die and no ranges.
+- Tick **Roll table** at the top of the table editor to make it a roll table. A table without a die gets one, with the same share of it for each row (three rows get a d6, two numbers each). Untick it to make a roll table an information table. Its die column is kept as an ordinary column, so ticking it again gives you the same table back.
+- Or right-click a table in the reading view and pick **Make Information Table** or **Make Roll Table**. Right-click a table in the Roll Tables list and pick **Make Information Table** to take it out of the list.
+
+Which tables with a die are information tables is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
+
 ## The die and the rows
 
 The first header is the die: `d6`, `2d6`, `d100` or `d%`. Each row's first cell is the numbers it covers:

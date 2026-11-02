@@ -36,14 +36,19 @@ const MAX_CHECKED: i64 = 1000;
 /// Where the tables set to roll each column are listed, in the campaign folder.
 const SETTINGS_FILE: &str = ".dungeon_elements/tables.yaml";
 
-/// A roll table found in a note.
+/// A table found in a note: a roll table, or an information table (prices, a calendar, a
+/// party list) that isn't rolled.
+///
+/// A table whose first header is a die is a roll table, unless the campaign's settings
+/// make it an information table (see [`Settings::information`]). Any other table is an
+/// information table.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Table {
     /// The heading the table is under, if any.
     pub heading: Option<String>,
-    /// The die in its first header, like `d6` or `2d6`.
-    pub die: Expression,
-    /// The headers of its other columns.
+    /// The die in its first header, like `d6` or `2d6`, if it has one.
+    pub die: Option<Expression>,
+    /// The headers of its other columns, or of every column without a die.
     pub columns: Vec<String>,
     pub rows: Vec<Row>,
     /// Rows whose first cell isn't a number or a range, as written.
@@ -82,10 +87,21 @@ impl Table {
     pub fn has_columns(&self) -> bool {
         self.columns.len() > 1
     }
+
+    /// Whether its first column is a die, so it can be rolled.
+    pub fn has_die(&self) -> bool {
+        self.die.is_some()
+    }
 }
 
-/// The roll tables in a note's `text`, in order.
+/// The tables in a note's `text` whose first column is a die, in order: its roll tables,
+/// unless the campaign's settings make some information tables.
 pub fn find(text: &str) -> Vec<Table> {
+    find_all(text).into_iter().filter(Table::has_die).collect()
+}
+
+/// Every table in a note's `text`, roll tables and information tables, in order.
+pub fn find_all(text: &str) -> Vec<Table> {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
     let offset = match note::split_front_matter(text) {
@@ -215,16 +231,28 @@ pub fn write(rows: &[Vec<String>]) -> String {
     out
 }
 
-/// The roll table in `rows` of cells (the header first), if its first header is a die.
+/// The table in `rows` of cells (the header first): a roll table if its first header is
+/// a die.
 fn read(heading: Option<String>, rows: Vec<Vec<String>>, range: Range<usize>) -> Option<Table> {
     let written = rows.clone();
     let mut rows = rows.into_iter();
     let header = rows.next()?;
-    let die = die(header.first()?)?;
+    let Some(die) = die(header.first()?) else {
+        return Some(Table {
+            heading,
+            die: None,
+            columns: header,
+            rows: Vec::new(),
+            unread: Vec::new(),
+            range,
+            written,
+            not_rolled: BTreeSet::new(),
+        });
+    };
     let (_, highest) = die.bounds();
     let mut table = Table {
         heading,
-        die,
+        die: Some(die),
         columns: header[1..].to_vec(),
         rows: Vec::new(),
         unread: Vec::new(),
@@ -288,17 +316,24 @@ pub fn numbers(cell: &str, highest: i64) -> Option<(i64, i64)> {
 }
 
 /// What is wrong with the roll tables in a note's `text`, one line each: rows the die
-/// can't pick, and numbers it can roll that no row has.
-pub fn problems(text: &str, note: &str) -> Vec<String> {
+/// can't pick, and numbers it can roll that no row has. `information` says which tables,
+/// by the heading they are under, were made information tables, which aren't rolled.
+pub fn problems(text: &str, note: &str, information: &dyn Fn(Option<&str>) -> bool) -> Vec<String> {
     let mut problems = Vec::new();
     for table in find(text) {
+        if information(table.heading.as_deref()) {
+            continue;
+        }
         let name = table.name(note);
         for cell in &table.unread {
             problems.push(format!(
                 "A row of the {name} table starts with \"{cell}\", not a number or a range like 2-3, so it can't be rolled"
             ));
         }
-        let (low, high) = table.die.bounds();
+        let Some(die) = &table.die else {
+            continue;
+        };
+        let (low, high) = die.bounds();
         if high - low > MAX_CHECKED || table.rows.is_empty() {
             continue;
         }
@@ -307,7 +342,7 @@ pub fn problems(text: &str, note: &str) -> Vec<String> {
             problems.push(format!(
                 "The {name} table has no row for {}, which its {} can roll",
                 list(&missing),
-                table.die
+                die
             ));
         }
     }
@@ -436,6 +471,11 @@ fn roll_at(
     depth: usize,
 ) -> Rolled {
     let each_column = each_column && table.has_columns();
+    // An information table has no die, so nothing is picked from it.
+    let die = table
+        .die
+        .clone()
+        .unwrap_or_else(|| Expression::parse("d1").expect("d1"));
     let columns = if table.columns.is_empty() {
         vec![String::new()]
     } else {
@@ -449,7 +489,7 @@ fn roll_at(
         let (value, row) = match picked {
             Some(picked) if !each_column => picked,
             _ => {
-                let value = table.die.total(rng);
+                let value = die.total(rng);
                 values.push(value);
                 let found = (value, table.row(value));
                 picked = Some(found);
@@ -475,7 +515,7 @@ fn roll_at(
     }
     Rolled {
         name: name.to_string(),
-        die: table.die.to_string(),
+        die: die.to_string(),
         values,
         results,
         each_column,
@@ -646,6 +686,10 @@ pub struct Settings {
     /// The groups of built-in tables open in the Roll Tables list, by [`Group::key`].
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub open_groups: BTreeSet<String>,
+    /// The tables, by [`key`], whose first column is a die but that are information
+    /// tables: not rolled or listed. Any other table with a die is a roll table.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub information: BTreeSet<String>,
 }
 
 impl Settings {
@@ -672,6 +716,15 @@ impl Settings {
             self.not_rolled.remove(key);
         } else {
             self.not_rolled.insert(key.to_string(), not_rolled);
+        }
+    }
+
+    /// Sets whether the table `key`, whose first column is a die, is an information table.
+    pub fn set_information(&mut self, key: &str, information: bool) {
+        if information {
+            self.information.insert(key.to_string());
+        } else {
+            self.information.remove(key);
         }
     }
 
@@ -908,6 +961,9 @@ pub enum Message {
     ToggleGroup(Group),
     /// Open the table editor on the table that starts at this place in the note.
     Edit(PathBuf, usize),
+    /// Make the table that starts at this place in the note an information table, so it
+    /// isn't rolled or listed.
+    Information(PathBuf, usize),
     /// Copy the built-in table with this name into the campaign, and open the table
     /// editor on the copy.
     EditBuiltIn(String),
@@ -948,7 +1004,7 @@ impl List {
             .filter_map(|table| {
                 Some((
                     table.name.to_string(),
-                    table.table()?.die.to_string(),
+                    table.table()?.die?.to_string(),
                     table.group,
                 ))
             })
@@ -991,11 +1047,18 @@ impl List {
             let start = entry.table.range.start;
             let roll = hint(
                 c,
-                button(die_label(entry.table.die.to_string()))
-                    .width(DIE_WIDTH)
-                    .padding([1, 0])
-                    .style(style::secondary(c))
-                    .on_press(Message::Roll(entry.path.clone(), start)),
+                button(die_label(
+                    entry
+                        .table
+                        .die
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default(),
+                ))
+                .width(DIE_WIDTH)
+                .padding([1, 0])
+                .style(style::secondary(c))
+                .on_press(Message::Roll(entry.path.clone(), start)),
                 "Roll it",
             );
             let name = button(
@@ -1381,7 +1444,7 @@ mod tests {
         assert_eq!(tables.len(), 1);
         let table = &tables[0];
         assert_eq!(table.heading.as_deref(), Some("Weather"));
-        assert_eq!(table.die.to_string(), "1d6");
+        assert_eq!(table.die.as_ref().unwrap().to_string(), "1d6");
         assert_eq!(table.columns, ["Weather"]);
         let covered: Vec<_> = table.rows.iter().map(|row| (row.low, row.high)).collect();
         assert_eq!(covered, [(1, 1), (2, 3), (4, 5), (6, 6)]);
@@ -1391,6 +1454,29 @@ mod tests {
         // A table whose first column isn't a die isn't a roll table.
         assert!(find("| Name | Age |\n| --- | --- |\n| Bo | 3 |\n").is_empty());
         assert!(find("| +2 | x |\n| --- | --- |\n| 1 | a |\n").is_empty());
+    }
+
+    #[test]
+    fn finds_information_tables_too() {
+        let text = "# Prices\n\n| Item | Cost |\n| --- | --- |\n| Rope | 1 sp |\n\n## Weather\n\n| d2 | Sky |\n| --- | --- |\n| 1 | Sun |\n| 2 | Rain |\n";
+        let all = find_all(text);
+        assert_eq!(all.len(), 2);
+        assert!(!all[0].has_die());
+        assert_eq!(all[0].heading.as_deref(), Some("Prices"));
+        assert_eq!(all[0].columns, ["Item", "Cost"]);
+        assert_eq!(all[0].written[1], ["Rope", "1 sp"]);
+        assert!(all[1].has_die());
+        // Only the one with a die is found to roll.
+        let rolled = find(text);
+        assert_eq!(rolled.len(), 1);
+        assert_eq!(rolled[0].heading.as_deref(), Some("Weather"));
+    }
+
+    #[test]
+    fn information_tables_have_no_problems() {
+        let text = "## Gaps\n\n| d6 | Sky |\n| --- | --- |\n| 1 | Sun |\n";
+        assert_eq!(problems(text, "x", &|_| false).len(), 1);
+        assert!(problems(text, "x", &|heading| heading == Some("Gaps")).is_empty());
     }
 
     #[test]
@@ -1507,13 +1593,13 @@ mod tests {
     fn points_out_rows_that_cant_be_rolled() {
         let text = "## Loot\n\n| d8 | Loot |\n| -- | -- |\n| 1 | Coins |\n| 2-3 | Gem |\n| six | Sword |\n| 7 | Map |\n";
         assert_eq!(
-            problems(text, "Treasure"),
+            problems(text, "Treasure", &|_| false),
             [
                 "A row of the Loot table starts with \"six\", not a number or a range like 2-3, so it can't be rolled",
                 "The Loot table has no row for 4-6 or 8, which its 1d8 can roll",
             ]
         );
-        assert!(problems(WEATHER, "Weather").is_empty());
+        assert!(problems(WEATHER, "Weather", &|_| false).is_empty());
     }
 
     #[test]
@@ -1531,7 +1617,7 @@ mod tests {
         );
         let table = find(&made).remove(0);
         assert_eq!(table.rows.len(), 6);
-        assert!(problems(&made, "x").is_empty());
+        assert!(problems(&made, "x", &|_| false).is_empty());
 
         // Fewer rows split the numbers evenly.
         let made = markdown(&Blank {
@@ -1544,7 +1630,7 @@ mod tests {
         assert_eq!((table.rows[0].low, table.rows[0].high), (1, 5));
         assert_eq!((table.rows[19].low, table.rows[19].high), (96, 100));
         assert!(made.contains("| 96-00"));
-        assert!(problems(&made, "x").is_empty());
+        assert!(problems(&made, "x", &|_| false).is_empty());
 
         // Pasted lines fill the rows, keeping their own numbers if they have them.
         let pasted = "1. A cold wind\n2-3: Fog\n4) Rain\n";
@@ -1589,7 +1675,7 @@ mod tests {
         for table in BUILT_IN {
             assert!(table.table().is_some(), "{} isn't a table", table.name);
             assert!(
-                problems(table.text, table.name).is_empty(),
+                problems(table.text, table.name, &|_| false).is_empty(),
                 "{}",
                 table.name
             );

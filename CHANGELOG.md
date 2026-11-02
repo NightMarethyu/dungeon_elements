@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Roll tables and information tables
+
+- A table is either a **roll table**, with a Roll button and a place in the Roll Tables list, or an **information table**, like prices, a calendar or a party list: no Roll button, not in the Roll Tables list, and not offered when picking a table to roll on.
+- A table whose first column is a die starts as a roll table, and any other as an information table. Tick or untick **Roll table** in the table editor, or right-click a table and pick **Make Information Table** or **Make Roll Table**, to change it.
+- The table editor works for information tables too: their columns and rows, with no die and no ranges. A table made a roll table gets a die that gives each row the same share, and a roll table made an information table keeps its die column, so nothing is lost.
+
 ### Undo and Redo
 
 - **Ctrl+Z** takes back the last change to a note, and **Ctrl+Y** (or **Ctrl+Shift+Z**) does it again. They are at the top of the **Edit** menu and the right-click menus, and as arrows at the left of the formatting toolbar, and they say what they would do, like **Undo Typing** or **Undo Roll**.
