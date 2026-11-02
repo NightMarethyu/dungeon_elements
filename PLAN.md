@@ -91,7 +91,7 @@ Stretch goal:
 
 The campaign's people and plots. Everything here is notes, types and links, built on Phase 1's wiki, so it needs no new kinds of panes.
 
-**Phase 2 is closed to new items.** The menu bar review and Undo and Redo are its last two. Anything new goes into Phase 3 or later.
+**Phase 2 is done.** The menu bar review and Undo and Redo were its last two items. Anything new goes into Phase 3 or later.
 
 - [x] Help menu improvements: a Help window (F1) with a search box, opened from the Help menu and the start screen
   - [x] Show all the keyboard shortcuts (Help > Keyboard Shortcuts, Ctrl+/). The list is in `src/help.rs`, and a test fails if a menu shows a shortcut that isn't in it
@@ -167,8 +167,12 @@ The items in Player Management are all things that will just be built as templat
   - Every menu item is a named command (`src/commands.rs`) with an id, a label and its shortcut, so the Phase 3 tool pane and custom shortcuts can offer "everything the menus can do"
   - Shortcuts: the dice roller is Ctrl+Shift+D; Ctrl+D is kept free for Duplicate (notes, and the map editor later)
   - Built in two steps (done): the commands and the new menus, then the Tables menu's built-in tables and the grouped Roll Tables list
-- [ ] **Undo** and **Redo** for everything changed in the app, not only typing: a field filled from a roll, a table changed in the table editor, a note moved or renamed. Until then, **Cancel** in the table editor and closing a note without saving put things back
-  - Built in three steps: Undo and Redo in notes (done: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, the Edit menu, right-click menus and toolbar arrows, about a thousand steps a note, kept as only the words that changed), then changes to files and folders (done: new, rename, move, delete, Note Types, walkthrough questions and answers, link fixes, quest ticks; asks first if a file changed in another app), then Undo inside the table editor
+- [x] **Undo** and **Redo** for everything changed in the app, not only typing: a field filled from a roll, a table changed in the table editor, a note moved or renamed
+  - Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, at the top of the Edit menu and the right-click menus, and as arrows at the left of the formatting toolbar, each saying what it would do ("Undo Rename Saltmarsh")
+  - Notes keep about a thousand steps each, kept as only the words that changed; the campaign keeps about two hundred steps of files and folders (new, rename, move, delete, Note Types, walkthrough questions and answers, link fixes, quest ticks), and asks first if a file changed in another app since. Ctrl+Z takes back whichever came last
+  - The table editor has its own Undo and Redo while it is open
+  - History is kept while the app is open, not between runs
+  - Built in three steps (done): notes, then files and folders, then the table editor
 
 ### Phase 3: climax
 
@@ -183,6 +187,8 @@ Play at the table and solo play. This needs panes the user can arrange, so layou
   - [ ] Tool pane added
     - A tool pane instead of a ribbon (an idea from Adobe's apps): buttons for the tools, under the menu bar by default. With Layouts it can be moved like any pane, or popped out into a floating window that stays above the main window
     - Users choose which buttons the tool pane shows, picked from a list of everything the menus can do, with no file to edit
+  - [ ] A History pane listing the Undo steps of the note and the campaign, to go back several at once
+- [ ] Undo and Redo inside the Note Types and walkthrough question editors while they are open (their Save is already one step to undo)
 - [ ] Journaling tool, built for solo play
   - [ ] A journal folder whose notes are dated sessions, added to quickly while playing
   - [ ] The dice roller and roll tables built into the journal: a roll, or an oracle question and its answer, goes straight into the entry

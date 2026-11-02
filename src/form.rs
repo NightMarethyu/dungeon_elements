@@ -954,6 +954,11 @@ impl Form {
         Some((self.fields[*index].label(), editor))
     }
 
+    /// The table editor, if it is open.
+    pub fn table_editor(&self) -> Option<&table_editor::Editor> {
+        self.table.as_ref().map(|(_, editor)| &**editor)
+    }
+
     /// The label of the field the table editor's table is in, and the heading the table
     /// is under in the field, if any.
     pub fn table_heading(&self) -> Option<(String, Option<String>)> {
