@@ -4,7 +4,7 @@
 //! matter keys and `## ` sections the type doesn't list (added with the main
 //! pane's + button, or in another app like Obsidian).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use iced::advanced::widget::Id;
 use iced::advanced::widget::operation::scrollable::AbsoluteOffset;
@@ -683,7 +683,22 @@ pub struct Form {
     table: Option<(usize, Box<table_editor::Editor>)>,
     /// See [`Self::take_finished_table`].
     finished: Option<(String, Box<table_editor::Editor>)>,
+    /// What the rolls into each text field left in it (see [`Self::fill_roll`]), newest
+    /// last, by field key. Earlier ones count too, so a roll brought back by Undo is
+    /// still a roll.
+    rolls: HashMap<String, Vec<Roll>>,
 }
+
+/// What a roll put in a text field: the field's whole text after it, and the text kept
+/// before the roll when it went on a new line.
+#[derive(Debug, Clone, Default)]
+struct Roll {
+    text: String,
+    before: String,
+}
+
+/// How many rolls into a field [`Form::holds_roll`] remembers.
+const MAX_ROLLS: usize = 100;
 
 /// Where the table picked for a field is remembered: its type and key, like `npcs/name`.
 pub fn pick_key(ty: &ContentType, key: &str) -> String {
@@ -809,6 +824,7 @@ impl Form {
             front: note.front,
             table: None,
             finished: None,
+            rolls: HashMap::new(),
         };
 
         Form {
@@ -1374,6 +1390,75 @@ impl Form {
             _ => return false,
         }
         true
+    }
+
+    /// Puts a roll's `value` in text or long text field `index`, like
+    /// [`Self::set_text_value`], and remembers it, so a roll after it can replace it
+    /// without asking (see [`Self::holds_roll`]).
+    pub fn fill_roll(&mut self, index: usize, value: &str, add_line: bool) -> bool {
+        let Some(key) = self.fields.get(index).map(|field| field.key.clone()) else {
+            return false;
+        };
+        let before = match self.text_value(index) {
+            Some((current, true)) if add_line => current.trim_end().to_string(),
+            Some(_) => String::new(),
+            None => return false,
+        };
+        if !self.set_text_value(index, value, add_line) {
+            return false;
+        }
+        let Some((text, _)) = self.text_value(index) else {
+            return false;
+        };
+        let rolls = self.rolls.entry(key).or_default();
+        rolls.retain(|roll| roll.text != text);
+        if rolls.len() >= MAX_ROLLS {
+            rolls.remove(0);
+        }
+        rolls.push(Roll { text, before });
+        true
+    }
+
+    /// The roll field `index` holds just what it left, if it does (see
+    /// [`Self::holds_roll`]).
+    fn held_roll(&self, index: usize) -> Option<&Roll> {
+        let field = self.fields.get(index)?;
+        let (text, _) = self.text_value(index)?;
+        if text.trim().is_empty() {
+            return None;
+        }
+        self.rolls
+            .get(&field.key)?
+            .iter()
+            .rev()
+            .find(|roll| roll.text == text)
+    }
+
+    /// Whether field `index` still holds just what a roll into it left, so another roll
+    /// replaces it without asking: someone rolling again wasn't inspired by it. Text
+    /// typed in it, or a roll changed since, isn't a roll's.
+    pub fn holds_roll(&self, index: usize) -> bool {
+        self.held_roll(index).is_some()
+    }
+
+    /// Puts a roll's `value` in field `index` in place of the last roll there (see
+    /// [`Self::holds_roll`]), keeping any text that was before it.
+    pub fn replace_roll(&mut self, index: usize, value: &str) -> bool {
+        let before = self
+            .held_roll(index)
+            .map(|roll| roll.before.clone())
+            .unwrap_or_default();
+        if before.is_empty() {
+            return self.fill_roll(index, value, false);
+        }
+        let _ = self.set_text_value(index, &before, false);
+        self.fill_roll(index, value, true)
+    }
+
+    /// Keeps what `old`, the form this one was read again in place of, knows about the
+    /// rolls in its fields. A field that holds something else now asks again anyway.
+    pub fn keep_rolls(&mut self, old: &Form) {
+        self.rolls = old.rolls.clone();
     }
 
     /// Adds `item` to the end of steps or list field `index`, as a new step or a new
@@ -2895,6 +2980,55 @@ mod tests {
         let mut check = ty.fields[0].clone();
         check.kind = Kind::Checkbox;
         assert!(check.tables().is_empty());
+    }
+
+    #[test]
+    fn rolling_again_replaces_its_own_roll() {
+        let ty = item_type();
+        let mut form = Form::blank(ty.clone());
+        // An empty field, or one filled by hand, holds no roll.
+        assert!(!form.holds_roll(0));
+        form.update(Message::Text(0, "Typed".into()));
+        assert!(!form.holds_roll(0));
+        // A roll put in it can be rolled again over.
+        assert!(form.fill_roll(0, "Wren Ash", false));
+        assert!(form.holds_roll(0));
+        assert!(form.replace_roll(0, "Tam Reed"));
+        assert_eq!(form.text_value(0), Some(("Tam Reed".into(), false)));
+        assert!(form.holds_roll(0));
+        // Once changed, it is the person's and asks again.
+        form.update(Message::Text(0, "Tam Reede".into()));
+        assert!(!form.holds_roll(0));
+        // Typed back to just the roll, it is the roll again.
+        form.update(Message::Text(0, "Tam Reed".into()));
+        assert!(form.holds_roll(0));
+
+        // A roll added on a new line is replaced on its own, keeping the text before it.
+        let long = ty
+            .fields
+            .iter()
+            .position(|field| field.kind == Kind::Longtext)
+            .unwrap();
+        form.set_text_value(long, "Forged.", false);
+        assert!(!form.holds_roll(long));
+        assert!(form.fill_roll(long, "Cursed.", true));
+        assert!(form.holds_roll(long));
+        assert!(form.replace_roll(long, "Lost."));
+        assert_eq!(
+            form.text_value(long),
+            Some(("Forged.\n\nLost.".into(), true))
+        );
+        assert!(form.holds_roll(long));
+
+        // An earlier roll, brought back as Undo does, is still a roll.
+        form.update(Message::Text(0, "Wren Ash".into()));
+        assert!(form.holds_roll(0));
+
+        // Read again from its text (as Undo does), the form still knows its rolls.
+        let mut again = Form::from_note(ty, note::parse(&form.to_markdown().unwrap()).unwrap());
+        assert!(!again.holds_roll(0));
+        again.keep_rolls(&form);
+        assert!(again.holds_roll(0));
     }
 
     #[test]

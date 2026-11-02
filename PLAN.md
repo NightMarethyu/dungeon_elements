@@ -192,7 +192,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
 - [ ] Dice pane fixes
   - The roll history on the left keeps its width however many single dice are rolled, and scrolls (today it gets narrow and looks odd)
   - A **–** in the pane's top right corner hides it ("Hide dice roller (Ctrl+Shift+D)"), as well as the d20 button and the Tables menu
-- [ ] **Inspire me** replaces its own result without asking
+- [x] **Inspire me** replaces its own result without asking
   - Clicking Inspire me (or a table button on a field) again replaces the result it just put there, with no "Replace?" question: someone clicking again wasn't inspired by it
   - It still asks when the field holds anything else: text the person typed, or a rolled result they have changed since. That is the rule for "in a row", so it doesn't depend on how fast someone clicks
   - Each replaced roll is still one Undo step
