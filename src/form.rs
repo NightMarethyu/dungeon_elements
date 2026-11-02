@@ -1087,7 +1087,7 @@ impl Form {
                     return changed;
                 };
                 let text = content.text();
-                if let Some(table) = tables::find(&text)
+                if let Some(table) = tables::find_all(&text)
                     .into_iter()
                     .find(|table| table.range.start == start)
                 {
@@ -2003,12 +2003,12 @@ impl Form {
         let label = move |index: usize, label: String| -> Element<'a, M> {
             let label = text(label).size(14).color(c.text);
             let tables = self.fields[index].tables();
-            // A roll table in a long text field can be edited in the table editor.
+            // A table in a long text field can be edited in the table editor.
             let roll_tables = match &self.inputs[index] {
                 Input::Long(content)
                     if !self.table.as_ref().is_some_and(|(at, _)| *at == index) =>
                 {
-                    tables::find(&content.text())
+                    tables::find_all(&content.text())
                 }
                 _ => Vec::new(),
             };

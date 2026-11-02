@@ -206,7 +206,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - **Rolled after**: a table can be marked as needing another table's roll first (Norse surnames need a father's name). Rolling it on its own rolls that table first, and the editor and the Roll Tables list show the link
   - Kept as an ordinary roll table: a d1 table with one link per column, in a hidden file in the campaign's `.dungeon_elements/` folder. Today's rolling already handles it (each column, the -sson joins, the history, Undo), and the table editor shows it as Also roll picks, so nobody sees or edits the file. To check: that d1 counts as a die, and that fixing links after a rename covers that folder
   - The per-row **Rolls on** boxes stay, for rows that lead somewhere different
-- [ ] Roll tables and information tables
+- [x] Roll tables and information tables
   - Each table is a **roll table** (Roll buttons, shown in the Roll Tables list and the link pickers) or an **information table** (a plain table, like prices, a calendar or a party list: no Roll button, not listed)
   - A table whose first column is a die (d6, d20, 2d6 …) starts as a roll table, any other as an information table. A switch in the table editor and a right-click on the table change it
   - The table editor works for information tables too: columns and rows, no die and no ranges

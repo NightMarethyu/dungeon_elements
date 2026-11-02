@@ -102,14 +102,14 @@ struct Block {
     content: markdown::Content,
     /// Where the `[ ]` of each of its task boxes is in the note's text, in order.
     tasks: Vec<usize>,
-    /// The roll table it is, if it is one.
-    table: Option<RollTable>,
+    /// The table it is, if it is one.
+    table: Option<TableBlock>,
 }
 
-/// What the bar above a roll table needs: its die, and whether it has columns to roll
-/// on their own.
-struct RollTable {
-    die: String,
+/// What the bar above a table needs: its die, if it is a roll table, and whether it has
+/// columns to roll on their own.
+struct TableBlock {
+    die: Option<String>,
     has_columns: bool,
 }
 
@@ -170,6 +170,9 @@ pub struct Editing<'a, M> {
     pub on_each_column: fn(usize, bool) -> M,
     /// Where the roll tables that roll each column on their own are in the note's text.
     pub each_column: Vec<usize>,
+    /// Where the tables whose first column is a die but that are information tables are
+    /// in the note's text: they get no Roll button.
+    pub information: Vec<usize>,
     /// The space for adding text at the end was clicked.
     pub on_add: M,
     /// Somewhere else on the page was clicked.
@@ -230,7 +233,7 @@ impl Preview {
 
         // `body` is the end of `source`, so this is where it starts in it.
         let offset = source.len() - body.len();
-        let roll_tables = tables::find(source);
+        let found_tables = tables::find_all(source);
         let blocks: Vec<Block> = block_ranges(body)
             .into_iter()
             .map(|range| Block {
@@ -242,11 +245,11 @@ impl Preview {
                     .into_iter()
                     .map(|at| at + range.start + offset)
                     .collect(),
-                table: roll_tables
+                table: found_tables
                     .iter()
                     .find(|table| table.range.start == range.start + offset)
-                    .map(|table| RollTable {
-                        die: table.die.to_string(),
+                    .map(|table| TableBlock {
+                        die: table.die.as_ref().map(ToString::to_string),
                         has_columns: table.has_columns(),
                     }),
                 range: range.start + offset..range.end + offset,
@@ -472,18 +475,28 @@ impl Preview {
         let Some(table) = &self.blocks[index].table else {
             return block_element;
         };
-        // A roll table gets a bar above it to roll it.
+        // A table gets a bar above it to edit it, and a roll table one to roll it too.
         let start = self.blocks[index].range.start;
-        let roll = dice::field_button(reader.c, &edit.roll_icon, &table.die, {
-            let on_roll = edit.on_roll_table;
-            move |_| on_roll(start)
+        let die = table
+            .die
+            .as_ref()
+            .filter(|_| !edit.information.contains(&start));
+        let roll = die.map(|die| {
+            dice::field_button(reader.c, &edit.roll_icon, die, {
+                let on_roll = edit.on_roll_table;
+                move |_| on_roll(start)
+            })
         });
         let edit_table = button(text("Edit Table").size(12))
             .padding([2, 8])
             .style(style::flat(reader.c, false))
             .on_press((edit.on_edit_table)(index));
-        let mut bar = row![roll, edit_table].spacing(12).align_y(Center);
-        if table.has_columns {
+        let mut bar = row![]
+            .push(roll)
+            .push(edit_table)
+            .spacing(12)
+            .align_y(Center);
+        if table.has_columns && die.is_some() {
             let on_each = edit.on_each_column;
             bar = bar.push(tables::each_column(
                 reader.c,

@@ -812,13 +812,14 @@ impl Tab {
         }
     }
 
-    /// Whether block `index` of the reading view is a roll table.
+    /// Whether block `index` of the reading view is a table: a roll table or an
+    /// information table.
     fn is_table_block(&self, index: usize) -> bool {
         let Some(preview) = &self.preview else {
             return false;
         };
         preview.block_range(index).is_some_and(|range| {
-            tables::find(preview.source())
+            tables::find_all(preview.source())
                 .iter()
                 .any(|table| table.range.start == range.start)
         })
@@ -1098,6 +1099,9 @@ enum Message {
     AddTableHere,
     /// Tables > Add Roll Table Here: at the end of the note in the reading view.
     AddTableAtEnd,
+    /// Makes the table that is this block of the reading view a roll table (true) or an
+    /// information table, from its right-click menu.
+    SetTableRoll(usize, bool),
     /// Puts what was edited in the reading view back into the note.
     FinishEditing,
     Modifiers(Modifiers),
@@ -2659,6 +2663,58 @@ impl Workspace {
             .collect()
     }
 
+    /// Whether the table under `heading` in the note at `path`, whose first column is a
+    /// die, was made an information table.
+    fn is_information(&self, path: &Path, heading: Option<&str>) -> bool {
+        self.table_settings
+            .information
+            .contains(&tables::key(&self.root, path, heading))
+    }
+
+    /// The roll tables in `text`, the note at `path`: its tables whose first column is a
+    /// die, but for those made information tables.
+    fn roll_tables(&self, path: &Path, text: &str) -> Vec<tables::Table> {
+        tables::find(text)
+            .into_iter()
+            .filter(|table| !self.is_information(path, table.heading.as_deref()))
+            .collect()
+    }
+
+    /// Where the tables in `text`, the note at `path`, whose first column is a die but
+    /// that were made information tables are.
+    fn information_tables(&self, path: &Path, text: &str) -> Vec<usize> {
+        tables::find(text)
+            .into_iter()
+            .filter(|table| self.is_information(path, table.heading.as_deref()))
+            .map(|table| table.range.start)
+            .collect()
+    }
+
+    /// Makes the table under `heading` in the note at `path`, which was under `old`, a
+    /// roll table or an information table (`information`), as kept in the campaign's
+    /// settings. Only a table whose first column is a die needs `information` kept.
+    fn set_information(
+        &mut self,
+        path: &Path,
+        old: Option<&str>,
+        heading: Option<&str>,
+        information: bool,
+    ) {
+        let before = self.table_settings.clone();
+        self.table_settings
+            .set_information(&tables::key(&self.root, path, old), false);
+        self.table_settings
+            .set_information(&tables::key(&self.root, path, heading), information);
+        if self.table_settings == before {
+            return;
+        }
+        if let Err(error) = self.table_settings.save(&self.root) {
+            self.status = format!("Could not remember the kind of table: {error}");
+        }
+        self.refresh_tables();
+        self.table_keys = self.step_table_keys();
+    }
+
     /// Every roll table in the campaign.
     fn all_tables(&self) -> Vec<tables::Entry> {
         let mut found = Vec::new();
@@ -2667,7 +2723,7 @@ impl Workspace {
                 continue;
             };
             let note = self.tree_name(&path, false);
-            for table in tables::find(&text) {
+            for table in self.roll_tables(&path, &text) {
                 found.push(tables::Entry {
                     each_column: self.rolls_each_column(&path, table.heading.as_deref()),
                     path: path.clone(),
@@ -2716,7 +2772,8 @@ impl Workspace {
         };
         let found = path.and_then(|path| {
             let text = self.note_text(&path)?;
-            let table = tables::find(&text)
+            let table = self
+                .roll_tables(&path, &text)
                 .into_iter()
                 .find(|table| match heading {
                     Some(heading) => table
@@ -2778,7 +2835,8 @@ impl Workspace {
         let Some(text) = self.note_text(path) else {
             return;
         };
-        let Some(table) = tables::find(&text)
+        let Some(table) = self
+            .roll_tables(path, &text)
             .into_iter()
             .find(|table| table.range.start == start)
         else {
@@ -3561,6 +3619,12 @@ impl Workspace {
                 editor.each_column(),
                 editor.not_rolled(),
             );
+            self.set_information(
+                &path,
+                old.as_deref(),
+                heading.as_deref(),
+                editor.keeps_die(),
+            );
             if let Some((old, heading)) = &renamed {
                 self.rename_heading_links(&path, old, heading);
             }
@@ -3722,6 +3786,7 @@ impl Workspace {
                 editor.each_column(),
                 editor.not_rolled(),
             );
+            self.set_information(&path, Some(&old), Some(&heading), editor.keeps_die());
             if let Some(new) = renamed {
                 self.rename_heading_links(&path, &old, &new);
             }
@@ -3744,11 +3809,15 @@ impl Workspace {
         let each_column = self.rolls_each_column(&path, Some(&heading));
         let key = tables::key(&self.root, &path, Some(&heading));
         let not_rolled = self.not_rolled(&key);
+        let information = self.is_information(&path, Some(&heading));
         if let Some(tab) = self.active_tab_mut()
             && let Some((_, editor)) = tab.form.as_mut().and_then(form::Form::table_editor_mut)
         {
             editor.set_settings(Some(each_column), not_rolled);
             editor.set_table_links(links);
+            if information && editor.is_roll() {
+                editor.set_roll(false);
+            }
         }
     }
 
@@ -3985,23 +4054,27 @@ impl Workspace {
             return Task::none();
         };
         let source = preview.source().to_string();
-        let Some(table) = tables::find(&source)
+        let Some(table) = tables::find_all(&source)
             .into_iter()
             .find(|table| table.range.start == range.start)
         else {
             return Task::none();
         };
         let path = tab.note_path();
+        let information = table.has_die() && self.is_information(&path, table.heading.as_deref());
         let name = table.name(&self.tree_name(&path, false));
         let each_column = self.rolls_each_column(&path, table.heading.as_deref());
         // A heading with more than one table under it can't be renamed from one of them.
-        let shared = tables::find(&source)
+        let shared = tables::find_all(&source)
             .iter()
             .filter(|other| other.heading.is_some() && other.heading == table.heading)
             .count()
             > 1;
         let table = self.with_settings(&path, table);
         let mut editor = table_editor::Editor::new(&source, &table, &name, Some(each_column));
+        if information {
+            editor.set_roll(false);
+        }
         editor.set_table_links(self.table_link_keys());
         if shared {
             editor.keep_heading();
@@ -4019,6 +4092,44 @@ impl Workspace {
             Some(id) => iced::widget::operation::focus(id),
             None => Task::none(),
         }
+    }
+
+    /// Whether the table that is block `index` of the active tab's reading view is a roll
+    /// table (true) or an information table, if that block is a table.
+    fn table_block_roll(&self, index: usize) -> Option<bool> {
+        let tab = self.active_tab()?;
+        let preview = tab.preview.as_ref()?;
+        let range = preview.block_range(index)?;
+        let table = tables::find_all(preview.source())
+            .into_iter()
+            .find(|table| table.range.start == range.start)?;
+        Some(table.has_die() && !self.is_information(&tab.note_path(), table.heading.as_deref()))
+    }
+
+    /// Makes the table that is block `index` of the active tab's reading view a roll
+    /// table (`roll`) or an information table, as the table editor's Roll table box does:
+    /// an information table keeps its die column, and one without a die gets one.
+    fn set_table_roll(&mut self, index: usize, roll: bool) -> Task<Message> {
+        let _ = self.edit_table(index);
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        let Some(ReadEdit::Table { editor, .. }) = &mut tab.edit else {
+            return Task::none();
+        };
+        editor.update(table_editor::Message::RollTable(roll));
+        let name = editor.name();
+        self.finish_editing();
+        self.status = if roll {
+            format!(
+                "{name} is a roll table now: it has a Roll button and is in the Roll Tables list"
+            )
+        } else {
+            format!(
+                "{name} is an information table now: it has no Roll button and isn't in the Roll Tables list"
+            )
+        };
+        Task::none()
     }
 
     /// Formats the active tab's note again if it changed while in the reading view, like
@@ -6235,6 +6346,23 @@ impl Workspace {
                     Task::none()
                 }
                 tables::Message::Edit(path, start) => self.edit_table_in(path, start),
+                tables::Message::Information(path, start) => {
+                    let heading = self.note_text(&path).and_then(|text| {
+                        tables::find(&text)
+                            .into_iter()
+                            .find(|table| table.range.start == start)
+                            .map(|table| table.heading)
+                    });
+                    if let Some(heading) = heading {
+                        self.set_information(&path, heading.as_deref(), heading.as_deref(), true);
+                        let name = self.tree_name(&path, false);
+                        self.status = format!(
+                            "{} is an information table now: it has no Roll button and isn't in the Roll Tables list. Right-click it in the note to make it a roll table again",
+                            heading.unwrap_or(name)
+                        );
+                    }
+                    Task::none()
+                }
                 tables::Message::EditBuiltIn(name) => {
                     self.copy_built_in(&name);
                     let Some(path) = self.active_tab().and_then(|tab| tab.path.clone()) else {
@@ -7176,6 +7304,7 @@ impl Workspace {
                 Task::none()
             }
             Message::AddTableHere => self.add_table_here(),
+            Message::SetTableRoll(index, roll) => self.set_table_roll(index, roll),
             Message::AddTableAtEnd => {
                 self.menu_block = None;
                 self.add_table_here()
@@ -7985,6 +8114,10 @@ impl Workspace {
                         "Edit Table",
                         table(tables::Message::Edit(path.clone(), *start)),
                     ),
+                    item(
+                        "Make Information Table",
+                        table(tables::Message::Information(path.clone(), *start)),
+                    ),
                     item("Open Note", table(tables::Message::Open(path.clone()))),
                     Entry::Separator,
                     item(
@@ -8009,6 +8142,23 @@ impl Workspace {
             }
             Target::Reading => {
                 let mut entries = self.undo_entries();
+                // The table the menu was opened on, if any: to edit it, or change its kind.
+                if let Some(block) = self.menu_block
+                    && let Some(roll) = self.table_block_roll(block)
+                {
+                    entries.extend([
+                        item("Edit Table", Some(Message::EditTable(block))),
+                        if roll {
+                            item(
+                                "Make Information Table",
+                                Some(Message::SetTableRoll(block, false)),
+                            )
+                        } else {
+                            item("Make Roll Table", Some(Message::SetTableRoll(block, true)))
+                        },
+                        Entry::Separator,
+                    ]);
+                }
                 entries.extend([
                     item("Edit This Note", Some(Message::SetReading(false))).shortcut("Ctrl+R"),
                     item("Add Text at the End", Some(Message::AddText)),
@@ -10213,6 +10363,7 @@ impl Workspace {
                 picks: &self.table_settings,
                 on_each_column: Message::TableEachColumn,
                 each_column: self.each_column_tables(&tab.note_path(), preview.source()),
+                information: self.information_tables(&tab.note_path(), preview.source()),
                 on_add: Message::AddText,
                 on_page: Message::FinishEditing,
                 block: None,
