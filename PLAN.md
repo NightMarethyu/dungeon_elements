@@ -178,7 +178,7 @@ The items in Player Management are all things that will just be built as templat
 
 A short stop to patch things up before the climax: the fixes and tweaks that go in before v0.3.0. Once they are done, we release v0.3.0 and move on to Phase 3. Each item is built on its own, in its own PR. An item that says "after" waits for that one; the others can start at any time.
 
-- [ ] Ammon's built-in tables
+- [x] Ammon's built-in tables
   - Replace the built-in tables in `assets/tables/` with the ones in `assets/tables/Ammons_Tables/`, then delete that folder
   - Add Ammon's new **Tropes** (d50) and **Verbs** (d100) tables to the Roll Tables list (Story prompts group). Replace the Walkthrough's **Action and Theme** rolls with a roll on the new tropes and verbs table the table can look something like this, it should match the Linked Tables items below so don't take this table as doctrine:
 
