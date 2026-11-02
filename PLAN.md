@@ -189,7 +189,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Fix the links whose headings were renamed (like `[[Norse names#Female]]`, now "Female Given Name"), the Mixed tables' Family column (which points at given names), and every place that names a heading part: the name dropdown's choices and saved picks, and the `table:` lists in the default template and walkthrough
   - A test that every link in every built-in table finds its table, so a renamed heading can't break a roll again
 
-- [ ] Dice pane fixes
+- [x] Dice pane fixes
   - The roll history on the left keeps its width however many single dice are rolled, and scrolls (today it gets narrow and looks odd)
   - A **–** in the pane's top right corner hides it ("Hide dice roller (Ctrl+Shift+D)"), as well as the d20 button and the Tables menu
 - [x] **Inspire me** replaces its own result without asking

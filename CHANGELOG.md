@@ -24,6 +24,11 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Hold **Alt** and press a menu's first letter to open it (**Alt+F** for File), then move about with the arrow keys and pick with **Enter**.
 - The built-in roll tables are in four groups, **Names**, **Story Prompts**, **World** and **Adventure**, in the Roll Tables list (click a group to open or fold it) and at the bottom of the **Tables** menu, where picking one rolls it.
 
+### Dice roller
+
+- The rolls on the left keep the same width however many are rolled, and scroll when there are more than fit.
+- A **–** in the dice roller's top right corner hides it.
+
 ### Inspire Me dropdown
 
 - A field or walkthrough question that rolls on several tables has one **Inspire Me** button with a dropdown beside it, in place of a button for each table. For names, the dropdown lists **Any**, **Mixed** and each culture, for women and men: **English - Female**, **Norse - Male** and so on.
