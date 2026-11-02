@@ -67,7 +67,9 @@ use types::ContentType;
 const LOGO: &str = include_str!("../reference/dungeon_elements.svg");
 
 fn main() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    // Asks the computer whether it is set to light or dark, for the System theme.
+    let boot = || (App::new(), iced::system::theme().map(Message::SystemTheme));
+    iced::application(boot, App::update, App::view)
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
@@ -98,6 +100,8 @@ struct App {
     themes: Vec<Theme>,
     /// The index of the active theme in `themes`.
     theme: usize,
+    /// Whether the computer is set to light or dark colors, for the System theme.
+    system: iced::theme::Mode,
     /// The logo colored for the menu bar, and for the splash screen.
     logos: (svg::Handle, svg::Handle),
     /// The dice roller's icons, in the theme's colors.
@@ -1022,6 +1026,10 @@ enum Message {
     ExportStructure,
     Escape,
     ThemePicked(String),
+    /// Asks the computer again whether it is set to light or dark.
+    CheckSystemTheme,
+    /// The computer's light or dark setting, from asking or from it changing.
+    SystemTheme(iced::theme::Mode),
     ReloadThemes,
     ToggleExtensions(bool),
     ToggleTypeFiles(bool),
@@ -1283,11 +1291,12 @@ impl App {
             settings,
             themes,
             theme: 0,
+            system: iced::theme::Mode::None,
             logos: (
                 svg::Handle::from_memory(LOGO.as_bytes()),
                 svg::Handle::from_memory(LOGO.as_bytes()),
             ),
-            dice: dice::Icons::new(theme::built_in()[0].colors),
+            dice: dice::Icons::new(theme::built_in()[1].colors),
             menu: None,
             menu_cursor: menu::Cursor::default(),
             after_close: None,
@@ -1327,7 +1336,13 @@ impl App {
     }
 
     /// Switches to the theme named `name`, or the default theme if there is none by that name.
+    /// [`theme::SYSTEM`] is Light or Dark, whichever matches the computer.
     fn use_theme(&mut self, name: &str) {
+        let name = if name == theme::SYSTEM {
+            theme::for_system(self.system)
+        } else {
+            name
+        };
         self.theme = self
             .themes
             .iter()
@@ -1445,6 +1460,20 @@ impl App {
             _ => None,
         });
 
+        // The System theme follows the computer: when it says its setting changed, and
+        // in case it didn't, whenever the window gets focus.
+        let system_theme = if self.settings.theme == theme::SYSTEM {
+            Subscription::batch([
+                iced::system::theme_changes().map(Message::SystemTheme),
+                iced::event::listen_with(|event, _, _| match event {
+                    iced::Event::Window(window::Event::Focused) => Some(Message::CheckSystemTheme),
+                    _ => None,
+                }),
+            ])
+        } else {
+            Subscription::none()
+        };
+
         let files = match &self.screen {
             Screen::Workspace(workspace) => {
                 Subscription::run_with(workspace.root.clone(), watch::changes)
@@ -1472,6 +1501,7 @@ impl App {
             keys,
             menu_keys,
             focus,
+            system_theme,
             files,
             searching,
             window::close_requests().map(|_| Message::Exit),
@@ -1490,6 +1520,16 @@ impl App {
                     Some(menu)
                 };
                 self.menu_cursor = menu::Cursor::default();
+                return Task::none();
+            }
+            Message::CheckSystemTheme => {
+                return iced::system::theme().map(Message::SystemTheme);
+            }
+            Message::SystemTheme(mode) => {
+                self.system = mode;
+                if self.settings.theme == theme::SYSTEM {
+                    self.use_theme(theme::SYSTEM);
+                }
                 return Task::none();
             }
             Message::MenuHovered(menu) => {
@@ -1613,7 +1653,11 @@ impl App {
             }
             Message::ThemePicked(name) => {
                 self.use_theme(&name);
-                self.settings.theme = self.themes[self.theme].name.clone();
+                self.settings.theme = if name == theme::SYSTEM {
+                    name
+                } else {
+                    self.themes[self.theme].name.clone()
+                };
                 self.save_settings();
                 return Task::none();
             }
@@ -2224,15 +2268,19 @@ impl App {
                     Do(OpenInReading),
                     Gap,
                 ]);
-                let mut themes: Vec<Entry<Message>> = self
-                    .themes
-                    .iter()
-                    .enumerate()
-                    .map(|(index, theme)| {
-                        menu::item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
-                            .checked(index == self.theme)
-                    })
-                    .collect();
+                // System comes first: it is the default, and follows the computer.
+                let following = self.settings.theme == theme::SYSTEM;
+                let mut themes: Vec<Entry<Message>> = vec![
+                    menu::item(
+                        theme::SYSTEM,
+                        Some(Message::ThemePicked(theme::SYSTEM.into())),
+                    )
+                    .checked(following),
+                ];
+                themes.extend(self.themes.iter().enumerate().map(|(index, theme)| {
+                    menu::item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
+                        .checked(!following && index == self.theme)
+                }));
                 themes.push(Entry::Separator);
                 themes.push(self.command_entry(ReloadThemes));
                 entries.push(menu::submenu("Theme", themes));

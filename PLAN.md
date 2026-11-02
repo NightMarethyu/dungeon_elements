@@ -214,7 +214,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Beside **Edit** and **Read** at the top right, for notes that hold only tables: tables, their headings, and short lines of text between them (like the line under Mixed names), with no type fields
   - It shows every table in the note in the table editor, one under the other, each headed by its heading; the text between them is edited in place, as in the reading view
   - Such notes open in the Table view (a View setting, like Open Notes in Reading View). Other notes keep Edit and Read, and their tables keep the Edit Table button
-- [ ] A built-in **Light** theme, and following the system
+- [x] A built-in **Light** theme, and following the system
   - Light is cream, like old parchment, with dark ink text, its colors checked for contrast. The built-in themes become Light, Dark and High Contrast
   - A new **System** choice under View > Theme, the new default: Light or Dark to match the computer, checked again when the app gets focus. Picking a theme overrides it, and people who already picked one keep it
 - [ ] The walkthrough's left menu shows each section's steps
