@@ -84,10 +84,21 @@ pub fn choices(campaign: Vec<(String, Option<String>)>) -> Vec<Choice> {
                 adds: vec![part.clone()],
             });
         }
-        if parts.len() > 1 {
+        // A names note offers its Female and Male full names together; its other parts,
+        // like the given names alone, are only offered one at a time.
+        let gender = |word: &str| headings.iter().find(|h| h.eq_ignore_ascii_case(word));
+        let together: Vec<&String> = match (gender("Female"), gender("Male")) {
+            (Some(female), Some(male)) => vec![female, male],
+            _ => headings.iter().collect(),
+        };
+        if together.len() > 1 {
+            let names: Vec<&str> = together.iter().map(|h| h.as_str()).collect();
             choices.push(Choice {
-                label: tables::label(&format!("{note}#{}", headings.join(" and "))),
-                adds: parts,
+                label: tables::label(&format!("{note}#{}", names.join(" and "))),
+                adds: together
+                    .iter()
+                    .map(|heading| format!("{note}#{heading}"))
+                    .collect(),
             });
         }
     }
@@ -233,15 +244,15 @@ mod tests {
             .position(|label| label == "English names")
             .unwrap();
         assert_eq!(
-            labels[english..english + 4],
-            [
-                "English names",
-                "English - Female",
-                "English - Male",
-                "English - Female and Male"
-            ]
+            labels[english..english + 3],
+            ["English names", "English - Female", "English - Male"]
         );
-        let all = &choices[english + 3];
+        assert!(labels.contains(&"English - Family Names".to_string()));
+        // Female and Male go together; the given and family names alone don't join them.
+        let all = choices
+            .iter()
+            .find(|choice| choice.label == "English - Female and Male")
+            .unwrap();
         assert_eq!(all.adds, ["English names#Female", "English names#Male"]);
         assert!(labels.contains(&"Weather - Winter".to_string()));
         assert!(labels.contains(&"Any - Female".to_string()));

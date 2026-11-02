@@ -10,6 +10,14 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Moving from one table to the next keeps what was changed in the first, and Ctrl+Z undoes it as one step.
 - Such notes open in the Table view. **View > Open Table Notes in Table View** turns that off. Other notes keep Edit and Read, and their tables keep the **Edit Table** button.
 
+### Ammon's name tables
+
+- The built-in English, Norse, Latin, Greek and Japanese names are much longer lists: about 70 given names each for women and men, and as many family names. Their **Female** and **Male** tables still give a full name, like Alice Ashby, from a given name and a family name rolled on their own.
+- A Norse woman picked (Norse names, or **Norse - Female**) is always a -sdottir, and a man a -sson. **Names** and the **Mixed** tables roll the ending, so it can come out either way.
+- The **Mixed** tables take their family names from family names, not from a second first name.
+- New story prompts: **Tropes** (50), **Verbs** (100), and **Tropes and Verbs**, which rolls one of each. The walkthrough rolls on it to sum up a campaign.
+- Some of the World tables have new rows, like **Campaign names**, **Historic events** and **Costs and limits**.
+
 ### Roll tables and information tables
 
 - A table is either a **roll table**, with a Roll button and a place in the Roll Tables list, or an **information table**, like prices, a calendar or a party list: no Roll button, not in the Roll Tables list, and not offered when picking a table to roll on.
@@ -26,6 +34,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - The table editor has its own Undo and Redo while it is open: rows added, moved or removed, columns, the die, Calculate ranges, and typing a burst at a time. **Cancel** still puts the whole table back.
 - Undo keeps only the words that changed in each step, not a copy of the note, and works them out when typing pauses rather than on every key, so it doesn't slow typing down.
 
+### Themes
+
+- A new built-in **Light** theme: cream, like old parchment, with dark ink. Every color in it is checked for contrast, so text stays easy to read on each background. The built-in themes are now Light, Dark and High Contrast.
+- Dark's accent is now a soft green (links, buttons, focused fields, highlighted menu items), with dark text on green buttons and a deep green status bar, all checked for contrast.
+- **View > Theme > System**, the new default, uses Light or Dark to match the computer's own setting, and checks it again whenever you come back to the app. Picking any other theme stops following it, and if you had already picked a theme, it stays picked.
+
 ### Menus
 
 - The menu bar is sorted so each menu holds one kind of thing. A new **Campaign** menu has the walkthrough, the walkthrough questions, **Note Types...** (once Edit > Types...), **Export Campaign Structure...** and **Show Campaign Folder**. A new **Tables** menu has the Roll Tables list, the dice roller, **New Roll Table...** and **Add Roll Table Here**. **Maps** is there, greyed out, for the map editor to come.
@@ -36,10 +50,16 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Hold **Alt** and press a menu's first letter to open it (**Alt+F** for File), then move about with the arrow keys and pick with **Enter**.
 - The built-in roll tables are in four groups, **Names**, **Story Prompts**, **World** and **Adventure**, in the Roll Tables list (click a group to open or fold it) and at the bottom of the **Tables** menu, where picking one rolls it.
 
+### Dice roller
+
+- The rolls on the left keep the same width however many are rolled, and scroll when there are more than fit.
+- A **–** in the dice roller's top right corner hides it.
+
 ### Inspire Me dropdown
 
 - A field or walkthrough question that rolls on several tables has one **Inspire Me** button with a dropdown beside it, in place of a button for each table. For names, the dropdown lists **Any**, **Mixed** and each culture, for women and men: **English - Female**, **Norse - Male** and so on.
 - The table picked is remembered for that field in the campaign, so after picking Norse - Male every NPC name rolls Norse men's names until you pick another.
+- Clicking **Inspire Me** (or a field's table button) again replaces the result it just put there, without asking **Replace?**: clicking again means the last one didn't inspire. It still asks when the field holds anything else, like text you typed or a roll you have changed since. A roll added on a new line is replaced on its own, keeping the text above it, and each roll is still one Undo step.
 - **Mixed female names** and **Mixed male names** take the first name from one culture and the family name from another, like Isaac Akinaka. A link in a roll table's column now rolls only the column of the same name in the table it links to, which is how they work, and your own tables can do the same.
 - Every table button reads **Inspire Me**, and can have a word after it, like **Inspire Me - Names**.
 - **Edit > Types...** and **Edit > Walkthrough Questions...** pick a field's or question's tables from a list, with no table names to type: whole tables, a part under a heading, like English - Female, or all its parts at once. A box sets the word on the button.
@@ -76,7 +96,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 - A walkthrough that builds your world with you, one question at a time, in seven chapters: the campaign, the world, power, the extraordinary, where it starts, the heroes and the first session. Each answer goes into a note, and the notes it needs are made for you and linked: name the factions and each gets a note, then questions about each one; name a faction's leader and an NPC is made.
 - **Start the walkthrough** in New Campaign opens it once the campaign is made. **File > Campaign Walkthrough...** and **Build your world with the walkthrough**, shown when no note is open, open it later, at the question you were on.
-- **Next**, **Back**, **Skip** and **Skip Chapter** move through it, and **Enter** (or **Ctrl+Enter** in a long answer) goes to the next question. The chapters are listed on the side with how many questions are answered, and each ends with a summary of the notes it made.
+- **Next**, **Back**, **Skip** and **Skip Chapter** move through it, and **Enter** (or **Ctrl+Enter** in a long answer) goes to the next question. The chapters are listed on the side with how many questions are answered, and each ends with a summary of the notes it made. A triangle opens a chapter to list its questions by short titles, ticked once answered (the chapter you're in starts open), and clicking a chapter or a question goes straight to it.
 - **Inspire me** rolls on a roll table for an idea: names from the name generators, and wants, trouble and twists from the story prompts.
 - Questions that ask for a list of names, like the regions or the factions, have a box for each name and **Add Another**. Pasting a list (one name a line, as name generator websites give them, or with commas between) fills a box for each, with capital letters added.
 - Answers that link to other notes show the notes you've made to pick from, and a new name can be made there and then. Who rules the starting town can be a faction or an NPC, and who can use magic any people, faction or NPC.
@@ -85,7 +105,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Answers are ordinary fields, so changing them in a note changes them in the walkthrough. A note open with unsaved changes gets the answer in its tab.
 - Questions about folders or fields a campaign doesn't have are left out.
 - A template can have walkthrough questions of its own, for its folders. **Export Campaign Structure...** puts the campaign's `_walkthrough.yaml` in the template, importing a template checks it, and a campaign made from the template gets it. New Campaign says when a template has its own questions, and shows **Start the walkthrough** only for a template the walkthrough has questions for. Campaigns made from the starter folders keep using the built-in questions, so they get better ones as the app updates. A `_walkthrough.yaml` the app can't read is listed in **Problems**.
-- **Edit > Walkthrough Questions...** changes the questions a campaign asks, with no YAML to write. Start from the default questions, then change, add, move or remove chapters and questions. Each question picks the note it goes into, the field it fills and the table Inspire me rolls on from lists, and the notes it makes have their folder, how they're named, values to fill in and links from other notes. Mistakes are shown in plain words before saving, and **Save and Try It** opens the walkthrough with the new questions.
+- **Edit > Walkthrough Questions...** changes the questions a campaign asks, with no YAML to write. Start from the default questions, then change, add, move or remove chapters and questions. Each question has an optional **Short title** for the walkthrough's side list, and picks the note it goes into, the field it fills and the table Inspire me rolls on from lists, and the notes it makes have their folder, how they're named, values to fill in and links from other notes. Mistakes are shown in plain words before saving, and **Save and Try It** opens the walkthrough with the new questions.
 - New guide in **Help > How-To Guides**: The campaign walkthrough.
 
 ### Story prompts

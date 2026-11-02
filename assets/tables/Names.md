@@ -1,7 +1,7 @@
 | d8 | Names |
 | --- | --- |
 | 1 | [[English names]] |
-| 2 | [[Norse names]] |
+| 2 | [[Norse names#Any]] |
 | 3 | [[Celtic names]] |
 | 4 | [[Latin names]] |
 | 5 | [[Greek names]] |

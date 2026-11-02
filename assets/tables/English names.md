@@ -3,52 +3,276 @@
 | 1 | [[English names#Female]] |
 | 2 | [[English names#Male]] |
 
+A name is a given name and a family name, each rolled on its own table below.
+
 ## Female
 
-| d20 | First | Family |
+| d1 | First | Family |
 | --- | --- | --- |
-| 1 | Alice | Ashby |
-| 2 | Agnes | Barrow |
-| 3 | Beatrice | Carter |
-| 4 | Cecily | Cobb |
-| 5 | Edith | Fletcher |
-| 6 | Eleanor | Hale |
-| 7 | Emma | Halloway |
-| 8 | Florence | Marlowe |
-| 9 | Grace | Mercer |
-| 10 | Harriet | Pike |
-| 11 | Isabel | Reed |
-| 12 | Joan | Shepherd |
-| 13 | Margaret | Thatcher |
-| 14 | Matilda | Turner |
-| 15 | Maud | Underwood |
-| 16 | Nell | Wainwright |
-| 17 | Rose | Webb |
-| 18 | Sybil | Whitlock |
-| 19 | Winifred | Wood |
-| 20 | Mildred | Yardley |
+| 1 | [[English names#Female Given Names]] | [[English names#Family Names]] |
 
 ## Male
 
-| d20 | First | Family |
+| d1 | First | Family |
 | --- | --- | --- |
-| 1 | Arthur | Ashby |
-| 2 | Edmund | Barrow |
-| 3 | Edward | Carter |
-| 4 | Geoffrey | Cobb |
-| 5 | Gilbert | Fletcher |
-| 6 | Henry | Hale |
-| 7 | Hugh | Halloway |
-| 8 | Jack | Marlowe |
-| 9 | John | Mercer |
-| 10 | Oliver | Pike |
-| 11 | Ralph | Reed |
-| 12 | Richard | Shepherd |
-| 13 | Robert | Thatcher |
-| 14 | Roger | Turner |
-| 15 | Samuel | Underwood |
-| 16 | Simon | Wainwright |
-| 17 | Thomas | Webb |
-| 18 | Walter | Whitlock |
-| 19 | William | Wood |
-| 20 | Nicholas | Yardley |
+| 1 | [[English names#Male Given Names]] | [[English names#Family Names]] |
+
+## Female Given Names
+
+| d72 | First      |
+| --- | ---------- |
+| 1   | Beatrice   |
+| 2   | Edith      |
+| 3   | Louisa     |
+| 4   | Kathryn    |
+| 5   | Agnes      |
+| 6   | Clementine |
+| 7   | Georgina   |
+| 8   | Elspeth    |
+| 9   | Iona       |
+| 10  | Felicity   |
+| 11  | Henrietta  |
+| 12  | Rowena     |
+| 13  | Moira      |
+| 14  | Judith     |
+| 15  | Anne       |
+| 16  | Caroline   |
+| 17  | Philippa   |
+| 18  | Patricia   |
+| 19  | Elowen     |
+| 20  | Louise     |
+| 21  | Isobel     |
+| 22  | Christina  |
+| 23  | Barbara    |
+| 24  | Constance  |
+| 25  | Ellen      |
+| 26  | Doris      |
+| 27  | Bridget    |
+| 28  | Winifred   |
+| 29  | Sybil      |
+| 30  | Pauline    |
+| 31  | Hilda      |
+| 32  | Edna       |
+| 33  | Cassandra  |
+| 34  | Jane       |
+| 35  | Deborah    |
+| 36  | Lavinia    |
+| 37  | Joan       |
+| 38  | Gillian    |
+| 39  | Gladys     |
+| 40  | Jean       |
+| 41  | Marian     |
+| 42  | Eilidh     |
+| 43  | Eira       |
+| 44  | Rosalind   |
+| 45  | Susannah   |
+| 46  | Claudia    |
+| 47  | Cordelia   |
+| 48  | Cecily     |
+| 49  | Antonia    |
+| 50  | Tabitha    |
+| 51  | Beatrix    |
+| 52  | Eugenia    |
+| 53  | Heather    |
+| 54  | Rhiannon   |
+| 55  | Enid       |
+| 56  | Guinevere  |
+| 57  | Emmeline   |
+| 58  | Carys      |
+| 59  | Adelaide   |
+| 60  | Daphne     |
+| 61  | Estelle    |
+| 62  | Irene      |
+| 63  | Seren      |
+| 64  | Leonora    |
+| 65  | Millicent  |
+| 66  | Amanda     |
+| 67  | Lucinda    |
+| 68  | Annette    |
+| 69  | Theodora   |
+| 70  | Martha     |
+| 71  | Annabel    |
+| 72  | Belinda    |
+
+## Male Given Names
+
+| d76 | Given       |
+| --- | ----------- |
+| 1   | John        |
+| 2   | Peter       |
+| 3   | Charles     |
+| 4   | Andrew      |
+| 5   | Paul        |
+| 6   | Robert      |
+| 7   | Timothy     |
+| 8   | Christopher |
+| 9   | Stephen     |
+| 10  | Anthony     |
+| 11  | Jonathan    |
+| 12  | Matthew     |
+| 13  | Patrick     |
+| 14  | Martin      |
+| 15  | Lawrence    |
+| 16  | Derek       |
+| 17  | Mark        |
+| 18  | Francis     |
+| 19  | Hugh        |
+| 20  | Graham      |
+| 21  | Stuart      |
+| 22  | Keith       |
+| 23  | Warren      |
+| 24  | Douglas     |
+| 25  | Colin       |
+| 26  | Ian         |
+| 27  | Alan        |
+| 28  | Malcolm     |
+| 29  | Duncan      |
+| 30  | Quentin     |
+| 31  | Kenneth     |
+| 32  | Jerome      |
+| 33  | Bruce       |
+| 34  | Roland      |
+| 35  | Roger       |
+| 36  | Dennis      |
+| 37  | Lionel      |
+| 38  | Neil        |
+| 39  | Trevor      |
+| 40  | Benedict    |
+| 41  | Montgomery  |
+| 42  | Adrian      |
+| 43  | Marcus      |
+| 44  | Callum      |
+| 45  | Edwin       |
+| 46  | Julian      |
+| 47  | Wallace     |
+| 48  | Edmund      |
+| 49  | Ernest      |
+| 50  | Walter      |
+| 51  | Dominic     |
+| 52  | Raymond     |
+| 53  | Victor      |
+| 54  | Frank       |
+| 55  | Leonard     |
+| 56  | Jeffrey     |
+| 57  | Percy       |
+| 58  | Reginald    |
+| 59  | Hector      |
+| 60  | Russell     |
+| 61  | Archibald   |
+| 62  | Norman      |
+| 63  | Bernard     |
+| 64  | Cedric      |
+| 65  | Maurice     |
+| 66  | Augustus    |
+| 67  | Winston     |
+| 68  | Leslie      |
+| 69  | Ambrose     |
+| 70  | Clarence    |
+| 71  | Edgar       |
+| 72  | Gilbert     |
+| 73  | Richard     |
+| 74  | Philip      |
+| 75  | Nicholas    |
+| 76  | Simon       |
+
+## Family Names
+
+| d97 | Family Name |
+| --- | ----------- |
+| 1   | Adams       |
+| 2   | Adamson     |
+| 3   | Wilson      |
+| 4   | Burton      |
+| 5   | Harris      |
+| 6   | Stevens     |
+| 7   | Robinson    |
+| 8   | Lewis       |
+| 9   | Walker      |
+| 10  | Payne       |
+| 11  | Baker       |
+| 12  | Owen        |
+| 13  | Holmes      |
+| 14  | Chapman     |
+| 15  | Webb        |
+| 16  | Allen       |
+| 17  | Jones       |
+| 18  | Davidson    |
+| 19  | Davies      |
+| 20  | Foster      |
+| 21  | Matthews    |
+| 22  | White       |
+| 23  | Griffiths   |
+| 24  | Knight      |
+| 25  | Corbyn      |
+| 26  | Young       |
+| 27  | Evans       |
+| 28  | Smith       |
+| 29  | Wright      |
+| 30  | Jenkins     |
+| 31  | Green       |
+| 32  | Hughes      |
+| 33  | Taylor      |
+| 34  | Hall        |
+| 35  | Anderson    |
+| 36  | Armstrong   |
+| 37  | Cox         |
+| 38  | Atkinson    |
+| 39  | Bell        |
+| 40  | Carter      |
+| 41  | Cole        |
+| 42  | Collins     |
+| 43  | Dawson      |
+| 44  | Bailey      |
+| 45  | Ball        |
+| 46  | Dixon       |
+| 47  | Edwards     |
+| 48  | Brown       |
+| 49  | Clarke      |
+| 50  | Yates       |
+| 51  | Zelly       |
+| 52  | Zouch       |
+| 53  | Fisher      |
+| 54  | Fletcher    |
+| 55  | Ford        |
+| 56  | Fox         |
+| 57  | Gibson      |
+| 58  | Graham      |
+| 59  | Grant       |
+| 60  | Gray        |
+| 61  | Sallow      |
+| 62  | Fernsby     |
+| 63  | Villin      |
+| 64  | Miracle     |
+| 65  | Dankworth   |
+| 66  | Relish      |
+| 67  | Loughty     |
+| 68  | Birdwhistle |
+| 69  | Berrycloth  |
+| 70  | Palmer      |
+| 71  | Peterson    |
+| 72  | Quill       |
+| 73  | Quintrell   |
+| 74  | Ratliff     |
+| 75  | Stewart     |
+| 76  | Turner      |
+| 77  | Walsh       |
+| 78  | Cooper      |
+| 79  | Morris      |
+| 80  | Watson      |
+| 81  | Harrison    |
+| 82  | Morgan      |
+| 83  | Campbell    |
+| 84  | Ainsworth   |
+| 85  | Cornish     |
+| 86  | Eastaughffe |
+| 87  | Eaton       |
+| 88  | Elton       |
+| 89  | Enfield     |
+| 90  | Everly      |
+| 91  | Gastrell    |
+| 92  | Garfield    |
+| 93  | Browning    |
+| 94  | Camden      |
+| 95  | Bennett     |
+| 96  | Ellis       |
+| 97  | Holland     |

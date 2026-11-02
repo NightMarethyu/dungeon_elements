@@ -67,7 +67,9 @@ use types::ContentType;
 const LOGO: &str = include_str!("../reference/dungeon_elements.svg");
 
 fn main() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    // Asks the computer whether it is set to light or dark, for the System theme.
+    let boot = || (App::new(), iced::system::theme().map(Message::SystemTheme));
+    iced::application(boot, App::update, App::view)
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
@@ -98,6 +100,8 @@ struct App {
     themes: Vec<Theme>,
     /// The index of the active theme in `themes`.
     theme: usize,
+    /// Whether the computer is set to light or dark colors, for the System theme.
+    system: iced::theme::Mode,
     /// The logo colored for the menu bar, and for the splash screen.
     logos: (svg::Handle, svg::Handle),
     /// The dice roller's icons, in the theme's colors.
@@ -867,7 +871,11 @@ impl Tab {
     fn set_text(&mut self, text: &str) {
         match &self.form {
             Some(form) if !self.source => match note::parse(text) {
-                Ok(note) => self.form = Some(Form::from_note(form.ty.clone(), note)),
+                Ok(note) => {
+                    let mut new = Form::from_note(form.ty.clone(), note);
+                    new.keep_rolls(form);
+                    self.form = Some(new);
+                }
                 // Text the form can't read stays as it is, in the source.
                 Err(_) => {
                     self.content = text_editor::Content::with_text(text);
@@ -1047,6 +1055,10 @@ enum Message {
     ExportStructure,
     Escape,
     ThemePicked(String),
+    /// Asks the computer again whether it is set to light or dark.
+    CheckSystemTheme,
+    /// The computer's light or dark setting, from asking or from it changing.
+    SystemTheme(iced::theme::Mode),
     ReloadThemes,
     ToggleExtensions(bool),
     ToggleTypeFiles(bool),
@@ -1316,11 +1328,12 @@ impl App {
             settings,
             themes,
             theme: 0,
+            system: iced::theme::Mode::None,
             logos: (
                 svg::Handle::from_memory(LOGO.as_bytes()),
                 svg::Handle::from_memory(LOGO.as_bytes()),
             ),
-            dice: dice::Icons::new(theme::built_in()[0].colors),
+            dice: dice::Icons::new(theme::built_in()[1].colors),
             menu: None,
             menu_cursor: menu::Cursor::default(),
             after_close: None,
@@ -1361,7 +1374,13 @@ impl App {
     }
 
     /// Switches to the theme named `name`, or the default theme if there is none by that name.
+    /// [`theme::SYSTEM`] is Light or Dark, whichever matches the computer.
     fn use_theme(&mut self, name: &str) {
+        let name = if name == theme::SYSTEM {
+            theme::for_system(self.system)
+        } else {
+            name
+        };
         self.theme = self
             .themes
             .iter()
@@ -1479,6 +1498,20 @@ impl App {
             _ => None,
         });
 
+        // The System theme follows the computer: when it says its setting changed, and
+        // in case it didn't, whenever the window gets focus.
+        let system_theme = if self.settings.theme == theme::SYSTEM {
+            Subscription::batch([
+                iced::system::theme_changes().map(Message::SystemTheme),
+                iced::event::listen_with(|event, _, _| match event {
+                    iced::Event::Window(window::Event::Focused) => Some(Message::CheckSystemTheme),
+                    _ => None,
+                }),
+            ])
+        } else {
+            Subscription::none()
+        };
+
         let files = match &self.screen {
             Screen::Workspace(workspace) => {
                 Subscription::run_with(workspace.root.clone(), watch::changes)
@@ -1506,6 +1539,7 @@ impl App {
             keys,
             menu_keys,
             focus,
+            system_theme,
             files,
             searching,
             window::close_requests().map(|_| Message::Exit),
@@ -1524,6 +1558,16 @@ impl App {
                     Some(menu)
                 };
                 self.menu_cursor = menu::Cursor::default();
+                return Task::none();
+            }
+            Message::CheckSystemTheme => {
+                return iced::system::theme().map(Message::SystemTheme);
+            }
+            Message::SystemTheme(mode) => {
+                self.system = mode;
+                if self.settings.theme == theme::SYSTEM {
+                    self.use_theme(theme::SYSTEM);
+                }
                 return Task::none();
             }
             Message::MenuHovered(menu) => {
@@ -1647,7 +1691,11 @@ impl App {
             }
             Message::ThemePicked(name) => {
                 self.use_theme(&name);
-                self.settings.theme = self.themes[self.theme].name.clone();
+                self.settings.theme = if name == theme::SYSTEM {
+                    name
+                } else {
+                    self.themes[self.theme].name.clone()
+                };
                 self.save_settings();
                 return Task::none();
             }
@@ -2272,15 +2320,19 @@ impl App {
                     Do(OpenTablesInTableView),
                     Gap,
                 ]);
-                let mut themes: Vec<Entry<Message>> = self
-                    .themes
-                    .iter()
-                    .enumerate()
-                    .map(|(index, theme)| {
-                        menu::item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
-                            .checked(index == self.theme)
-                    })
-                    .collect();
+                // System comes first: it is the default, and follows the computer.
+                let following = self.settings.theme == theme::SYSTEM;
+                let mut themes: Vec<Entry<Message>> = vec![
+                    menu::item(
+                        theme::SYSTEM,
+                        Some(Message::ThemePicked(theme::SYSTEM.into())),
+                    )
+                    .checked(following),
+                ];
+                themes.extend(self.themes.iter().enumerate().map(|(index, theme)| {
+                    menu::item(&theme.name, Some(Message::ThemePicked(theme.name.clone())))
+                        .checked(!following && index == self.theme)
+                }));
                 themes.push(Entry::Separator);
                 themes.push(self.command_entry(ReloadThemes));
                 entries.push(menu::submenu("Theme", themes));
@@ -2928,7 +2980,8 @@ impl Workspace {
     }
 
     /// Rolls on the table field `index` of the active tab's form names, and puts the
-    /// result in the field: straight away if it is empty, or after asking if it isn't.
+    /// result in the field: straight away if it is empty or still holds the last roll
+    /// (see [`Form::holds_roll`]), or after asking if it holds anything else.
     fn roll_into_field(&mut self, index: usize, table_name: &str) {
         let Some(tab) = self.active_tab().filter(|tab| !tab.source) else {
             return;
@@ -2947,9 +3000,12 @@ impl Workspace {
             );
             return;
         };
+        let rolled_again = form.holds_roll(index);
         let value = self.roll_found(&path, &name, &table, each_column);
-        if current.trim().is_empty() {
-            self.fill_field(index, &value, false);
+        if rolled_again {
+            self.fill_field(index, &value, None);
+        } else if current.trim().is_empty() {
+            self.fill_field(index, &value, Some(false));
         } else {
             self.dialog = Some(Dialog::ReplaceField {
                 index,
@@ -2960,9 +3016,10 @@ impl Workspace {
         }
     }
 
-    /// Puts `value` in field `index` of the active tab's form, in place of what is there
-    /// or on a new line after it.
-    fn fill_field(&mut self, index: usize, value: &str, add_line: bool) {
+    /// Puts the roll `value` in field `index` of the active tab's form, in place of what
+    /// is there or on a new line after it (`Some(add_line)`), or in place of the last
+    /// roll there (`None`).
+    fn fill_field(&mut self, index: usize, value: &str, add_line: Option<bool>) {
         let root = self.root.clone();
         let links = self.index.clone();
         let Some(tab) = self.active_tab_mut() else {
@@ -2971,7 +3028,11 @@ impl Workspace {
         let Some(form) = &mut tab.form else {
             return;
         };
-        if form.set_text_value(index, value, add_line) {
+        let filled = match add_line {
+            Some(add_line) => form.fill_roll(index, value, add_line),
+            None => form.replace_roll(index, value),
+        };
+        if filled {
             tab.modified = true;
             if tab.preview.is_some() {
                 tab.preview = Some(tab.make_preview(&root, &links));
@@ -7152,7 +7213,7 @@ impl Workspace {
             }
             Message::FillField(add_line) => {
                 if let Some(Dialog::ReplaceField { index, value, .. }) = self.dialog.take() {
-                    self.fill_field(index, &value, add_line);
+                    self.fill_field(index, &value, Some(add_line));
                 }
                 Task::none()
             }
@@ -9576,7 +9637,8 @@ impl Workspace {
                 }
                 return Task::none();
             }
-            Step::Next => {
+            // Going elsewhere from the menu keeps what was typed, as Next does.
+            Step::Next | Step::Chapter(_) | Step::Question(..) => {
                 if let Err(error) = self.answer_walkthrough() {
                     if let Some(walkthrough) = &mut self.walkthrough {
                         walkthrough.error = Some(error);
@@ -9599,6 +9661,10 @@ impl Workspace {
         let open = |path: &Path| open_text(tabs, path);
         match message {
             Step::Chapter(chapter) => walkthrough.open_chapter(chapter, &campaign, &open),
+            Step::ToggleChapter(chapter) => walkthrough.toggle_chapter(chapter),
+            Step::Question(chapter, question) => {
+                walkthrough.open_question(chapter, question, &campaign, &open);
+            }
             Step::Back => walkthrough.back(&campaign, &open),
             Step::Next => walkthrough.next(&campaign, &open),
             Step::Skip => walkthrough.skip(&campaign, &open),
@@ -9912,8 +9978,12 @@ impl Workspace {
                     (None, _) => {
                         form.add_item(index, &value);
                     }
+                    // Rolling again replaces the roll the field still holds.
+                    _ if form.holds_roll(index) => {
+                        form.replace_roll(index, &value);
+                    }
                     (Some((current, _)), _) if current.trim().is_empty() => {
-                        form.set_text_value(index, &value, false);
+                        form.fill_roll(index, &value, false);
                     }
                     (Some((_, long)), Some(label)) => {
                         self.dialog = Some(Dialog::ReplaceField {
@@ -9934,7 +10004,7 @@ impl Workspace {
                         .as_mut()
                         .and_then(|walkthrough| walkthrough.form.as_mut())
                 {
-                    form.set_text_value(index, &value, add_line);
+                    form.fill_roll(index, &value, add_line);
                 }
                 Task::none()
             }
