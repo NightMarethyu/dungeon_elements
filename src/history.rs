@@ -128,6 +128,12 @@ struct Step {
     label: &'static str,
     change: Change,
     place: Place,
+    /// When the step was made, or for a step taken back, when it was taken back: what
+    /// Undo and Redo compare with the campaign's steps (see `files::History`).
+    when: Instant,
+    /// The campaign step this one is part of, when a change to the campaign's files
+    /// (like renaming a note, which rewrites the links in it) changed this note too.
+    link: Option<u64>,
 }
 
 /// One note's Undo and Redo.
@@ -194,6 +200,8 @@ impl History {
             label,
             change,
             place,
+            when: Instant::now(),
+            link: None,
         });
         for step in self.redo.drain(..) {
             self.bytes -= step.change.size();
@@ -204,6 +212,32 @@ impl History {
             }
         }
         true
+    }
+
+    /// How many steps there are to undo.
+    pub fn steps(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Makes the steps after the first `from` part of campaign step `link`.
+    pub fn link_since(&mut self, from: usize, link: u64) {
+        for step in self.undo.iter_mut().skip(from) {
+            step.link = Some(link);
+        }
+    }
+
+    /// When the last step was made (now, while typing), and the campaign step it is
+    /// part of, if any.
+    pub fn last_undo(&self) -> Option<(Instant, Option<u64>)> {
+        if self.is_typing() {
+            return Some((Instant::now(), None));
+        }
+        self.undo.back().map(|step| (step.when, step.link))
+    }
+
+    /// When the step Redo would do again was taken back, and its campaign step.
+    pub fn last_redo(&self) -> Option<(Instant, Option<u64>)> {
+        self.redo.last().map(|step| (step.when, step.link))
     }
 
     /// What Undo would undo, like "Typing".
@@ -219,18 +253,20 @@ impl History {
     /// Takes back the last step: the text as it was before it, and where the cursor was.
     /// Make a step of any changes first (see [`Self::record`]), or they are lost.
     pub fn undo(&mut self) -> Option<(String, Place)> {
-        let step = self.undo.pop_back()?;
+        let mut step = self.undo.pop_back()?;
         step.change.revert(&mut self.base);
         let place = step.place;
+        step.when = Instant::now();
         self.redo.push(step);
         Some((self.base.clone(), place))
     }
 
     /// Does the last step taken back again.
     pub fn redo(&mut self) -> Option<(String, Place)> {
-        let step = self.redo.pop()?;
+        let mut step = self.redo.pop()?;
         step.change.apply(&mut self.base);
         let place = step.place;
+        step.when = Instant::now();
         self.undo.push_back(step);
         Some((self.base.clone(), place))
     }

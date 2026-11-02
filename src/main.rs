@@ -11,6 +11,7 @@ mod commands;
 mod context_menu;
 mod date;
 mod dice;
+mod files;
 mod fix;
 mod form;
 mod format;
@@ -299,6 +300,14 @@ struct Workspace {
     /// The Undo history of notes closed since the campaign opened, newest last, so
     /// reopening one can still undo. See [`CLOSED_HISTORIES`].
     closed: std::collections::VecDeque<(PathBuf, history::History)>,
+    /// The campaign's files as last seen, to find what a change to them changed.
+    snapshot: files::Snapshot,
+    /// Undo and Redo for changes to the campaign's files.
+    file_history: files::History,
+    /// Whether files may have changed since the snapshot was last brought up to date.
+    files_dirty: bool,
+    /// How many messages are being handled, one inside another (see [`Workspace::update`]).
+    depth: usize,
 }
 
 /// How many closed notes keep their Undo history.
@@ -536,6 +545,71 @@ struct Tab {
     history: history::History,
 }
 
+/// What Undo and Redo take back: the note's change or the campaign's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UndoTarget {
+    Note,
+    Files,
+}
+
+/// How a message counts for the campaign's Undo (see [`Workspace::file_kind`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileKind {
+    /// A change to the campaign's files, called this in the Edit menu, before the name of
+    /// what it changed.
+    Step(&'static str),
+    /// Saving notes, which their tabs undo; only a rename with it is a campaign step.
+    Save,
+    /// Files changed in another app, or by Undo itself.
+    Outside,
+    /// Anything else; if it changed files, that is a step called "Change".
+    Other,
+}
+
+/// What a campaign step is called: `verb`, and the name of what it changed, like
+/// "Move Gorbash" or "New Folder ruins".
+fn step_label(verb: &str, changes: &[files::Change], moves: &[(PathBuf, PathBuf)]) -> String {
+    let name = |path: &Path| {
+        let name = if path.is_dir() || !campaign::is_markdown(path) {
+            path.file_name()
+        } else {
+            path.file_stem()
+        };
+        name.map(|name| name.to_string_lossy().into_owned())
+    };
+    // Notes and folders, not the type files or pictures that came with them.
+    let shown = |change: &&files::Change| {
+        change.path.parent().is_some_and(|parent| {
+            !changes.iter().any(|other| {
+                other.path == parent
+                    && other.before.is_none() == change.before.is_none()
+                    && other.after.is_none() == change.after.is_none()
+            })
+        }) && (campaign::is_markdown(&change.path)
+            || matches!(change.before, Some(files::Content::Folder))
+            || matches!(change.after, Some(files::Content::Folder)))
+    };
+    let gone: Vec<&files::Change> = changes
+        .iter()
+        .filter(|change| change.after.is_none())
+        .filter(shown)
+        .collect();
+    let made: Vec<&files::Change> = changes
+        .iter()
+        .filter(|change| change.before.is_none())
+        .filter(shown)
+        .collect();
+    let subject = match (moves.first(), gone.as_slice(), made.as_slice()) {
+        (Some((old, _)), ..) => name(old),
+        (None, [one], _) | (None, [], [one]) => name(&one.path),
+        _ => None,
+    };
+    match subject {
+        Some(subject) => format!("{verb} {subject}"),
+        None => verb.to_string(),
+    }
+}
+
 /// How a message counts for Undo (see [`Workspace::update`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UndoKind {
@@ -641,7 +715,8 @@ fn undo_kind(message: &Message) -> UndoKind {
         | Message::FilesChanged
         | Message::WindowFocused
         | Message::Undo
-        | Message::Redo => Ignore,
+        | Message::Redo
+        | Message::UndoFilesConfirmed(..) => Ignore,
         _ => Boundary,
     }
 }
@@ -788,6 +863,22 @@ impl Tab {
                 Ok(replace_block(&text, range.clone(), &content.text()))
             }
             _ => Ok(text),
+        }
+    }
+
+    /// Shows `text` (from Undo or Redo) in the tab, as the form or the source.
+    fn show_text(&mut self, text: &str, root: &Path, index: &links::Index) {
+        self.edit = None;
+        self.set_text(text);
+        // A form that can't give back exactly this text shows the source instead, so
+        // the next step starts from the same text.
+        if self.form.is_some() && !self.source && self.text().ok().as_deref() != Some(text) {
+            self.content = text_editor::Content::with_text(text);
+            self.source = true;
+        }
+        self.modified = !self.history.is_saved(text);
+        if self.preview.is_some() {
+            self.preview = Some(self.make_preview(root, index));
         }
     }
 
@@ -976,6 +1067,9 @@ enum Message {
     Undo,
     /// Does the last change taken back again.
     Redo,
+    /// Whether to undo (false) or redo (true) a change to the campaign's files even
+    /// though some of them were changed since.
+    UndoFilesConfirmed(bool, bool),
     ToggleSource,
     /// Edits the active tab's note in its Markdown source (true) or its form (false).
     SetSource(bool),
@@ -2258,6 +2352,7 @@ impl Workspace {
             None => format!("Opened {}", root.display()),
         };
         let table_settings = tables::Settings::load(&root);
+        let snapshot = files::Snapshot::take(&root);
         Workspace {
             types,
             own_types,
@@ -2295,6 +2390,10 @@ impl Workspace {
             roll_folder: None,
             walkthrough: None,
             closed: std::collections::VecDeque::new(),
+            snapshot,
+            file_history: files::History::default(),
+            files_dirty: false,
+            depth: 0,
             table_keys: BTreeSet::new(),
         }
         .with_table_keys()
@@ -2472,6 +2571,7 @@ impl Workspace {
 
     /// Reads the file tree and the folders' content types again, and checks the files.
     fn rescan(&mut self) {
+        self.files_dirty = true;
         self.tree = campaign::scan(&self.root);
         (self.own_types, self.types) = load_types(&self.root, &self.tree);
         self.tags = known_tags(&self.root, &self.types);
@@ -2963,6 +3063,7 @@ impl Workspace {
                 self.status = format!("Could not tick the step: {error}");
             }
         }
+        self.files_dirty = true;
         self.refresh_quests();
     }
 
@@ -5446,6 +5547,15 @@ impl Workspace {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // Messages sent from inside another message's handling are part of it.
+        self.depth += 1;
+        let outer = self.depth == 1;
+        let files = if outer {
+            self.before_files(&message)
+        } else {
+            None
+        };
+
         // Undo steps: typing is noted as it happens and made a step later, when it pauses
         // or something else happens; anything else that changes the note is a step of its
         // own. Working out a step means writing the note out, so it isn't done per key.
@@ -5468,6 +5578,7 @@ impl Workspace {
             }
         }
 
+        let file_kind = self.file_kind(&message);
         let task = self.handle(message);
 
         if let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == id) {
@@ -5484,52 +5595,228 @@ impl Workspace {
                 UndoKind::Ignore | UndoKind::Boundary => {}
             }
         }
+        if outer {
+            self.after_files(file_kind, files);
+        }
+        self.depth -= 1;
         task
     }
 
-    /// What Edit > Undo (or with `redo`, Redo) would do in the active tab, like "Typing",
-    /// or `None` when there is nothing to do or it can't be done now.
-    fn undo_label(&self, redo: bool) -> Option<&'static str> {
-        if self.walkthrough_shown() {
+    /// How `message` counts for the campaign's Undo.
+    fn file_kind(&self, message: &Message) -> FileKind {
+        use FileKind::*;
+        match message {
+            Message::Rename => Step("Rename"),
+            Message::Move | Message::MoveFolder(_) => Step("Move"),
+            // Dropping a note dragged in the file tree.
+            Message::MouseReleased if self.drag.is_some() => Step("Move"),
+            Message::DeleteConfirmed(_, true) => Step("Delete"),
+            Message::CreateFolder => Step("New Folder"),
+            Message::CreateTable => Step("New Roll Table"),
+            Message::CreateNoteFromRoll => Step("New Note"),
+            Message::Types(types_editor::Message::Save) => Step("Note Types Change"),
+            Message::WalkthroughEditor(walkthrough_editor::Message::Save) => {
+                Step("Walkthrough Questions Change")
+            }
+            Message::Walkthrough(
+                walkthrough_tab::Message::Next
+                | walkthrough_tab::Message::Skip
+                | walkthrough_tab::Message::SkipChapter
+                | walkthrough_tab::Message::Back
+                | walkthrough_tab::Message::Chapter(_)
+                | walkthrough_tab::Message::NameEntered(_)
+                | walkthrough_tab::Message::AddName
+                | walkthrough_tab::Message::RemoveName(_)
+                | walkthrough_tab::Message::Make(..)
+                | walkthrough_tab::Message::Pick(_)
+                | walkthrough_tab::Message::Imported(_),
+            ) => Step("Walkthrough Answer"),
+            Message::Quests(quests::Message::Tick(..)) => Step("Quest Step"),
+            Message::Fix(_) => Step("Link Fix"),
+            Message::UpdateTagNotes => Step("Tag Notes Change"),
+            Message::FollowLink(_)
+            | Message::PreviewLink(_)
+            | Message::Form(
+                form::Message::FollowLink(_)
+                | form::Message::FollowStep(..)
+                | form::Message::FollowItem(..)
+                | form::Message::FollowAll(_),
+            ) => Step("New Note"),
+            Message::AddPicture(Some(_)) => Step("Insert Picture"),
+            Message::Tables(tables::Message::CopyBuiltIn(_) | tables::Message::EditBuiltIn(_)) => {
+                Step("Copy Table")
+            }
+            Message::Save
+            | Message::SaveAs
+            | Message::SaveAll
+            | Message::SaveTab(_)
+            | Message::Saved(..)
+            | Message::CloseTabConfirmed(..)
+            | Message::CloseTabsConfirmed(..)
+            | Message::CloseCampaignConfirmed(_)
+            | Message::ExitConfirmed(_) => Save,
+            Message::FilesChanged
+            | Message::WindowFocused
+            | Message::ReloadFromDisk
+            | Message::KeepMine
+            | Message::RefreshTree
+            | Message::Undo
+            | Message::Redo
+            | Message::UndoFilesConfirmed(..) => Outside,
+            _ => Other,
+        }
+    }
+
+    /// Before a message that may change the campaign's files: notes what is already
+    /// changed (in another app) so it isn't part of the step, and where each tab is.
+    fn before_files(&mut self, message: &Message) -> Option<Vec<(u64, Option<PathBuf>, usize)>> {
+        if !matches!(self.file_kind(message), FileKind::Step(_) | FileKind::Save) {
             return None;
         }
-        let tab = self.active_tab()?;
-        // The table editor has its own Cancel.
-        if matches!(tab.edit, Some(ReadEdit::Table { .. }))
-            || tab.form.as_ref().is_some_and(Form::editing_table)
-        {
-            return None;
+        let _ = self.snapshot.changes(&self.root);
+        if let Message::DeleteConfirmed(path, true) = message {
+            self.snapshot.keep_files_under(path);
         }
-        if redo {
-            // Typing since the last undo ends what can be done again.
-            tab.history
-                .redo_label()
-                .filter(|_| !tab.history.is_typing())
-        } else if tab.history.is_typing() {
-            Some(history::TYPING)
+        // Each tab's own changes so far are steps of their own.
+        for tab in &mut self.tabs {
+            tab.record("Change");
+        }
+        Some(
+            self.tabs
+                .iter()
+                .map(|tab| (tab.id, tab.path.clone(), tab.history.steps()))
+                .collect(),
+        )
+    }
+
+    /// After a message: makes a campaign step of the files it changed, if any. The
+    /// changes it made to open notes are part of that step.
+    fn after_files(&mut self, kind: FileKind, tabs: Option<Vec<(u64, Option<PathBuf>, usize)>>) {
+        if !self.files_dirty && tabs.is_none() {
+            return;
+        }
+        self.files_dirty = false;
+        let changes = self.snapshot.changes(&self.root);
+        let verb = match kind {
+            FileKind::Step(verb) => verb,
+            FileKind::Other => "Change",
+            // Changes made in other apps, or by Undo itself.
+            FileKind::Outside => return,
+            FileKind::Save => "Rename",
+        };
+        let tabs = tabs.unwrap_or_default();
+        let moves: Vec<(PathBuf, PathBuf)> = tabs
+            .iter()
+            .filter_map(|(id, old, _)| {
+                let new = self.tabs.iter().find(|tab| tab.id == *id)?.path.clone()?;
+                old.clone().filter(|old| *old != new).map(|old| (old, new))
+            })
+            .collect();
+        if kind == FileKind::Save {
+            // Saving a note is undone in the note. Only a rename (with its links) is a
+            // campaign step.
+            if moves.is_empty() {
+                return;
+            }
+        }
+        if changes.is_empty() {
+            return;
+        }
+        let label = step_label(verb, &changes, &moves);
+        let Some(link) = self.file_history.push(label, changes, moves) else {
+            return;
+        };
+        // What the step changed in open notes is undone with it.
+        for tab in &mut self.tabs {
+            tab.record("Change");
+            if let Some((_, _, from)) = tabs.iter().find(|(id, ..)| *id == tab.id) {
+                tab.history.link_since(*from, link);
+            }
+        }
+    }
+
+    /// What Undo (or with `redo`, Redo) would take back now: the active note's last
+    /// change or the campaign's, whichever is newer.
+    fn undo_target(&self, redo: bool) -> Option<UndoTarget> {
+        let note = self.active_tab().filter(|tab| {
+            !self.walkthrough_shown()
+                && !matches!(tab.edit, Some(ReadEdit::Table { .. }))
+                && !tab.form.as_ref().is_some_and(Form::editing_table)
+        });
+        let note = note.and_then(|tab| {
+            if redo {
+                // Typing since the last undo ends what can be done again.
+                (!tab.history.is_typing())
+                    .then(|| tab.history.last_redo())
+                    .flatten()
+            } else {
+                tab.history.last_undo()
+            }
+        });
+        let files = if redo {
+            self.file_history.last_redo()
         } else {
-            tab.history.undo_label()
+            self.file_history.last_undo()
+        }
+        .map(|step| (step.when, step.id));
+        match (note, files) {
+            (Some((_, Some(link))), Some((_, id))) if link == id => Some(UndoTarget::Files),
+            (Some((note, _)), Some((files, _))) if files > note => Some(UndoTarget::Files),
+            (Some(_), _) => Some(UndoTarget::Note),
+            (None, Some(_)) => Some(UndoTarget::Files),
+            (None, None) => None,
+        }
+    }
+
+    /// What Edit > Undo (or with `redo`, Redo) would do, like "Typing" or "Move Gorbash",
+    /// or `None` when there is nothing to do or it can't be done now.
+    fn undo_label(&self, redo: bool) -> Option<String> {
+        match self.undo_target(redo)? {
+            UndoTarget::Note => {
+                let tab = self.active_tab()?;
+                if redo {
+                    tab.history.redo_label().map(String::from)
+                } else if tab.history.is_typing() {
+                    Some(history::TYPING.into())
+                } else {
+                    tab.history.undo_label().map(String::from)
+                }
+            }
+            UndoTarget::Files => if redo {
+                self.file_history.last_redo()
+            } else {
+                self.file_history.last_undo()
+            }
+            .map(|step| step.label.clone()),
+        }
+    }
+
+    /// Takes back the last change, or with `redo`, does the last change taken back again:
+    /// in the note, or to the campaign's files (see [`Self::undo_target`]).
+    fn undo(&mut self, redo: bool) -> Task<Message> {
+        let what = if redo { "redo" } else { "undo" };
+        match self.undo_target(redo) {
+            Some(UndoTarget::Note) => self.undo_note(redo),
+            Some(UndoTarget::Files) => self.undo_files(redo, false),
+            None => {
+                let editing_table = self.active_tab().is_some_and(|tab| {
+                    matches!(tab.edit, Some(ReadEdit::Table { .. }))
+                        || tab.form.as_ref().is_some_and(Form::editing_table)
+                });
+                self.status = if editing_table {
+                    "The table editor's Cancel puts the table back as it was".into()
+                } else {
+                    format!("Nothing to {what}")
+                };
+                Task::none()
+            }
         }
     }
 
     /// Takes back the active note's last change, or with `redo`, does the last change
     /// taken back again. The cursor goes back to where it was.
-    fn undo(&mut self, redo: bool) -> Task<Message> {
+    fn undo_note(&mut self, redo: bool) -> Task<Message> {
         let what = if redo { "redo" } else { "undo" };
-        if self.undo_label(redo).is_none() {
-            let editing_table = self.active_tab().is_some_and(|tab| {
-                matches!(tab.edit, Some(ReadEdit::Table { .. }))
-                    || tab.form.as_ref().is_some_and(Form::editing_table)
-            });
-            self.status = if self.walkthrough_shown() {
-                format!("There is nothing to {what} in the walkthrough")
-            } else if editing_table {
-                "The table editor's Cancel puts the table back as it was".into()
-            } else {
-                format!("Nothing to {what}")
-            };
-            return Task::none();
-        }
         // What is typed in a block of the reading view goes into the note first.
         if self
             .active_tab()
@@ -5557,18 +5844,7 @@ impl Workspace {
             return Task::none();
         };
 
-        tab.edit = None;
-        tab.set_text(&text);
-        // A form that can't give back exactly this text shows the source instead, so
-        // the next step starts from the same text.
-        if tab.form.is_some() && !tab.source && tab.text().ok().as_deref() != Some(text.as_str()) {
-            tab.content = text_editor::Content::with_text(&text);
-            tab.source = true;
-        }
-        tab.modified = !tab.history.is_saved(&text);
-        if tab.preview.is_some() {
-            tab.preview = Some(tab.make_preview(&root, &index));
-        }
+        tab.show_text(&text, &root, &index);
         let focus = put_back(tab, place);
         self.recheck_active();
         self.status = format!("{} {label}", if redo { "Redid" } else { "Undid" });
@@ -5584,6 +5860,145 @@ impl Workspace {
             }
             None => Task::none(),
         }
+    }
+
+    /// Takes back the campaign's last change to its files (or with `redo`, does the last
+    /// one taken back again), with what it changed in open notes. Files changed since in
+    /// another app are only overwritten once the user says so (`confirmed`).
+    fn undo_files(&mut self, redo: bool, confirmed: bool) -> Task<Message> {
+        let undo = !redo;
+        let step = match if redo {
+            self.file_history.last_redo()
+        } else {
+            self.file_history.last_undo()
+        } {
+            Some(step) => step.clone(),
+            None => return Task::none(),
+        };
+
+        // Unsaved changes in a note the step would change, that aren't part of it.
+        let unsaved = self.tabs.iter().find(|tab| {
+            tab.modified
+                && tab
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| step.changes.iter().any(|change| change.path == *path))
+                && (if undo {
+                    tab.history.last_undo()
+                } else {
+                    tab.history.last_redo()
+                })
+                .is_none_or(|(_, link)| link != Some(step.id))
+        });
+        if let Some(tab) = unsaved {
+            self.status = format!(
+                "Save or close {} first: {} would change it",
+                tab.name(false),
+                if undo { "Undo" } else { "Redo" }
+            );
+            return Task::none();
+        }
+
+        if !confirmed {
+            let changed = files::changed_since(&step, undo);
+            if !changed.is_empty() {
+                let names: Vec<String> = changed.iter().map(|path| self.relative(path)).collect();
+                let question = format!(
+                    "{} changed since then, maybe in another app. {} {} anyway and lose those changes?",
+                    names.join(", "),
+                    if undo { "Undo" } else { "Redo" },
+                    step.label
+                );
+                let title = if undo { "Undo" } else { "Redo" };
+                return Task::perform(ask(title, question), move |yes| {
+                    Message::UndoFilesConfirmed(redo, yes)
+                });
+            }
+        }
+
+        let _ = if undo {
+            self.file_history.undo()
+        } else {
+            self.file_history.redo()
+        };
+        let problems = files::apply(&step, undo);
+        let _ = self.snapshot.changes(&self.root);
+
+        // Open notes follow their files back (or forth).
+        for (old, new) in &step.moves {
+            let (from, to) = if undo { (new, old) } else { (old, new) };
+            for tab in &mut self.tabs {
+                if tab.path.as_ref() == Some(from) {
+                    tab.path = Some(to.clone());
+                    tab.folder = to.parent().unwrap_or(&self.root).to_path_buf();
+                }
+            }
+        }
+        // Tabs of notes that are gone close.
+        let gone: Vec<u64> = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.path.as_ref().is_some_and(|path| !path.exists()))
+            .map(|tab| tab.id)
+            .collect();
+        for id in gone {
+            self.remove_tab(id);
+        }
+        let (root, index) = (self.root.clone(), self.index.clone());
+        for tab in &mut self.tabs {
+            // What the step changed in the note goes with it.
+            let mut text = None;
+            loop {
+                let top = if undo {
+                    tab.history.last_undo()
+                } else {
+                    tab.history.last_redo()
+                };
+                if top.is_none_or(|(_, link)| link != Some(step.id)) {
+                    break;
+                }
+                let done = if undo {
+                    tab.history.undo()
+                } else {
+                    tab.history.redo()
+                };
+                text = done.map(|(text, _)| text);
+            }
+            let Some(path) = tab.path.clone() else {
+                continue;
+            };
+            if !step.changes.iter().any(|change| change.path == path) {
+                continue;
+            }
+            let disk = std::fs::read_to_string(&path).ok();
+            match text {
+                Some(text) => tab.show_text(&text, &root, &index),
+                // A note opened since the step: it shows the file as it is now.
+                None if !tab.modified => {
+                    if let Some(disk) = &disk {
+                        tab.show_text(disk, &root, &index);
+                        tab.history = history::History::new(&tab.text().unwrap_or_default());
+                    }
+                }
+                None => {}
+            }
+            tab.disk = check::modified_time(&path);
+            if let (Some(disk), Ok(text)) = (&disk, tab.current_text())
+                && *disk == text
+            {
+                tab.history.saved(&text);
+                tab.modified = false;
+            }
+        }
+        self.rescan();
+        self.files_dirty = false;
+        let _ = self.snapshot.changes(&self.root);
+        self.status = format!("{} {}", if undo { "Undid" } else { "Redid" }, step.label);
+        if !problems.is_empty() {
+            self.status
+                .push_str(&format!(". Could not put back {}", problems.join(", ")));
+        }
+        Task::none()
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -7036,6 +7451,8 @@ impl Workspace {
             }
             Message::Undo => self.undo(false),
             Message::Redo => self.undo(true),
+            Message::UndoFilesConfirmed(redo, true) => self.undo_files(redo, true),
+            Message::UndoFilesConfirmed(_, false) => Task::none(),
             Message::Copy | Message::Cut => {
                 let cut = matches!(message, Message::Cut);
                 let Some((content, id)) = self.focused_text_mut() else {
@@ -7279,7 +7696,9 @@ impl Workspace {
             };
             let label = self.undo_label(redo);
             menu::item(
-                label.map_or_else(|| name.to_string(), |what| format!("{name} {what}")),
+                label
+                    .as_ref()
+                    .map_or_else(|| name.to_string(), |what| format!("{name} {what}")),
                 label.map(|_| message),
             )
             .shortcut(keys)
@@ -10878,8 +11297,13 @@ async fn confirm_discard(description: &'static str) -> bool {
 
 /// Asks whether to delete something, described by `question`. Returns true for yes.
 async fn confirm_delete(question: String) -> bool {
+    ask("Delete", question).await
+}
+
+/// Asks a yes or no question in a system dialog.
+async fn ask(title: &'static str, question: String) -> bool {
     rfd::AsyncMessageDialog::new()
-        .set_title("Delete")
+        .set_title(title)
         .set_description(question)
         .set_buttons(rfd::MessageButtons::YesNo)
         .show()
@@ -11021,7 +11445,7 @@ fn format_bar<'a>(
     c: Colors,
     types: Vec<format::TextType>,
     line: Option<(Option<format::TextType>, Option<format::List>)>,
-    (undo, redo): (Option<&'static str>, Option<&'static str>),
+    (undo, redo): (Option<String>, Option<String>),
 ) -> Element<'a, Message> {
     use format::{Command, List};
 
@@ -11081,7 +11505,7 @@ fn format_bar<'a>(
     let upright = iced::font::Style::Normal;
 
     // Undo and Redo, greyed out when there is nothing to do, saying what they would do.
-    let undo_tool = |redo_it: bool, what: Option<&'static str>| -> Element<'a, Message> {
+    let undo_tool = |redo_it: bool, what: Option<String>| -> Element<'a, Message> {
         let (name, keys, icon, message) = if redo_it {
             ("Redo", "Ctrl+Y", REDO_ICON, Message::Redo)
         } else {
@@ -11093,7 +11517,7 @@ fn format_bar<'a>(
             .width(16)
             .height(16);
         let hint = match what {
-            Some(what) => format!("{name} {what} ({keys})"),
+            Some(ref what) => format!("{name} {what} ({keys})"),
             None => format!("Nothing to {} ({keys})", name.to_lowercase()),
         };
         tooltip(
@@ -11364,7 +11788,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         for (file, text) in notes {
-            std::fs::write(root.join(file), text).unwrap();
+            let file = root.join(file);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
         }
         let mut workspace = Workspace::open(root.clone(), false);
         workspace.open_file(root.join(notes[0].0));
@@ -11390,7 +11816,7 @@ mod tests {
         // Something other than typing ends the step, like a click.
         let _ = workspace.update(Message::MousePressed);
         type_text(&mut workspace, " Pony");
-        assert_eq!(workspace.undo_label(false), Some("Typing"));
+        assert_eq!(workspace.undo_label(false).as_deref(), Some("Typing"));
 
         let _ = workspace.update(Message::Undo);
         assert_eq!(shown(&workspace), "The Prancing");
@@ -11409,6 +11835,89 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_and_its_links_are_undone_together() {
+        let mut workspace = workspace_with(
+            "undo_rename",
+            &[
+                ("Gorbash.md", "Lives in [[Saltmarsh]]"),
+                ("Saltmarsh.md", "A town"),
+            ],
+        );
+        let root = workspace.root.clone();
+        let _ = workspace.update(Message::ShowRename(root.join("Saltmarsh.md")));
+        let _ = workspace.update(Message::RenameName("Salt Marsh".into()));
+        let _ = workspace.update(Message::Rename);
+        assert!(root.join("Salt Marsh.md").exists());
+        assert_eq!(shown(&workspace), "Lives in [[Salt Marsh]]");
+        assert_eq!(
+            workspace.undo_label(false).as_deref(),
+            Some("Rename Saltmarsh")
+        );
+
+        let _ = workspace.update(Message::Undo);
+        assert!(root.join("Saltmarsh.md").exists());
+        assert!(!root.join("Salt Marsh.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("Gorbash.md")).unwrap(),
+            "Lives in [[Saltmarsh]]"
+        );
+        assert_eq!(shown(&workspace), "Lives in [[Saltmarsh]]");
+        assert!(!workspace.active_tab().unwrap().modified);
+        assert_eq!(workspace.undo_label(false), None);
+
+        let _ = workspace.update(Message::Redo);
+        assert!(root.join("Salt Marsh.md").exists());
+        assert_eq!(shown(&workspace), "Lives in [[Salt Marsh]]");
+
+        // Typing in the note after the rename is undone first.
+        type_text(&mut workspace, "Old ");
+        assert_eq!(workspace.undo_label(false).as_deref(), Some("Typing"));
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(
+            workspace.undo_label(false).as_deref(),
+            Some("Rename Saltmarsh")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_deleted_folder_is_named_not_its_notes() {
+        let root = std::env::temp_dir().join("dungeon_elements_step_label");
+        let gone = |path: PathBuf, before| files::Change {
+            path,
+            before: Some(before),
+            after: None,
+        };
+        let changes = [
+            gone(root.join("Inn"), files::Content::Folder),
+            gone(root.join("Inn/Bar.md"), files::Content::File(None)),
+            gone(root.join("Inn/map.png"), files::Content::File(None)),
+        ];
+        assert_eq!(step_label("Delete", &changes, &[]), "Delete Inn");
+        assert_eq!(step_label("Delete", &changes[1..], &[]), "Delete Bar");
+    }
+
+    #[test]
+    fn a_new_folder_is_undone() {
+        let mut workspace = workspace_with("undo_folder", &[("Inn.md", "")]);
+        let root = workspace.root.clone();
+        let _ = workspace.update(Message::ShowNewFolder);
+        let _ = workspace.update(Message::NewFolderName("Ruins".into()));
+        let _ = workspace.update(Message::CreateFolder);
+        assert!(root.join("Ruins").is_dir());
+        // The note's own history is older, so the folder goes first.
+        assert_eq!(
+            workspace.undo_label(false).as_deref(),
+            Some("New Folder Ruins")
+        );
+        let _ = workspace.update(Message::Undo);
+        assert!(!root.join("Ruins").exists());
+        let _ = workspace.update(Message::Redo);
+        assert!(root.join("Ruins").is_dir());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn closing_without_saving_can_be_undone() {
         let mut workspace = workspace_with("undo_closed", &[("Inn.md", "An inn")]);
         let path = workspace.root.join("Inn.md");
@@ -11420,7 +11929,7 @@ mod tests {
 
         workspace.open_file(path);
         assert_eq!(shown(&workspace), "An inn");
-        assert_eq!(workspace.undo_label(false), Some(CLOSED_UNSAVED));
+        assert_eq!(workspace.undo_label(false).as_deref(), Some(CLOSED_UNSAVED));
         let _ = workspace.update(Message::Undo);
         assert_eq!(shown(&workspace), typed);
         assert!(workspace.active_tab().unwrap().modified);

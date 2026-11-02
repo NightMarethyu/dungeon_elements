@@ -168,7 +168,7 @@ The items in Player Management are all things that will just be built as templat
   - Shortcuts: the dice roller is Ctrl+Shift+D; Ctrl+D is kept free for Duplicate (notes, and the map editor later)
   - Built in two steps (done): the commands and the new menus, then the Tables menu's built-in tables and the grouped Roll Tables list
 - [ ] **Undo** and **Redo** for everything changed in the app, not only typing: a field filled from a roll, a table changed in the table editor, a note moved or renamed. Until then, **Cancel** in the table editor and closing a note without saving put things back
-  - Built in three steps: Undo and Redo in notes (done: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, the Edit menu, right-click menus and toolbar arrows, about a thousand steps a note, kept as only the words that changed), then changes to files and folders (new, rename, move, delete, Note Types, walkthrough answers), then Undo inside the table editor
+  - Built in three steps: Undo and Redo in notes (done: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, the Edit menu, right-click menus and toolbar arrows, about a thousand steps a note, kept as only the words that changed), then changes to files and folders (done: new, rename, move, delete, Note Types, walkthrough questions and answers, link fixes, quest ticks; asks first if a file changed in another app), then Undo inside the table editor
 
 ### Phase 3: climax
 
