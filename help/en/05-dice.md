@@ -9,7 +9,9 @@ Click the **d20** button at the right of the tab bar, choose **Tables > Dice Rol
 - Type the name of a roll table, like `Weather`, and press **Enter** to roll on it. See [Roll tables](guide:tables).
 - Pick **Advantage** or **Disadvantage** to roll a d20 twice and keep the higher or lower one. Tick **Any die** for systems that allow advantage on other dice.
 
-The last few rolls stay on the left, so you can look back.
+The last few rolls stay on the left, so you can look back. Scroll the list to see the older ones.
+
+To hide the dice roller, click the **–** in its top right corner, click the d20 button again, or press **Ctrl+Shift+D**.
 
 ## Rolling from a note
 

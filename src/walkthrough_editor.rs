@@ -37,6 +37,7 @@ pub enum Message {
 
     AddQuestion,
     Ask(usize, String),
+    Short(usize, String),
     Hint(usize, String),
     GoesInto(usize, Choice),
     Field(usize, Choice),
@@ -188,6 +189,7 @@ struct ChapterDraft {
 #[derive(Debug, Clone, PartialEq)]
 struct QuestionDraft {
     ask: String,
+    short: String,
     hint: String,
     note: String,
     field: Option<String>,
@@ -240,6 +242,7 @@ impl Draft {
                         .iter()
                         .map(|question| QuestionDraft {
                             ask: question.ask.clone(),
+                            short: question.short.clone().unwrap_or_default(),
                             hint: question.hint.clone().unwrap_or_default(),
                             note: question.note.clone(),
                             field: question.field.clone(),
@@ -302,6 +305,7 @@ impl Draft {
                         .iter()
                         .map(|question| Question {
                             ask: question.ask.trim().to_string(),
+                            short: optional(&question.short),
                             hint: optional(&question.hint),
                             note: question.note.clone(),
                             field: question.field.clone(),
@@ -610,6 +614,7 @@ impl Editor {
                 if let Some(chapter) = draft.chapters.get_mut(chapter) {
                     chapter.questions.push(QuestionDraft {
                         ask: String::new(),
+                        short: String::new(),
                         hint: String::new(),
                         note,
                         field: None,
@@ -651,6 +656,7 @@ impl Editor {
         let count = questions.len();
         let index = match message {
             Message::Ask(index, _)
+            | Message::Short(index, _)
             | Message::Hint(index, _)
             | Message::GoesInto(index, _)
             | Message::Field(index, _)
@@ -671,6 +677,7 @@ impl Editor {
         let question = &mut questions[index];
         match message.clone() {
             Message::Ask(_, ask) => question.ask = ask,
+            Message::Short(_, short) => question.short = short,
             Message::Hint(_, hint) => question.hint = hint,
             Message::GoesInto(_, note) => {
                 if let Some(note) = note.value {
@@ -1164,6 +1171,15 @@ impl Editor {
                 ]
                 .spacing(6)
                 .align_y(Center),
+                // Left empty, the menu shows the start of the question.
+                row![
+                    text("Short title").size(12).color(c.text_muted),
+                    input(c, &short_placeholder(&question.ask), &question.short)
+                        .on_input(move |short| Message::Short(at, short))
+                        .width(Fill),
+                ]
+                .spacing(8)
+                .align_y(Center),
                 input(
                     c,
                     "A hint under it, to help answer it (optional)",
@@ -1514,6 +1530,18 @@ fn card_style(c: Colors) -> impl Fn(&iced::Theme) -> container::Style {
                 .color(c.border)
                 .width(c.border_width.max(1.0))
                 .rounded(c.corner_radius.min(6.0)),
+        )
+    }
+}
+
+/// What the Short title box says while it is empty: what the walkthrough's menu shows.
+fn short_placeholder(ask: &str) -> String {
+    if ask.trim().is_empty() {
+        "What the walkthrough's menu calls it, like: Goals (optional)".into()
+    } else {
+        format!(
+            "What the walkthrough's menu calls it (optional). Left empty: {}",
+            walkthrough::start_of(ask)
         )
     }
 }

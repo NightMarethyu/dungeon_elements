@@ -113,7 +113,15 @@ pub fn file(
 ) -> Vec<Problem> {
     let folder = path.parent().unwrap_or(root);
     let name = path.file_stem().unwrap_or_default().to_string_lossy();
-    let tables = crate::tables::problems(text, &name)
+    // The campaign's settings are only read for a note with tables in it.
+    let settings = std::cell::OnceCell::new();
+    let information = |heading: Option<&str>| {
+        settings
+            .get_or_init(|| crate::tables::Settings::load(root))
+            .information
+            .contains(&crate::tables::key(root, path, heading))
+    };
+    let tables = crate::tables::problems(text, &name, &information)
         .into_iter()
         .map(|message| (message, Issue::Other));
     note(text, folder, types)

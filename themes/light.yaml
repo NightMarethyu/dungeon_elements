@@ -1,0 +1,34 @@
+# Cream, like old parchment, with dark ink. Every text color here has a contrast
+# of at least 4.5:1 against every background it can sit on (WCAG AA), and the
+# body text is above 12:1.
+name: Light
+base: light
+colors:
+  background: "#f5eedb"       # the main editor pane
+  sidebar: "#ece1c6"          # file tree, tab bar, dialogs
+  menu_bar: "#e4d6b5"
+  menu: "#f2e9d2"             # open dropdown menus
+  tab_active: "#f5eedb"
+  tab_inactive: "#e1d2ae"
+  border: "#b9a274"           # panel edges, menu and dialog outlines
+  text: "#2a2016"             # dark ink
+  text_muted: "#5e4d38"
+  field_background: "#fbf7ec" # text boxes and form fields
+  selection: "#d9c69b"        # selected tree row, highlighted menu item
+  hover: "#e7dabb"
+  accent: "#7a2e12"           # primary buttons, focused fields: an oxblood ink
+  accent_text: "#fbf7ec"      # text on accent-colored buttons
+  status_bar: "#5b3a20"
+  status_text: "#fbf7ec"
+  danger: "#9b1c13"
+  warning: "#634700"
+  success: "#2c5e22"
+  # Syntax colors for code blocks in the reading view
+  code_comment: "#4b5431"
+  code_string: "#8a2a16"
+  code_number: "#245a3d"     # numbers and constants like true and null
+  code_keyword: "#1f4377"
+  code_function: "#6a3a00"
+  code_type: "#205a63"       # types, classes, and HTML tags
+border_width: 1
+corner_radius: 4

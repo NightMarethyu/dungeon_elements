@@ -8,7 +8,8 @@
 #
 # Each question fills the `field` (its key in the folder's type) of its `note`, or with no
 # field asks for the note's name, or the names of a `many` note. A field question on a
-# `many` note is asked once for each of them, with `{name}` filled in. `table` is what
+# `many` note is asked once for each of them, with `{name}` filled in. `short` is what the
+# walkthrough's left menu calls the question (the start of it if left out). `table` is what
 # Inspire Me rolls on (a dropdown picks one when there are several; `Note#Heading` is the
 # table under that heading), `inspire` is the word on its button, like Names, and an empty
 # `table: ""` leaves Inspire Me out. An answer that
@@ -70,25 +71,31 @@ chapters:
     intro: The big picture first. Short answers are fine; you can change any of them later in the notes.
     questions:
       - ask: What is your campaign called?
+        short: Name
         note: campaign
         table: Campaign names
       - ask: Sum it up in one sentence.
+        short: Pitch
         note: campaign
         field: pitch
         table: Tropes and Verbs
       - ask: What game or rules will you use?
+        short: Game system
         note: campaign
         field: system
         table: ""
       - ask: What is the big conflict, and what happens if the heroes do nothing?
+        short: Big conflict
         note: campaign
         field: big_picture
         table: Threats
       - ask: "What should it feel like: grim, heroic, funny, eerie...?"
+        short: Feel
         note: campaign
         field: themes
         table: Tone
       - ask: A few words to tag it with?
+        short: Tags
         hint: Tags help you find notes later, like "horror" or "sandbox".
         note: campaign
         field: tags
@@ -99,25 +106,31 @@ chapters:
     intro: Where the story takes place, from far away.
     questions:
       - ask: What is the world called?
+        short: Name
         note: world
         table: World names
       - ask: What is it like at first sight?
+        short: First sight
         note: world
         field: first_impression
         table: Feel of a place
       - ask: Name its main regions or nations.
+        short: Regions
         hint: Each becomes a location that is part of the world. Click Add Another for more, or paste a list.
         note: regions
         table: Place names
       - ask: Which peoples or races live in this world?
+        short: Peoples
         hint: Humans, elves and dwarves, or peoples of your own. Each gets a note to describe them.
         note: peoples
         table: Peoples
       - ask: Where do the {name} live?
+        short: Homelands
         note: peoples
         field: homelands
         table: Place names
       - ask: What event in its history do people still talk about?
+        short: Famous event
         hint: >-
           A war, a disaster, the founding of a nation, or the life of a prophet the calendar
           counts from. In our world that might be World War II; in The Wheel of Time, the
@@ -125,6 +138,7 @@ chapters:
         note: event
         table: Historic events
       - ask: What came of it?
+        short: What came of it
         note: event
         field: consequences
         table: Aftermath
@@ -134,27 +148,33 @@ chapters:
     intro: Who is in charge, and who wants to be.
     questions:
       - ask: Who holds power? Name two or three groups.
+        short: Power groups
         note: factions
         table: Group names
       - ask: What do the {name} want?
+        short: Goals
         note: factions
         field: goal
         table: Wants
       - ask: What will the {name} do next if no one stops them?
+        short: Next moves
         hint: A few steps. Each can be a link to a quest.
         note: factions
         field: plan
         table: Trouble
       - ask: Who leads the {name}?
+        short: Leaders
         hint: Type a name to make an NPC for them.
         note: factions
         field: leader
         table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
         inspire: Names
       - ask: Which faiths matter?
+        short: Faiths
         note: religions
         table: Faiths
       - ask: What do the {name} worship?
+        short: Worship
         hint: Each one becomes a deity.
         note: religions
         field: deities
@@ -165,17 +185,21 @@ chapters:
     intro: Magic, strange technology, or whatever else makes this world unlike ours. Skip the chapter if there is none.
     questions:
       - ask: Is there magic, strange technology, or something else? What is it called?
+        short: Name
         note: magic
         table: Wonders
       - ask: Where does it come from?
+        short: Source
         note: magic
         field: source
         table: Sources of power
       - ask: What does it cost, and what can it not do?
+        short: Cost and limits
         note: magic
         field: cost
         table: Costs and limits
       - ask: Who can use it?
+        short: Users
         hint: Pick peoples, factions or people you've made, or type new names.
         note: magic
         field: users
@@ -187,34 +211,42 @@ chapters:
     intro: The place the heroes call home at the start, and what is going on there.
     questions:
       - ask: Where do the heroes begin?
+        short: Starting place
         note: start
         table: Place names
       - ask: Who rules {name}?
+        short: Ruler
         hint: Pick a faction you've made, or type a name to make a faction or an NPC.
         note: start
         field: ruled_by
         table: Group names
         pick: [factions, npcs]
       - ask: Name some people the heroes will meet there.
+        short: Locals
         note: locals
         table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
         inspire: Names
       - ask: What does {name} want?
+        short: Wants
         note: locals
         field: wants
         table: Wants
       - ask: What dangerous place lies nearby?
+        short: Dangerous place
         note: danger
         table: Dangerous places
       - ask: What waits there?
+        short: What waits there
         note: danger
         field: description
         table: What's here
       - ask: What rumors are going around?
+        short: Rumors
         hint: Short names, like "The Missing Miller". Each becomes a quest.
         note: rumors
         table: Quest names
       - ask: What is the hook of {name}?
+        short: Hooks
         note: rumors
         field: hook
         table: Rumors, Plot hooks
@@ -224,16 +256,19 @@ chapters:
     intro: The players' characters, and what ties them to the world.
     questions:
       - ask: Who are the players' characters?
+        short: Characters
         hint: Type their names, or add characters your players wrote up in Markdown files.
         note: heroes
         table: Female names, Male names, Mixed female names, Mixed male names, English names#Female, English names#Male, Norse names#Female, Norse names#Male, Celtic names#Female, Celtic names#Male, Latin names#Female, Latin names#Male, Greek names#Female, Greek names#Male, Arabic names#Female, Arabic names#Male, Slavic names#Female, Slavic names#Male, Japanese names#Female, Japanese names#Male, Fantasy names#Female, Fantasy names#Male
         inspire: Names
         import: Add Characters from Files...
       - ask: Who plays {name}?
+        short: Players
         note: heroes
         field: player
         table: ""
       - ask: Who does {name} know or care about?
+        short: Bonds
         hint: Type names to link NPCs, or make new ones.
         note: heroes
         field: bonds
@@ -245,18 +280,22 @@ chapters:
     intro: Enough to sit down and play.
     questions:
       - ask: How does the first session open?
+        short: Opening scene
         hint: Start in the middle of something happening.
         note: first_session
         field: strong_start
         table: Opening scenes
       - ask: When does it take place in the world?
+        short: Date
         note: first_session
         field: world_date
       - ask: What secrets could the heroes learn?
+        short: Secrets
         note: first_session
         field: secrets
         table: Secrets
       - ask: What first quest pulls them in?
+        short: First quest
         hint: A link to a quest, like one of the rumors.
         note: first_session
         field: follow_ups
