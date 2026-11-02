@@ -189,10 +189,10 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Fix the links whose headings were renamed (like `[[Norse names#Female]]`, now "Female Given Name"), the Mixed tables' Family column (which points at given names), and every place that names a heading part: the name dropdown's choices and saved picks, and the `table:` lists in the default template and walkthrough
   - A test that every link in every built-in table finds its table, so a renamed heading can't break a roll again
 
-- [ ] Dice pane fixes
+- [x] Dice pane fixes
   - The roll history on the left keeps its width however many single dice are rolled, and scrolls (today it gets narrow and looks odd)
   - A **–** in the pane's top right corner hides it ("Hide dice roller (Ctrl+Shift+D)"), as well as the d20 button and the Tables menu
-- [ ] **Inspire me** replaces its own result without asking
+- [x] **Inspire me** replaces its own result without asking
   - Clicking Inspire me (or a table button on a field) again replaces the result it just put there, with no "Replace?" question: someone clicking again wasn't inspired by it
   - It still asks when the field holds anything else: text the person typed, or a rolled result they have changed since. That is the rule for "in a row", so it doesn't depend on how fast someone clicks
   - Each replaced roll is still one Undo step
@@ -206,7 +206,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - **Rolled after**: a table can be marked as needing another table's roll first (Norse surnames need a father's name). Rolling it on its own rolls that table first, and the editor and the Roll Tables list show the link
   - Kept as an ordinary roll table: a d1 table with one link per column, in a hidden file in the campaign's `.dungeon_elements/` folder. Today's rolling already handles it (each column, the -sson joins, the history, Undo), and the table editor shows it as Also roll picks, so nobody sees or edits the file. To check: that d1 counts as a die, and that fixing links after a rename covers that folder
   - The per-row **Rolls on** boxes stay, for rows that lead somewhere different
-- [ ] Roll tables and information tables
+- [x] Roll tables and information tables
   - Each table is a **roll table** (Roll buttons, shown in the Roll Tables list and the link pickers) or an **information table** (a plain table, like prices, a calendar or a party list: no Roll button, not listed)
   - A table whose first column is a die (d6, d20, 2d6 …) starts as a roll table, any other as an information table. A switch in the table editor and a right-click on the table change it
   - The table editor works for information tables too: columns and rows, no die and no ranges
@@ -214,10 +214,10 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Beside **Edit** and **Read** at the top right, for notes that hold only tables: tables, their headings, and short lines of text between them (like the line under Mixed names), with no type fields
   - It shows every table in the note in the table editor, one under the other, each headed by its heading; the text between them is edited in place, as in the reading view
   - Such notes open in the Table view (a View setting, like Open Notes in Reading View). Other notes keep Edit and Read, and their tables keep the Edit Table button
-- [ ] A built-in **Light** theme, and following the system
+- [x] A built-in **Light** theme, and following the system
   - Light is cream, like old parchment, with dark ink text, its colors checked for contrast. The built-in themes become Light, Dark and High Contrast
   - A new **System** choice under View > Theme, the new default: Light or Dark to match the computer, checked again when the app gets focus. Picking a theme overrides it, and people who already picked one keep it
-- [ ] The walkthrough's left menu shows each section's steps
+- [x] The walkthrough's left menu shows each section's steps
   - Each section has a triangle (like the file tree) that opens it to list its steps; the section being worked on starts open
   - Clicking a section or a step goes straight to it
   - A step shows a short title: its own, or the start of its question. The walkthrough question editor gets an optional **Short title** box, and the built-in questions get short titles

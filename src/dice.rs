@@ -17,6 +17,7 @@ use iced::widget::{
 };
 use iced::{Center, Element, Fill, padding};
 
+use crate::commands::Command;
 use crate::style;
 use crate::tables;
 use crate::theme::{self, Colors};
@@ -1007,6 +1008,8 @@ pub enum Message {
     Copy(String),
     /// Make a note named after a table's result. The workspace does it.
     NewNote(String),
+    /// Hide the roller, from the – in its corner.
+    Hide,
 }
 
 impl Roller {
@@ -1033,6 +1036,7 @@ impl Roller {
             },
             Message::Mode(mode) => self.mode = mode,
             Message::AnyDie(any_die) => self.any_die = any_die,
+            Message::Hide => self.open = false,
             Message::Copy(_) | Message::NewNote(_) => {}
         }
     }
@@ -1171,6 +1175,19 @@ impl Roller {
                 .style(style::check(c)),
             "Advantage and disadvantage change every die, not only a d20".to_string(),
         );
+        // The – in the top right corner hides the pane, as the d20 button does.
+        let hide_label = match Command::DiceRoller.shortcut() {
+            Some(shortcut) => format!("Hide dice roller ({shortcut})"),
+            None => "Hide dice roller".to_string(),
+        };
+        let hide = tip(
+            c,
+            button(text("–").size(16).line_height(1.0))
+                .padding([2, 8])
+                .style(style::flat(c, false))
+                .on_press(Message::Hide),
+            hide_label,
+        );
         let bar = row![
             text_input("2d6+3", &self.expression)
                 .on_input(Message::Expression)
@@ -1187,6 +1204,8 @@ impl Roller {
             row(modes).spacing(2),
             space().width(6),
             any_die,
+            space::horizontal(),
+            hide,
         ]
         .spacing(6)
         .align_y(Center);
@@ -1285,10 +1304,13 @@ impl Roller {
             }
         }
 
-        scrollable(view.padding([12, 16]))
+        // The list keeps the column's whole width, however short its lines are, and
+        // scrolls when there are more rolls than fit.
+        scrollable(view.padding([12, 16]).width(Fill))
             .direction(scrollable::Direction::Vertical(
                 scrollable::Scrollbar::new().width(3).scroller_width(3),
             ))
+            .width(Fill)
             .height(Fill)
             .into()
     }

@@ -44,6 +44,17 @@ Click a roll table in the reading view, or **Edit Table** above it, and it opens
 
 Tables are still ordinary Markdown tables that Obsidian and other apps read. A line break in a result is saved as `<br>`. Which links don't roll is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 
+## Roll tables and information tables
+
+Not every table is for rolling. A list of prices, a calendar or the party's names is an **information table**: it has no Roll button, and it isn't in the Roll Tables list or offered when you pick a table to roll on.
+
+- A table whose first column is a die, like `d6` or `2d6`, starts as a roll table. Any other table starts as an information table.
+- Click an information table, or **Edit Table** above it, and it opens in the table editor too, with just its columns and rows: no die and no ranges.
+- Tick **Roll table** at the top of the table editor to make it a roll table. A table without a die gets one, with the same share of it for each row (three rows get a d6, two numbers each). Untick it to make a roll table an information table. Its die column is kept as an ordinary column, so ticking it again gives you the same table back.
+- Or right-click a table in the reading view and pick **Make Information Table** or **Make Roll Table**. Right-click a table in the Roll Tables list and pick **Make Information Table** to take it out of the list.
+
+Which tables with a die are information tables is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
+
 ## The die and the rows
 
 The first header is the die: `d6`, `2d6`, `d100` or `d%`. Each row's first cell is the numbers it covers:
@@ -97,11 +108,13 @@ Some tables come with the app, listed under **Built in** in the Roll Tables list
 
 - **Names**, which picks one of the name tables below at random, and **Female names** and **Male names**, which do the same for women's or men's names.
 - **Mixed female names** and **Mixed male names**, which roll the first name and the family name on cultures of their own, so they can differ, like a family with roots in more than one place.
-- Names by culture: **English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese names**. Each has a **Female** and a **Male** table, with a first and a family name, so `[[Celtic names#Female]]` rolls a woman's name. Norse family names are built from the father's name and -sdottir or -sson, like Sigrid Haraldsdottir.
+- Names by culture: **English**, **Norse**, **Celtic**, **Latin**, **Greek**, **Arabic**, **Slavic** and **Japanese names**. Each has a **Female** and a **Male** table, with a first and a family name, so `[[Celtic names#Female]]` rolls a woman's name. English, Norse, Latin, Greek and Japanese names also have long lists of **Female Given Names**, **Male Given Names** and **Family Names** under their own headings, which the Female and Male tables roll on, so `[[Greek names#Family Names]]` rolls just a family name.
+- A Norse family name is the father's name and -sdottir or -sson, like Sigrid Haraldsdottir. A Norse woman picked (Norse names, or **Norse - Female**) is always a daughter, and a man a son. Names and the Mixed tables roll the ending on Norse names' **Surname Endings**, so it can come out either way.
 - **Fantasy names**, made-up names built from a start and an ending, like Aelwen or Kaeldor.
 - **Place names** (like Ashford or Ravenmoor), **Inn and shop names** (The Crooked Lantern) and **Group names**, for factions, crews and ships (The Silent Hand).
 - Story prompts, a few words to spark an idea, never the whole story: **Wants** (what someone is after), **Trouble** (what's going wrong), **Twists**, **What's here** (details for a room or site) and **Feel of a place**.
-- **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each.
+- **Tropes and Verbs**, a story trope and a verb to read into together, like *The Chosen One* and *Unravel*. It rolls on **Tropes** (50 of them) and **Verbs** (100), which can be rolled on their own too. The walkthrough rolls on it to sum up a campaign.
+- **Action and Theme**, two words to read into when you're stuck, like *Betray* and *Harvest*. It rolls each column, so you get one of each. Inspire Me rolls on it for a walkthrough question that names no table of its own.
 - World building, for the walkthrough's questions and your own notes: **Campaign names** (The Drowned Crown), **Threats** (a danger as big as the campaign), **Tone** (one word, like Grim or Cozy), **World names**, **Peoples** (the Ashborn, River folk), **Historic events** (The Long Winter) and their **Aftermath**, **Faiths** (The Order of the Open Hand), **Deity names** and **Domains** (what a god holds sway over), and for magic or strange technology, **Wonders** (its name, like the Weave), **Sources of power** and **Costs and limits**.
 - Adventure, for the places and quests near the heroes: **Dangerous places** (The Sunken Crypt), **Quest names** (The Missing Miller), **Rumors**, **Plot hooks**, **Opening scenes** (how a session starts) and **Secrets**.
 

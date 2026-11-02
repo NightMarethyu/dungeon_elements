@@ -3,52 +3,249 @@
 | 1 | [[Latin names#Female]] |
 | 2 | [[Latin names#Male]] |
 
+A name is a given name and a family name, each rolled on its own table below.
+
 ## Female
 
-| d20 | First | Family |
+| d1 | First | Family |
 | --- | --- | --- |
-| 1 | Aelia | Agrippa |
-| 2 | Aurelia | Brutus |
-| 3 | Camilla | Cato |
-| 4 | Cassia | Cicero |
-| 5 | Claudia | Corvus |
-| 6 | Cornelia | Crassus |
-| 7 | Flavia | Drusus |
-| 8 | Julia | Flaccus |
-| 9 | Livia | Galba |
-| 10 | Octavia | Lepidus |
-| 11 | Valeria | Naso |
-| 12 | Antonia | Nerva |
-| 13 | Domitia | Paullus |
-| 14 | Fabia | Piso |
-| 15 | Junia | Regulus |
-| 16 | Lucretia | Rufus |
-| 17 | Marcia | Scaevola |
-| 18 | Plautia | Severus |
-| 19 | Sabina | Varro |
-| 20 | Tullia | Vitellius |
+| 1 | [[Latin names#Female Given Names]] | [[Latin names#Family Names]] |
 
 ## Male
 
-| d20 | First | Family |
+| d1 | First | Family |
 | --- | --- | --- |
-| 1 | Aulus | Agrippa |
-| 2 | Cassius | Brutus |
-| 3 | Decimus | Cato |
-| 4 | Gaius | Cicero |
-| 5 | Lucius | Corvus |
-| 6 | Marcus | Crassus |
-| 7 | Quintus | Drusus |
-| 8 | Septimus | Flaccus |
-| 9 | Tiberius | Galba |
-| 10 | Titus | Lepidus |
-| 11 | Appius | Naso |
-| 12 | Gnaeus | Nerva |
-| 13 | Manius | Paullus |
-| 14 | Publius | Piso |
-| 15 | Servius | Regulus |
-| 16 | Sextus | Rufus |
-| 17 | Spurius | Scaevola |
-| 18 | Aurelius | Severus |
-| 19 | Cornelius | Varro |
-| 20 | Valerius | Vitellius |
+| 1 | [[Latin names#Male Given Names]] | [[Latin names#Family Names]] |
+
+## Female Given Names
+
+| d73 | Given      |
+| --- | ---------- |
+| 1   | Olivia     |
+| 2   | Eliana     |
+| 3   | Ava        |
+| 4   | Violet     |
+| 5   | Aurora     |
+| 6   | Camila     |
+| 7   | Lucia      |
+| 8   | Emily      |
+| 9   | Valentina  |
+| 10  | Nova       |
+| 11  | Stella     |
+| 12  | Astra      |
+| 13  | Victoria   |
+| 14  | Lillian    |
+| 15  | Clara      |
+| 16  | Ruby       |
+| 17  | Vivian     |
+| 18  | Lucia      |
+| 19  | Juniper    |
+| 20  | Cecilia    |
+| 21  | Juliette   |
+| 22  | Rose       |
+| 23  | Magnolia   |
+| 24  | Serenity   |
+| 25  | Julia      |
+| 26  | Elliana    |
+| 27  | June       |
+| 28  | Sage       |
+| 29  | Valeria    |
+| 30  | Celeste    |
+| 31  | Kaia       |
+| 32  | Amabel     |
+| 33  | Arabella   |
+| 34  | Elianna    |
+| 35  | Diana      |
+| 36  | Rosemary   |
+| 37  | Juliana    |
+| 38  | Selena     |
+| 39  | Aurelia    |
+| 40  | Poppy      |
+| 41  | Sylvia     |
+| 42  | Joanna     |
+| 43  | Octavia    |
+| 44  | Fraces     |
+| 45  | Serena     |
+| 46  | Viviana    |
+| 47  | Mira       |
+| 48  | Kamila     |
+| 49  | Adriana    |
+| 50  | Florence   |
+| 51  | Danna      |
+| 52  | Regina     |
+| 53  | Veronica   |
+| 54  | Trinity    |
+| 55  | Leona      |
+| 56  | Vienna     |
+| 57  | Alma       |
+| 58  | Clementine |
+| 59  | Maren      |
+| 60  | Felicity   |
+| 61  | Renata     |
+| 62  | Maxine     |
+| 63  | Estella    |
+| 64  | Virginia   |
+| 65  | Cecelia    |
+| 66  | April      |
+| 67  | Priscilla  |
+| 68  | Capri      |
+| 69  | Marina     |
+| 70  | Flora      |
+| 71  | Fauna      |
+| 72  | Rosalia    |
+| 73  | Dayana     |
+
+## Male Given Names
+
+| d73 | Given Name |
+| --- | ---------- |
+| 1   | Marcus     |
+| 2   | Julius     |
+| 3   | Felix      |
+| 4   | Lucius     |
+| 5   | Augustus   |
+| 6   | Cassius    |
+| 7   | Maximus    |
+| 8   | Titus      |
+| 9   | Decimus    |
+| 10  | Aelius     |
+| 11  | Antonius   |
+| 12  | Adrianus   |
+| 13  | Paulus     |
+| 14  | Fabianus   |
+| 15  | Laurentius |
+| 16  | Sergius    |
+| 17  | Crispus    |
+| 18  | Rufus      |
+| 19  | Tiberius   |
+| 20  | Claudius   |
+| 21  | Horatius   |
+| 22  | Flavius    |
+| 23  | Gaius      |
+| 24  | Octavius   |
+| 25  | Severus    |
+| 26  | Quintus    |
+| 27  | Publius    |
+| 28  | Aemilius   |
+| 29  | Cornelius  |
+| 30  | Fabius     |
+| 31  | Livius     |
+| 32  | Germanicus |
+| 33  | Vitus      |
+| 34  | Valerius   |
+| 35  | Victor     |
+| 36  | Magnus     |
+| 37  | Leo        |
+| 38  | Dominus    |
+| 39  | Brutus     |
+| 40  | Fortis     |
+| 41  | Imperius   |
+| 42  | Regulus    |
+| 43  | Ceasar     |
+| 44  | Justus     |
+| 45  | Constans   |
+| 46  | Audax      |
+| 47  | Ferox      |
+| 48  | Invictus   |
+| 49  | Albinus    |
+| 50  | Corvinus   |
+| 51  | Drusus     |
+| 52  | Evander    |
+| 53  | Marcellus  |
+| 54  | Nerius     |
+| 55  | Silvanus   |
+| 56  | Amadeus    |
+| 57  | Cassianus  |
+| 58  | Eligius    |
+| 59  | Faustus    |
+| 60  | Januarius  |
+| 61  | Leontius   |
+| 62  | Peregrinus |
+| 63  | Sabinus    |
+| 64  | Tibullus   |
+| 65  | Agrippa    |
+| 66  | Albanus    |
+| 67  | Blandus    |
+| 68  | Cato       |
+| 69  | Celer      |
+| 70  | Cicero     |
+| 71  | Egnatius   |
+| 72  | Hilarius   |
+| 73  | Ignatius   |
+
+## Family Names
+
+| d72 | Family Name |
+| --- | ----------- |
+| 1   | Acisculus   |
+| 2   | Aeneas      |
+| 3   | Afra        |
+| 4   | Amabilia    |
+| 5   | Amadeus     |
+| 6   | Amata       |
+| 7   | Amulius     |
+| 8   | Benedictus  |
+| 9   | Brutus      |
+| 10  | Byzantine   |
+| 11  | Caesar      |
+| 12  | Candida     |
+| 13  | Carbo       |
+| 14  | Carina      |
+| 15  | Cassia      |
+| 16  | Cicero      |
+| 17  | Clara       |
+| 18  | Decimus     |
+| 19  | Delphina    |
+| 20  | Delphi      |
+| 21  | Deusdedit   |
+| 22  | Drusus      |
+| 23  | Ectorius    |
+| 24  | Fannia      |
+| 25  | Felice      |
+| 26  | Felix       |
+| 27  | Flaccus     |
+| 28  | Frugi       |
+| 29  | Fulgencio   |
+| 30  | Gabinus     |
+| 31  | Gavia       |
+| 32  | Hadriana    |
+| 33  | Helvia      |
+| 34  | Hortensia   |
+| 35  | Italus      |
+| 36  | Janus       |
+| 37  | Juventus    |
+| 38  | Leos        |
+| 39  | Livia       |
+| 40  | Maia        |
+| 41  | Manius      |
+| 42  | Marcellus   |
+| 43  | Marinelli   |
+| 44  | Martinus    |
+| 45  | Maxim       |
+| 46  | Maximus     |
+| 47  | Metellus    |
+| 48  | Muzaka      |
+| 49  | Neptune     |
+| 50  | Nettuno     |
+| 51  | Numitor     |
+| 52  | Octavia     |
+| 53  | Orca        |
+| 54  | Paulus      |
+| 55  | Pluto       |
+| 56  | Pollux      |
+| 57  | Pontius     |
+| 58  | Poplicola   |
+| 59  | Prosper     |
+| 60  | Pulcher     |
+| 61  | Quirinus    |
+| 62  | Remus       |
+| 63  | Romulus     |
+| 64  | Rufus       |
+| 65  | Salacia     |
+| 66  | Scipiones   |
+| 67  | Seneca      |
+| 68  | Severan     |
+| 69  | Severna     |
+| 70  | Tiberius    |
+| 71  | Silvanus    |
+| 72  | Ursus       |

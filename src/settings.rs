@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// The name of the chosen theme.
+    /// The name of the chosen theme, or [`crate::theme::SYSTEM`] to follow the computer.
+    /// Saved settings from before System keep the theme they name.
     pub theme: String,
     /// Whether the file tree and tabs show `.md` at the end of note names.
     pub show_extensions: bool,
@@ -23,7 +24,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            theme: crate::theme::DEFAULT.into(),
+            theme: crate::theme::SYSTEM.into(),
             show_extensions: false,
             show_type_files: false,
             open_in_reading: false,

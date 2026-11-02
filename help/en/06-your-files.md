@@ -23,4 +23,4 @@ If a note was changed in a way the app can't show as intended (a word in a numbe
 
 ## Themes
 
-Pick a color theme in **View > Theme**. To make your own, copy a theme file into your themes folder (**Help > About** shows where it is), change its colors, and choose **View > Theme > Reload Themes**.
+Pick a color theme in **View > Theme**: **Light** (cream, like parchment), **Dark** or **High Contrast**. **System**, the one picked at first, uses Light or Dark to match your computer's setting and follows it when it changes. To make your own, copy a theme file into your themes folder (**Help > About** shows where it is), change its colors, and choose **View > Theme > Reload Themes**.

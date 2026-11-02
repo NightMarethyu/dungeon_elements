@@ -6,6 +6,11 @@
 //! the numbers each row covers are worked out from the top, so they always fit the die.
 //! Unticked, the numbers are typed, like `2-3` or `12+`. Either way the table is written
 //! back as an ordinary Markdown table, over the one it was read from.
+//!
+//! An information table (prices, a calendar, a party list) has no die and no ranges: just
+//! its columns and rows. The Roll table switch at the top turns one into the other: a die
+//! column is added to an information table that hasn't one, and a roll table's die column
+//! is kept as an ordinary column, so switching back loses nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -54,6 +59,8 @@ pub enum Message {
     AddPasted,
     /// Rolls the table as it is in the editor.
     Roll,
+    /// The Roll table switch: on for a roll table, off for an information table.
+    RollTable(bool),
     /// A die picked from the list, or [`OTHER`] to type one.
     PickDie(String),
     /// The die typed in the Other box.
@@ -130,6 +137,9 @@ pub struct Editor {
     die: String,
     /// Whether the die is typed, rather than picked from the list.
     typing_die: bool,
+    /// Whether it is a roll table. An information table's columns are all in
+    /// `columns`, and its rows' numbers and takes aren't used.
+    roll: bool,
     columns: Vec<String>,
     rows: Vec<Row>,
     calculate: bool,
@@ -181,6 +191,7 @@ pub struct Editor {
 struct State {
     die: String,
     typing_die: bool,
+    roll: bool,
     columns: Vec<String>,
     /// Each row's takes, numbers and results.
     rows: Vec<(i64, String, Vec<String>)>,
@@ -234,6 +245,8 @@ fn step(message: &Message) -> Option<(&'static str, Option<String>)> {
         Message::RollsOn(..) => Some(("Rolls On", None)),
         Message::InsertLink(_) => Some(("Insert Link", None)),
         Message::AddPasted => Some(("Add Pasted Rows", None)),
+        Message::RollTable(true) => Some(("Make Roll Table", None)),
+        Message::RollTable(false) => Some(("Make Information Table", None)),
         Message::PickDie(_) => Some(("Change Die", None)),
         Message::Calculate(_) => Some(("Calculate Ranges", None)),
         Message::SpreadEvenly => Some(("Spread Evenly", None)),
@@ -266,6 +279,87 @@ impl Editor {
     /// Edits `table`, called `name`, which is in `source`. `each_column` is whether it
     /// rolls each column on its own, if that can be changed here.
     pub fn new(source: &str, table: &Table, name: &str, each_column: Option<bool>) -> Self {
+        let ends = source.get(table.range.clone()).unwrap_or_default();
+        let mut editor = if table.has_die() {
+            Self::read_roll(table)
+        } else {
+            Self::read_information(table)
+        };
+        editor.range = table.range.clone();
+        editor.name = name.to_string();
+        editor.each_column = each_column;
+        editor.newline = ends.ends_with('\n');
+        editor.heading = table
+            .heading
+            .clone()
+            .map(|heading| (heading.clone(), heading));
+        editor.not_rolled = table.not_rolled.clone();
+        editor.joins = table.joins.clone();
+        editor.joins.resize(editor.columns.len(), Join::Space);
+        editor.links = table.links.clone();
+        editor
+    }
+
+    /// An editor with nothing in it yet, for [`Self::read_roll`] and
+    /// [`Self::read_information`] to fill.
+    fn blank(die: String, roll: bool, columns: Vec<String>, rows: Vec<Row>) -> Self {
+        let joins = vec![Join::Space; columns.len()];
+        Editor {
+            range: 0..0,
+            name: String::new(),
+            typing_die: !tables::DICE.contains(&die.as_str()),
+            die,
+            roll,
+            columns,
+            rows,
+            calculate: true,
+            each_column: None,
+            removing_column: None,
+            newline: true,
+            focus: Some("table-cell-0-0".into()),
+            changed: false,
+            heading: None,
+            table_links: BTreeSet::new(),
+            not_rolled: BTreeSet::new(),
+            joins,
+            links: Links::default(),
+            choices: Vec::new(),
+            focused: None,
+            paste: None,
+            prefix: "table".into(),
+            embedded: false,
+            has_settings: false,
+            has_links: false,
+            renamable: true,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing: None,
+        }
+    }
+
+    /// The editor for an information table: its columns and rows as they are.
+    fn read_information(table: &Table) -> Self {
+        let mut written = table.written.iter();
+        let mut columns = written.next().cloned().unwrap_or_default();
+        if columns.is_empty() {
+            columns.push(String::new());
+        }
+        let mut rows = Vec::new();
+        for cells in written {
+            if cells.iter().all(|cell| cell.trim().is_empty()) {
+                continue;
+            }
+            let mut row = Row::new(1, String::new(), columns.len());
+            for (cell, value) in row.cells.iter_mut().zip(cells) {
+                *cell = text_editor::Content::with_text(value);
+            }
+            rows.push(row);
+        }
+        Self::blank(tables::die_for(rows.len()).into(), false, columns, rows)
+    }
+
+    /// The editor for a roll table: its die, its columns, and each row's numbers.
+    fn read_roll(table: &Table) -> Self {
         let mut written = table.written.iter();
         let header = written.next().cloned().unwrap_or_default();
         let die = header.first().cloned().unwrap_or_else(|| "d6".into());
@@ -273,7 +367,10 @@ impl Editor {
         if columns.is_empty() {
             columns.push("Result".into());
         }
-        let (low, high) = table.die.bounds();
+        let (low, high) = table
+            .die
+            .as_ref()
+            .map_or((1, 6), crate::dice::Expression::bounds);
 
         let mut rows = Vec::new();
         let mut spans = Vec::new();
@@ -310,42 +407,105 @@ impl Editor {
             })
             && next == high + 1;
 
-        let ends = source.get(table.range.clone()).unwrap_or_default();
-        let mut joins = table.joins.clone();
-        joins.resize(columns.len(), Join::Space);
-        Editor {
-            range: table.range.clone(),
-            name: name.to_string(),
-            typing_die: !tables::DICE.contains(&die.as_str()),
-            die,
-            columns,
-            rows,
-            calculate: in_order,
-            each_column,
-            removing_column: None,
-            newline: ends.ends_with('\n'),
-            focus: Some("table-cell-0-0".into()),
-            changed: false,
-            heading: table
-                .heading
-                .clone()
-                .map(|heading| (heading.clone(), heading)),
-            table_links: BTreeSet::new(),
-            not_rolled: table.not_rolled.clone(),
-            joins,
-            links: table.links.clone(),
-            choices: Vec::new(),
-            focused: None,
-            paste: None,
-            prefix: "table".into(),
-            embedded: false,
-            has_settings: false,
-            has_links: false,
-            renamable: true,
-            undo: Vec::new(),
-            redo: Vec::new(),
-            typing: None,
+        let mut editor = Self::blank(die, true, columns, rows);
+        editor.calculate = in_order;
+        editor
+    }
+
+    /// Whether it is a roll table, rather than an information table.
+    pub fn is_roll(&self) -> bool {
+        self.roll
+    }
+
+    /// Whether it is an information table whose first column is a die, kept from when it
+    /// was a roll table: the campaign's settings have to say it is an information table.
+    pub fn keeps_die(&self) -> bool {
+        !self.roll
+            && self
+                .columns
+                .first()
+                .is_some_and(|header| tables::die(header).is_some())
+    }
+
+    /// Makes it a roll table (`roll`) or an information table, as the Roll table switch
+    /// does. A roll table's die column becomes an information table's first column, and
+    /// back. An information table without one gets a die with a number for each row.
+    pub fn set_roll(&mut self, roll: bool) {
+        if roll == self.roll {
+            return;
         }
+        self.roll = roll;
+        self.removing_column = None;
+        self.focused = None;
+        if !roll {
+            let spans = self.spans();
+            let numbers: Vec<String> = if self.calculate {
+                spans.iter().map(|span| self.numbers_text(*span)).collect()
+            } else {
+                self.rows
+                    .iter()
+                    .map(|row| row.numbers.trim().to_string())
+                    .collect()
+            };
+            self.columns.insert(0, self.die.trim().to_string());
+            for (row, numbers) in self.rows.iter_mut().zip(numbers) {
+                row.cells
+                    .insert(0, text_editor::Content::with_text(&numbers));
+            }
+            return;
+        }
+        let first_is_die = self.columns.len() > 1
+            && self
+                .columns
+                .first()
+                .is_some_and(|header| tables::die(header).is_some());
+        if first_is_die {
+            // Its die column, kept while it was an information table, is the die again.
+            self.die = self.columns.remove(0).trim().to_string();
+            for row in &mut self.rows {
+                row.numbers = if row.cells.is_empty() {
+                    String::new()
+                } else {
+                    row.cells.remove(0).text().trim().to_string()
+                };
+            }
+            let high = self.bounds().map_or(0, |(_, high)| high);
+            let spans: Vec<Option<(i64, i64)>> = self
+                .rows
+                .iter()
+                .map(|row| tables::numbers(&row.numbers, high))
+                .collect();
+            for (row, span) in self.rows.iter_mut().zip(&spans) {
+                row.takes = span.map_or(1, |(start, end)| end - start + 1);
+            }
+            let low = self.bounds().map_or(0, |(low, _)| low);
+            let mut next = low;
+            self.calculate = !spans.is_empty()
+                && spans.iter().all(|span| match span {
+                    Some((start, end)) if *start == next => {
+                        next = end + 1;
+                        true
+                    }
+                    _ => false,
+                })
+                && next == high + 1;
+        } else {
+            // The smallest usual die that gives each row as many numbers, or else one with
+            // a number for each row.
+            let count = self.rows.len().max(1) as i64;
+            self.die = ["d4", "d6", "d8", "d10", "d12", "d20", "d100"]
+                .into_iter()
+                .find(|die| {
+                    let sides = tables::die(die).map_or(0, |die| die.bounds().1);
+                    sides >= count && sides % count == 0
+                })
+                .unwrap_or_else(|| tables::die_for(self.rows.len()))
+                .to_string();
+            self.calculate = true;
+            let weights = vec![1; self.rows.len()];
+            self.share(&weights);
+        }
+        self.typing_die = !tables::DICE.contains(&self.die.as_str());
     }
 
     /// Leaves the heading the table is under as it is, with no box to rename it.
@@ -519,6 +679,9 @@ impl Editor {
 
     /// The table as it is in the editor, to roll.
     pub fn table(&self) -> Option<Table> {
+        if !self.roll {
+            return None;
+        }
         let mut table = tables::find(&self.markdown()).into_iter().next()?;
         table.not_rolled = self.not_rolled.clone();
         table.joins = self.joins.clone();
@@ -553,12 +716,12 @@ impl Editor {
     /// The boxes Tab moves between, in order.
     pub fn tab_ids(&self) -> Vec<String> {
         let mut ids = Vec::new();
-        if self.typing_die {
+        if self.typing_die && self.roll {
             ids.push(self.id("die"));
         }
         ids.extend((0..self.columns.len()).map(|column| self.column_id(column)));
         for row in 0..self.rows.len() {
-            if !self.calculate {
+            if !self.calculate && self.roll {
                 ids.push(self.numbers_id(row));
             }
             ids.extend((0..self.columns.len()).map(|column| self.cell_id(row, column)));
@@ -625,17 +788,22 @@ impl Editor {
     /// The table as Markdown, to put back where it was read from.
     pub fn markdown(&self) -> String {
         let mut written = Vec::new();
-        let mut header = vec![self.die.trim().to_string()];
+        let mut header = Vec::new();
+        if self.roll {
+            header.push(self.die.trim().to_string());
+        }
         header.extend(self.columns.iter().map(|column| column.trim().to_string()));
         written.push(header);
         let spans = self.spans();
         for (row, span) in self.rows.iter().zip(spans) {
-            let numbers = if self.calculate {
-                self.numbers_text(span)
-            } else {
-                row.numbers.trim().to_string()
-            };
-            let mut cells = vec![numbers];
+            let mut cells = Vec::new();
+            if self.roll {
+                cells.push(if self.calculate {
+                    self.numbers_text(span)
+                } else {
+                    row.numbers.trim().to_string()
+                });
+            }
             cells.extend(row.cells.iter().map(|cell| cell.text().trim().to_string()));
             written.push(cells);
         }
@@ -648,6 +816,10 @@ impl Editor {
 
     /// What is wrong with the table, one line each.
     pub fn problems(&self) -> Vec<String> {
+        // An information table isn't rolled, so any rows it has are fine.
+        if !self.roll {
+            return Vec::new();
+        }
         let Some((low, high)) = self.bounds() else {
             return vec![format!(
                 "\"{}\" isn't a die the table can roll. Try one like d6, 2d6 or d100",
@@ -824,6 +996,7 @@ impl Editor {
         State {
             die: self.die.clone(),
             typing_die: self.typing_die,
+            roll: self.roll,
             columns: self.columns.clone(),
             rows: self
                 .rows
@@ -845,6 +1018,7 @@ impl Editor {
     fn restore(&mut self, state: State) {
         self.die = state.die;
         self.typing_die = state.typing_die;
+        self.roll = state.roll;
         self.columns = state.columns;
         self.rows = state
             .rows
@@ -892,6 +1066,7 @@ impl Editor {
         );
         self.changed |= edits;
         match message {
+            Message::RollTable(roll) => self.set_roll(roll),
             Message::PickDie(die) => {
                 if die == OTHER {
                     self.typing_die = true;
@@ -1386,6 +1561,82 @@ impl Editor {
             .collect()
     }
 
+    /// The start of row `index`'s line in a roll table: the numbers it covers, how many
+    /// it takes, and its chance.
+    fn numbers_line<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        map: impl Fn(Message) -> M + Copy + 'a,
+        index: usize,
+        row: &'a Row,
+        spans: &[Option<(i64, i64)>],
+        chances: &[Option<f64>],
+    ) -> Element<'a, M> {
+        let small = |label: &'a str, message: Option<Message>| {
+            button(text(label).size(12))
+                .padding([2, 6])
+                .style(style::flat(c, false))
+                .on_press_maybe(message.map(map))
+        };
+        let numbers: Element<'a, M> = if self.calculate {
+            let written = self.numbers_text(spans[index]);
+            let shown = if written.is_empty() {
+                text("can't roll").size(12).color(c.warning)
+            } else {
+                text(written).size(13).color(c.text)
+            };
+            container(shown)
+                .width(Length::Fixed(ROLLS_WIDTH))
+                .padding([6, 0])
+                .into()
+        } else {
+            text_input("2-3", &row.numbers)
+                .id(self.numbers_id(index))
+                .on_input(move |value| map(Message::Numbers(index, value)))
+                .size(13)
+                .padding([4, 6])
+                .width(Length::Fixed(ROLLS_WIDTH))
+                .style(style::input(c))
+                .into()
+        };
+        let mut line = row![numbers].spacing(6).align_y(Center);
+        if self.calculate {
+            line = line.push(
+                row![
+                    small(
+                        "-",
+                        self.can_take_fewer(index)
+                            .then_some(Message::Takes(index, false))
+                    ),
+                    text(row.takes.to_string())
+                        .size(13)
+                        .width(24)
+                        .align_x(Center),
+                    small(
+                        "+",
+                        self.can_take_more(index)
+                            .then_some(Message::Takes(index, true))
+                    ),
+                ]
+                .spacing(2)
+                .align_y(Center)
+                .width(Length::Fixed(TAKES_WIDTH)),
+            );
+        }
+        let chance = match chances[index] {
+            Some(chance) if chance > 0.0 && chance < 0.005 => "<1%".to_string(),
+            Some(chance) => format!("{:.0}%", chance * 100.0),
+            None => String::new(),
+        };
+        line = line.push(
+            text(chance)
+                .size(12)
+                .color(c.text_muted)
+                .width(Length::Fixed(CHANCE_WIDTH)),
+        );
+        line.into()
+    }
+
     /// The editor. `shortcut` gives the app's keyboard shortcuts in the boxes.
     pub fn view<'a, M: Clone + 'a>(
         &'a self,
@@ -1473,10 +1724,23 @@ impl Editor {
             row![]
                 .push(name)
                 .push(space::horizontal())
-                .push(roll())
+                .push(self.roll.then(roll))
                 .push(finish)
                 .spacing(8)
                 .align_y(Center)
+        });
+        // The switch between a roll table and an information table. One in a form is
+        // always a roll table field.
+        let switch = (!self.embedded).then(|| {
+            hint(
+                checkbox(self.roll)
+                    .label("Roll table")
+                    .text_size(13)
+                    .on_toggle(move |on| map(Message::RollTable(on)))
+                    .style(style::check(c))
+                    .into(),
+                "Ticked, the table has a die and a Roll button, and is in the Roll Tables list. Unticked, it is an information table, like prices or a calendar: just columns and rows",
+            )
         });
         let mut top = row![
             text("Die").size(13).color(c.text_muted),
@@ -1531,6 +1795,22 @@ impl Editor {
         if self.embedded {
             top = top.push(space::horizontal()).push(roll());
         }
+        let top: Element<'a, M> = match switch {
+            Some(switch) if self.roll => row![switch, space().width(8), top]
+                .spacing(8)
+                .align_y(Center)
+                .into(),
+            Some(switch) => row![
+                switch,
+                text("An information table: no Roll button, and not in the Roll Tables list")
+                    .size(12)
+                    .color(c.text_muted),
+            ]
+            .spacing(16)
+            .align_y(Center)
+            .into(),
+            None => top.into(),
+        };
 
         // The headers: Rolls, Takes, Chance, then a box for each column's.
         let label = |label: &'a str, width: f32| {
@@ -1539,12 +1819,15 @@ impl Editor {
                 .color(c.text_muted)
                 .width(Length::Fixed(width))
         };
-        let show_joins = self.each_column() == Some(true);
-        let mut header = row![label("Rolls", ROLLS_WIDTH)].spacing(6).align_y(Center);
-        if self.calculate {
-            header = header.push(label("Takes", TAKES_WIDTH));
+        let show_joins = self.roll && self.each_column() == Some(true);
+        let mut header = row![].spacing(6).align_y(Center);
+        if self.roll {
+            header = header.push(label("Rolls", ROLLS_WIDTH));
+            if self.calculate {
+                header = header.push(label("Takes", TAKES_WIDTH));
+            }
+            header = header.push(label("Chance", CHANCE_WIDTH));
         }
-        header = header.push(label("Chance", CHANCE_WIDTH));
         let last_column = self.columns.len() - 1;
         for (index, name) in self.columns.iter().enumerate() {
             let input = text_input("Column name", name)
@@ -1600,7 +1883,11 @@ impl Editor {
         header = header.push(
             container(hint(
                 small("+ Column", Some(Message::AddColumn)).into(),
-                "Add a column of results",
+                if self.roll {
+                    "Add a column of results"
+                } else {
+                    "Add a column"
+                },
             ))
             .width(Length::Fixed(ACTIONS_WIDTH)),
         );
@@ -1611,68 +1898,20 @@ impl Editor {
         let last_row = self.rows.len().saturating_sub(1);
         let mut rows = column![].spacing(6);
         for (index, row) in self.rows.iter().enumerate() {
-            let numbers: Element<'a, M> = if self.calculate {
-                let written = self.numbers_text(spans[index]);
-                let shown = if written.is_empty() {
-                    text("can't roll").size(12).color(c.warning)
-                } else {
-                    text(written).size(13).color(c.text)
-                };
-                container(shown)
-                    .width(Length::Fixed(ROLLS_WIDTH))
-                    .padding([6, 0])
-                    .into()
-            } else {
-                text_input("2-3", &row.numbers)
-                    .id(self.numbers_id(index))
-                    .on_input(move |value| map(Message::Numbers(index, value)))
-                    .size(13)
-                    .padding([4, 6])
-                    .width(Length::Fixed(ROLLS_WIDTH))
-                    .style(style::input(c))
-                    .into()
-            };
-            let mut line = row![numbers].spacing(6).align_y(Center);
-            if self.calculate {
-                line = line.push(
-                    row![
-                        small(
-                            "-",
-                            self.can_take_fewer(index)
-                                .then_some(Message::Takes(index, false))
-                        ),
-                        text(row.takes.to_string())
-                            .size(13)
-                            .width(24)
-                            .align_x(Center),
-                        small(
-                            "+",
-                            self.can_take_more(index)
-                                .then_some(Message::Takes(index, true))
-                        ),
-                    ]
-                    .spacing(2)
-                    .align_y(Center)
-                    .width(Length::Fixed(TAKES_WIDTH)),
-                );
+            let mut line = row![].spacing(6).align_y(Center);
+            if self.roll {
+                line = line.push(self.numbers_line(c, map, index, row, &spans, &chances));
             }
-            let chance = match chances[index] {
-                Some(chance) if chance > 0.0 && chance < 0.005 => "<1%".to_string(),
-                Some(chance) => format!("{:.0}%", chance * 100.0),
-                None => String::new(),
-            };
-            line = line.push(
-                text(chance)
-                    .size(12)
-                    .color(c.text_muted)
-                    .width(Length::Fixed(CHANCE_WIDTH)),
-            );
             let empty = row.is_empty();
             for (column, cell) in row.cells.iter().enumerate() {
                 line = line.push(
                     text_editor(cell)
                         .id(self.cell_id(index, column))
-                        .placeholder(if column == 0 { "Result" } else { "" })
+                        .placeholder(if column == 0 && self.roll {
+                            "Result"
+                        } else {
+                            ""
+                        })
                         .on_action(move |action| map(Message::Cell(index, column, action)))
                         .key_binding(cell_keys(map, shortcut, index, empty))
                         .highlight_with::<crate::links::Highlighter>(
@@ -1694,14 +1933,22 @@ impl Editor {
                     small("×", Some(Message::RemoveRow(index))),
                     hint(
                         small("Link", Some(Message::InsertLink(index))).into(),
-                        "Link a note or another roll table in this result",
+                        if self.roll {
+                            "Link a note or another roll table in this result"
+                        } else {
+                            "Link a note in this row"
+                        },
                     ),
                 ]
                 .spacing(0)
                 .width(Length::Fixed(ACTIONS_WIDTH)),
             );
             // A result that links to another roll table rolls it too, unless unticked.
-            let linked = self.row_tables(row);
+            let linked = if self.roll {
+                self.row_tables(row)
+            } else {
+                Vec::new()
+            };
             if linked.is_empty() {
                 rows = rows.push(line);
             } else {
@@ -1721,7 +1968,6 @@ impl Editor {
                 rows = rows.push(column![line, boxes].spacing(4));
             }
         }
-
         let mut editor = column![]
             .push(title)
             .push(top)
@@ -1738,9 +1984,13 @@ impl Editor {
                     .padding([4, 10])
                     .style(style::secondary(c))
                     .on_press(map(Message::ShowPaste(self.paste.is_none()))),
-                text("Enter adds a row, Shift+Enter a new line in a result")
-                    .size(12)
-                    .color(c.text_muted),
+                text(if self.roll {
+                    "Enter adds a row, Shift+Enter a new line in a result"
+                } else {
+                    "Enter adds a row, Shift+Enter a new line in a box"
+                })
+                .size(12)
+                .color(c.text_muted),
             ]
             .spacing(12)
             .align_y(Center),
@@ -1775,7 +2025,8 @@ impl Editor {
             );
         }
 
-        if !self.choices.is_empty() {
+        // An information table isn't rolled, so nothing is rolled with it.
+        if self.roll && !self.choices.is_empty() {
             editor = editor.push(self.links_view(c, map));
         }
 
@@ -2214,6 +2465,64 @@ mod tests {
         assert_eq!(editor.markdown(), table);
         assert!(editor.problems().is_empty());
         assert!(!editor.changed());
+    }
+
+    const PRICES: &str = "## Prices\n\n| Item | Cost |\n| ---- | ---- |\n| Rope | 1 sp |\n| Lamp | 5 sp |\n| Tent | 2 gp |\n";
+
+    #[test]
+    fn edits_an_information_table() {
+        let table = tables::find_all(PRICES).remove(0);
+        let mut editor = Editor::new(PRICES, &table, "Prices", Some(false));
+        assert!(!editor.is_roll());
+        assert_eq!(editor.columns, ["Item", "Cost"]);
+        // It is written back as it was, with no die or numbers.
+        assert_eq!(editor.markdown(), &PRICES[editor.range.clone()]);
+        assert!(editor.problems().is_empty());
+        assert!(editor.table().is_none());
+        editor.update(Message::AddRow);
+        editor.update(Message::AddColumn);
+        let markdown = editor.markdown();
+        assert!(
+            markdown.starts_with("| Item | Cost |     |\n"),
+            "{markdown}"
+        );
+        assert!(markdown.ends_with("|      |      |     |\n"), "{markdown}");
+        assert!(!editor.keeps_die());
+    }
+
+    #[test]
+    fn an_information_table_made_a_roll_table_gets_a_die() {
+        let table = tables::find_all(PRICES).remove(0);
+        let mut editor = Editor::new(PRICES, &table, "Prices", Some(false));
+        editor.update(Message::RollTable(true));
+        assert!(editor.is_roll() && editor.changed());
+        // Each row gets as many of the die's numbers.
+        assert_eq!(editor.die, "d6");
+        assert_eq!(editor.columns, ["Item", "Cost"]);
+        assert_eq!(numbers(&editor), ["1-2", "3-4", "5-6"]);
+        assert!(editor.problems().is_empty());
+        assert!(editor.table().is_some());
+        // Undo makes it an information table again.
+        editor.undo(false);
+        assert!(!editor.is_roll());
+        assert_eq!(editor.markdown(), &PRICES[editor.range.clone()]);
+    }
+
+    #[test]
+    fn a_roll_table_made_an_information_table_keeps_its_die_column() {
+        let mut editor = editor(WEATHER);
+        let before = editor.markdown();
+        editor.update(Message::RollTable(false));
+        assert!(!editor.is_roll());
+        assert!(editor.keeps_die());
+        assert_eq!(editor.columns, ["d6", "Weather"]);
+        // The table is written the same, so nothing is lost.
+        assert_eq!(editor.markdown(), before);
+        assert!(editor.problems().is_empty());
+        editor.update(Message::RollTable(true));
+        assert!(editor.is_roll() && editor.calculate);
+        assert_eq!(editor.die, "d6");
+        assert_eq!(editor.markdown(), before);
     }
 
     #[test]

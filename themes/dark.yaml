@@ -18,9 +18,9 @@ colors:
   field_background: "#3c3c3c" # text boxes and form fields
   selection: "#37373d"        # selected tree row, highlighted menu item
   hover: "#2a2d2e"
-  accent: "#007acc"           # primary buttons, focused fields
-  accent_text: "#ffffff"      # text on accent-colored buttons
-  status_bar: "#007acc"
+  accent: "#57c08c"           # primary buttons, focused fields, links: a soft green
+  accent_text: "#0d1f14"      # text on accent-colored buttons
+  status_bar: "#1e6b45"
   status_text: "#ffffff"
   danger: "#f48771"
   warning: "#cca700"
