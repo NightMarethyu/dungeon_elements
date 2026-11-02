@@ -174,34 +174,54 @@ The items in Player Management are all things that will just be built as templat
   - History is kept while the app is open, not between runs
   - Built in three steps (done): notes, then files and folders, then the table editor
 
-### Phase 2.1: v0.3.0 Release Prep
+### Phase 2.1: long rest
 
-There are a few things that need to be done before we can release v0.3.0. This give us the space for that clean-up. Once this is done, we'll drop v0.3.0 and move on to Phase 3.
+A short stop to patch things up before the climax: the fixes and tweaks that go in before v0.3.0. Once they are done, we release v0.3.0 and move on to Phase 3. Each item is built on its own, in its own PR. An item that says "after" waits for that one; the others can start at any time.
 
-- Swap default tables with the customized tables built by Ammon
-- View roll history
-  - There is a small visual bug when rolling dice. If the user rolls a bunch of single dice, the pane for the dice history gets small and looks odd.
-- When a user clicks the "Inspire Me" button multiple times in a row, there shouldn't be the override warning pop-up
-  - If the user is clicking inspire me multiple times they are likely not feeling inspired by a result and that result should just be overwritten
-  - There should be some way in the dice roll history view to see the results from previous roll table rolls (preferably something separate from the current system which groups all rolls together, so this would be a table result history or something to that effect.)
-    - There should be a copy and make note button next to the results from the table result history. When the user clicks the make note button it should prompt them for a note template (which folder it should go in) and offer the option of a generic note (no template)
-- Add "Roll another table" option to the table editer
-  - If one result should lead into another result, let the tables be linked with a couple of clicks rather than manual edits to each row
-  - for example on the Norse Names list, family names are a roll on the given name list plus a roll on the -sson/-sdottir list (two lists that are paired, with different sizes and dice rolls)
-    - In the case of one table that requires a previous table's roll (like Norse surnames) We should have a way to mark that.
-  - We should also allow somewhat more dynamic/configurable rolling, allow users to create specific "Roll Table" buttons that will roll two or more tables that aren't normally linked
-- Tables need to be able to be marked as roll tables and information tables
-- Table edit mode should be a view on notes that are only tables
-  - Right now the view modes are "edit" and "read", There should be a view direct table edit view as well as the button that currently switches to that view
-- We should create a built-in light mode (so we would have Light, Dark, and High Contrast)
-  - Light mode should be a cream/off-white color like old parchment
-  - We should follow the system settings, but allow the user to change it however they want
-- I'd like a theme with accent colors (like dark mode, but with neon green accents), that might just be a theme that I make when we configure the theme editor
-- The dice roll pane, should have a collapse option as part of that pane. Right now the way to minimize it is through the dropdown menus and the dice roll button. There should be a - or x in the corner of the dice roll interface that lets the user minimize it from there.
-- The Walkthrough should have the parts of the sections in the left menu.
-  - right now the left menu of the walkthrough only shows the section titles, each title should have an arrow (just a triangle, like on the file tree) that allows the user to expand the section and see the questions (or a customizable title for the question/step)
-  - Each section/question should be clickable to go directly to that part of the walkthrough
-- I would like a progress bar for the walkthrough, but this isn't high priority and can be added to the planned/wished for features
+- [ ] Ammon's built-in tables
+  - Replace the built-in tables in `assets/tables/` with the ones in `assets/tables/Ammons_Tables/`, then delete that folder
+  - Add Ammon's new **Tropes** (d50) and **Verbs** (d100) tables to the Roll Tables list (Story prompts group). Replace the Walkthrough's **Action and Theme** rolls with a roll on the new tropes and verbs table the table can look something like this, it should match the Linked Tables items below so don't take this table as doctrine:
+
+  | d1 | Tropes and Verbs | |
+  | 1 | [[Tropes]] | [[Verbs]] |
+  - Rolling a culture's names still gives a full name ("Alice Ashby", not "Alice"): each culture's top table gets a First and a Family column that link to its own given name and family name sections
+  - Norse family names: picking a Norse name (Norse names, or Norse - Female / Male in the dropdown) gives a male given name and the matching ending (-sdottir for a woman, -sson for a man). Random rolls (Names and the Mixed tables) roll the ending on the Norse surname table, so it can come out either way. All of this is written in the tables, no code
+  - Fix the links whose headings were renamed (like `[[Norse names#Female]]`, now "Female Given Name"), the Mixed tables' Family column (which points at given names), and every place that names a heading part: the name dropdown's choices and saved picks, and the `table:` lists in the default template and walkthrough
+  - A test that every link in every built-in table finds its table, so a renamed heading can't break a roll again
+
+- [ ] Dice pane fixes
+  - The roll history on the left keeps its width however many single dice are rolled, and scrolls (today it gets narrow and looks odd)
+  - A **–** in the pane's top right corner hides it ("Hide dice roller (Ctrl+Shift+D)"), as well as the d20 button and the Tables menu
+- [ ] **Inspire me** replaces its own result without asking
+  - Clicking Inspire me (or a table button on a field) again replaces the result it just put there, with no "Replace?" question: someone clicking again wasn't inspired by it
+  - It still asks when the field holds anything else: text the person typed, or a rolled result they have changed since. That is the rule for "in a row", so it doesn't depend on how fast someone clicks
+  - Each replaced roll is still one Undo step
+- [ ] Table result history, after the dice pane fixes
+  - The dice pane gets two lists: **Dice** (the roll history today) and **Tables** (the results of roll table rolls, newest first, each with its table's name), from everywhere a table is rolled: Inspire me, field table buttons, the reading view, the Tables menu and the Roll Tables list
+  - Each result has **Copy** and **Make Note** buttons. Make Note asks for the note's name (the result to start with) and where it goes: the campaign's folders with their types, plus **Plain note (no type)**
+  - Like the dice history, it is kept while the app is open
+- [ ] Linked tables in the table editor
+  - **Also roll**: a table can name one or more tables to roll after it, picked in a couple of clicks with no change to each row (Norse given name, then Norse surname). The results are joined into one, with no space before an ending like -sson
+    - When joining results of multiple tables we need to ensure that the default format is to add a space, but we should allow a user to mark a column as needing no space (what we currently do when a column's results start with '-'), or needing commas. We can leave the current table formats, but I want to ensure that a user who wants to have their results come back as a comma separated list, regular spaces between results, or no space, they can do that without needing to know/remember to type special characters before each item in a column.
+  - **Rolled after**: a table can be marked as needing another table's roll first (Norse surnames need a father's name). Rolling it on its own rolls that table first, and the editor and the Roll Tables list show the link
+  - Kept as an ordinary roll table: a d1 table with one link per column, in a hidden file in the campaign's `.dungeon_elements/` folder. Today's rolling already handles it (each column, the -sson joins, the history, Undo), and the table editor shows it as Also roll picks, so nobody sees or edits the file. To check: that d1 counts as a die, and that fixing links after a rename covers that folder
+  - The per-row **Rolls on** boxes stay, for rows that lead somewhere different
+- [ ] Roll tables and information tables
+  - Each table is a **roll table** (Roll buttons, shown in the Roll Tables list and the link pickers) or an **information table** (a plain table, like prices, a calendar or a party list: no Roll button, not listed)
+  - A table whose first column is a die (d6, d20, 2d6 …) starts as a roll table, any other as an information table. A switch in the table editor and a right-click on the table change it
+  - The table editor works for information tables too: columns and rows, no die and no ranges
+- [ ] A **Table** view, after roll and information tables
+  - Beside **Edit** and **Read** at the top right, for notes that hold only tables: tables, their headings, and short lines of text between them (like the line under Mixed names), with no type fields
+  - It shows every table in the note in the table editor, one under the other, each headed by its heading; the text between them is edited in place, as in the reading view
+  - Such notes open in the Table view (a View setting, like Open Notes in Reading View). Other notes keep Edit and Read, and their tables keep the Edit Table button
+- [ ] A built-in **Light** theme, and following the system
+  - Light is cream, like old parchment, with dark ink text, its colors checked for contrast. The built-in themes become Light, Dark and High Contrast
+  - A new **System** choice under View > Theme, the new default: Light or Dark to match the computer, checked again when the app gets focus. Picking a theme overrides it, and people who already picked one keep it
+- [ ] The walkthrough's left menu shows each section's steps
+  - Each section has a triangle (like the file tree) that opens it to list its steps; the section being worked on starts open
+  - Clicking a section or a step goes straight to it
+  - A step shows a short title: its own, or the start of its question. The walkthrough question editor gets an optional **Short title** box, and the built-in questions get short titles
+- [ ] Release v0.3.0 (see `RELEASING.md`), then the project website
 
 ### Phase 3: climax
 
@@ -218,6 +238,9 @@ Play at the table and solo play. This needs panes the user can arrange, so layou
     - Users choose which buttons the tool pane shows, picked from a list of everything the menus can do, with no file to edit
   - [ ] A History pane listing the Undo steps of the note and the campaign, to go back several at once
 - [ ] Undo and Redo inside the Note Types and walkthrough question editors while they are open (their Save is already one step to undo)
+- [ ] Custom roll buttons that roll two or more tables that aren't linked (like "Tavern": Inn and shop names, Feel of a place and What's here)
+  - Made from the Roll Tables list (**New Roll Button**): a name, then tables picked from a list. Shown in their own group in the Roll Tables list and the Tables menu, and can be set on a field like a table; the results show together in the Tables history
+  - Built like linked tables (Phase 2.1): a named d1 table with one link per column, in a hidden file, so rolling it needs almost nothing new
 - [ ] Journaling tool, built for solo play
   - [ ] A journal folder whose notes are dated sessions, added to quickly while playing
   - [ ] The dice roller and roll tables built into the journal: a roll, or an oracle question and its answer, goes straight into the entry
@@ -278,6 +301,7 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 - User themes are YAML files in the app's config folder (`%APPDATA%\dungeon_elements\themes` on Windows, `~/.config/dungeon_elements/themes` on Linux) and appear under View > Theme. A broken theme file is skipped with a warning, never a crash.
 - The logo is recolored to match the theme (black becomes the text color, white the background).
 - Later: a theme editor (View > Theme > Edit Themes...). The user picks the main colors and accents with a color picker, sees the app update live, and saves the result as a theme file in the user themes folder, ready to use or share. Fine-tuning single roles is optional, because anything left out is worked out from the main colors or the `base`.
+  - The first theme to make with it: dark with neon green accents
 
 ### Layouts
 
@@ -368,4 +392,5 @@ After 1.0 (a stretch goal once Phase 5 is done). Ammon has international ties, a
   - Full screen app with just what looks like a piece of paper and a background of the user's choosing
 - Timer for specific sprints for writing or for in game timed things like Shadowdark's torch timer
 - Do a check for updated notes, tags, and other file changes and offer fixes
+- A progress bar for the walkthrough
 - More to come as I have more ideas!
