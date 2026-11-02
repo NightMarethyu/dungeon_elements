@@ -20,7 +20,8 @@ use iced::mouse::Interaction;
 use iced::widget::markdown::{self, HeadingLevel, Uri};
 use iced::widget::text::Span;
 use iced::widget::{
-    Svg, button, column, container, image, mouse_area, rich_text, row, rule, scrollable, svg, text,
+    Svg, button, column, container, image, mouse_area, rich_text, row, rule, scrollable, space,
+    svg, text,
 };
 use iced::{Center, Element, Fill, Font, Length, border, font, padding};
 use serde_yaml_ng::{Mapping, Value};
@@ -181,6 +182,10 @@ pub struct Editing<'a, M> {
     pub block: Option<(usize, Element<'a, M>)>,
     /// The input for the field with this key.
     pub field: Option<(String, Element<'a, M>)>,
+    /// In the Table view, the table editor for each table block, by its index.
+    pub tables: Vec<(usize, Element<'a, M>)>,
+    /// Blocks left out, like the headings the Table view's table editors show instead.
+    pub hidden: Vec<usize>,
 }
 
 impl Preview {
@@ -324,6 +329,16 @@ impl Preview {
         self.blocks.len()
     }
 
+    /// Whether block `index` is a heading.
+    pub fn is_heading(&self, index: usize) -> bool {
+        self.blocks.get(index).is_some_and(|block| {
+            matches!(
+                block.content.items().first(),
+                Some(markdown::Item::Heading(..))
+            )
+        })
+    }
+
     /// The page. `names` are the notes that exist, so links to missing ones can be dimmed
     /// like in the editor; `backlinks` are the notes that link to this one, listed at the end.
     pub fn view<'a, M: Clone + 'a>(
@@ -444,6 +459,12 @@ impl Preview {
         match edit.block.take() {
             Some((editing, editor)) if editing == index => return editor,
             other => edit.block = other,
+        }
+        if let Some(at) = edit.tables.iter().position(|(table, _)| *table == index) {
+            return edit.tables.swap_remove(at).1;
+        }
+        if edit.hidden.contains(&index) {
+            return space().into();
         }
 
         let block = &self.blocks[index];
@@ -647,6 +668,46 @@ impl Preview {
 /// The field of `ty` with this key.
 fn field<'a>(ty: Option<&'a ContentType>, key: &str) -> Option<&'a Field> {
     ty?.fields.iter().find(|field| field.key == key)
+}
+
+/// The longest a line of text between the tables of a note that holds only tables can
+/// be, like the line under Mixed names: anything longer is the note's own writing.
+const SHORT_TEXT: usize = 300;
+
+/// Whether the note `source` holds only tables: at least one table, with nothing else but
+/// headings and short lines of text between them. Such notes can show in the Table view.
+/// Its fields, if it has any, are left to the caller.
+pub fn is_table_note(source: &str) -> bool {
+    let body = match note::split_front_matter(source) {
+        Ok((_, body)) => body,
+        Err(_) => return false,
+    };
+    let offset = source.len() - body.len();
+    let starts: Vec<usize> = tables::find_all(source)
+        .iter()
+        .map(|table| table.range.start)
+        .collect();
+    if starts.is_empty() {
+        return false;
+    }
+    block_ranges(body).into_iter().all(|range| {
+        if starts.contains(&(range.start + offset)) {
+            return true;
+        }
+        let block = body[range].trim();
+        if block.starts_with('#') {
+            return !block.contains('\n');
+        }
+        // A short paragraph, not a list, quote, picture, code or rule.
+        let plain = block
+            .chars()
+            .next()
+            .is_some_and(|first| !"-*+>|`!<=_~".contains(first))
+            && !block
+                .split_once(['.', ')'])
+                .is_some_and(|(number, _)| number.chars().all(|c| c.is_ascii_digit()));
+        plain && !block.contains("\n\n") && block.chars().count() <= SHORT_TEXT
+    })
 }
 
 fn block_ranges(body: &str) -> Vec<Range<usize>> {
@@ -1655,6 +1716,23 @@ impl<'a> markdown::Viewer<'a, Uri> for Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tells_notes_that_hold_only_tables() {
+        let mixed = "| d2 | First |\n| --- | --- |\n| 1 | Ann |\n| 2 | Bo |\n\nThe first name is rolled on its own.\n";
+        assert!(is_table_note(mixed));
+        let headed = "# Shop\n\n## Prices\n\n| Item | Cost |\n| --- | --- |\n| Rope | 1 gp |\n\nHaggling is welcome.\n\n## Rumors\n\n| d4 | Rumor |\n| --- | --- |\n| 1-4 | Rats |\n";
+        assert!(is_table_note(headed));
+        assert!(is_table_note(&format!("---\nname: Shop\n---\n{headed}")));
+        // No table, a list, or a long passage of writing makes it an ordinary note.
+        assert!(!is_table_note("# Shop\n\nJust words.\n"));
+        assert!(!is_table_note(&format!("{mixed}\n- a list\n")));
+        assert!(!is_table_note(&format!("{mixed}\n1. a step\n")));
+        assert!(!is_table_note(&format!(
+            "{mixed}\n{}\n",
+            "word ".repeat(80)
+        )));
+    }
 
     #[test]
     fn ticks_task_boxes_where_they_are() {

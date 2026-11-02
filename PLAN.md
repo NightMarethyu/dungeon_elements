@@ -210,7 +210,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Each table is a **roll table** (Roll buttons, shown in the Roll Tables list and the link pickers) or an **information table** (a plain table, like prices, a calendar or a party list: no Roll button, not listed)
   - A table whose first column is a die (d6, d20, 2d6 …) starts as a roll table, any other as an information table. A switch in the table editor and a right-click on the table change it
   - The table editor works for information tables too: columns and rows, no die and no ranges
-- [ ] A **Table** view, after roll and information tables
+- [x] A **Table** view, after roll and information tables
   - Beside **Edit** and **Read** at the top right, for notes that hold only tables: tables, their headings, and short lines of text between them (like the line under Mixed names), with no type fields
   - It shows every table in the note in the table editor, one under the other, each headed by its heading; the text between them is edited in place, as in the reading view
   - Such notes open in the Table view (a View setting, like Open Notes in Reading View). Other notes keep Edit and Read, and their tables keep the Edit Table button

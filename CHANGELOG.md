@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### The Table view
+
+- A note that holds only tables, with their headings and short lines of text between them, has a third view beside **Edit** and **Read**: **Table**. It shows every table in the note in the table editor, one under the other, each named by its heading, and the lines of text between them are changed in place, as in the reading view.
+- Moving from one table to the next keeps what was changed in the first, and Ctrl+Z undoes it as one step.
+- Such notes open in the Table view. **View > Open Table Notes in Table View** turns that off. Other notes keep Edit and Read, and their tables keep the **Edit Table** button.
+
 ### Roll tables and information tables
 
 - A table is either a **roll table**, with a Roll button and a place in the Roll Tables list, or an **information table**, like prices, a calendar or a party list: no Roll button, not in the Roll Tables list, and not offered when picking a table to roll on.

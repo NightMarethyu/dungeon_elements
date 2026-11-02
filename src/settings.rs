@@ -16,6 +16,8 @@ pub struct Settings {
     pub show_type_files: bool,
     /// Whether notes open in the reading view, formatted, rather than in an editor.
     pub open_in_reading: bool,
+    /// Whether notes that hold only tables open in the Table view.
+    pub open_tables_in_table_view: bool,
     /// Whether the formatting toolbar shows over the note while it is edited.
     pub show_toolbar: bool,
 }
@@ -27,6 +29,7 @@ impl Default for Settings {
             show_extensions: false,
             show_type_files: false,
             open_in_reading: false,
+            open_tables_in_table_view: true,
             show_toolbar: true,
         }
     }
