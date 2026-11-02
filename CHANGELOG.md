@@ -17,6 +17,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 ### Themes
 
 - A new built-in **Light** theme: cream, like old parchment, with dark ink. Every color in it is checked for contrast, so text stays easy to read on each background. The built-in themes are now Light, Dark and High Contrast.
+- Dark's accent is now a soft green (links, buttons, focused fields, highlighted menu items), with dark text on green buttons and a deep green status bar, all checked for contrast.
 - **View > Theme > System**, the new default, uses Light or Dark to match the computer's own setting, and checks it again whenever you come back to the app. Picking any other theme stops following it, and if you had already picked a theme, it stays picked.
 
 ### Menus

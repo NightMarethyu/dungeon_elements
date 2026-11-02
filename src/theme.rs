@@ -392,6 +392,28 @@ mod tests {
     }
 
     #[test]
+    fn dark_green_accent_is_readable() {
+        let dark = built_in().remove(1);
+        let c = dark.colors;
+        // Links and focused fields are drawn in the accent, on every background.
+        for paper in [
+            c.background,
+            c.sidebar,
+            c.menu,
+            c.field_background,
+            c.selection,
+        ] {
+            assert!(
+                contrast(c.accent, paper) >= 4.5,
+                "accent on {}",
+                to_hex(paper)
+            );
+        }
+        assert!(contrast(c.accent_text, c.accent) >= 4.5);
+        assert!(contrast(c.status_text, c.status_bar) >= 4.5);
+    }
+
+    #[test]
     fn parses_colors() {
         assert_eq!(parse_color("#fff"), Some(Color::WHITE));
         assert_eq!(parse_color("#000000"), Some(Color::BLACK));
