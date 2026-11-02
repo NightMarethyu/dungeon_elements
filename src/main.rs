@@ -9288,7 +9288,8 @@ impl Workspace {
                 }
                 return Task::none();
             }
-            Step::Next => {
+            // Going elsewhere from the menu keeps what was typed, as Next does.
+            Step::Next | Step::Chapter(_) | Step::Question(..) => {
                 if let Err(error) = self.answer_walkthrough() {
                     if let Some(walkthrough) = &mut self.walkthrough {
                         walkthrough.error = Some(error);
@@ -9311,6 +9312,10 @@ impl Workspace {
         let open = |path: &Path| open_text(tabs, path);
         match message {
             Step::Chapter(chapter) => walkthrough.open_chapter(chapter, &campaign, &open),
+            Step::ToggleChapter(chapter) => walkthrough.toggle_chapter(chapter),
+            Step::Question(chapter, question) => {
+                walkthrough.open_question(chapter, question, &campaign, &open);
+            }
             Step::Back => walkthrough.back(&campaign, &open),
             Step::Next => walkthrough.next(&campaign, &open),
             Step::Skip => walkthrough.skip(&campaign, &open),

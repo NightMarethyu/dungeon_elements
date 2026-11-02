@@ -217,7 +217,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
 - [ ] A built-in **Light** theme, and following the system
   - Light is cream, like old parchment, with dark ink text, its colors checked for contrast. The built-in themes become Light, Dark and High Contrast
   - A new **System** choice under View > Theme, the new default: Light or Dark to match the computer, checked again when the app gets focus. Picking a theme overrides it, and people who already picked one keep it
-- [ ] The walkthrough's left menu shows each section's steps
+- [x] The walkthrough's left menu shows each section's steps
   - Each section has a triangle (like the file tree) that opens it to list its steps; the section being worked on starts open
   - Clicking a section or a step goes straight to it
   - A step shows a short title: its own, or the start of its question. The walkthrough question editor gets an optional **Short title** box, and the built-in questions get short titles
