@@ -170,6 +170,23 @@ The items in Player Management are all things that will just be built as templat
 - [ ] **Undo** and **Redo** for everything changed in the app, not only typing: a field filled from a roll, a table changed in the table editor, a note moved or renamed. Until then, **Cancel** in the table editor and closing a note without saving put things back
   - Built in three steps: Undo and Redo in notes (done: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, the Edit menu, right-click menus and toolbar arrows, about a thousand steps a note, kept as only the words that changed), then changes to files and folders (done: new, rename, move, delete, Note Types, walkthrough questions and answers, link fixes, quest ticks; asks first if a file changed in another app), then Undo inside the table editor
 
+### Phase 2.5: v0.3.0 Release Prep
+
+There are a few things that need to be done before we can release v0.3.0. This give us the space for that clean-up. Once this is done, we'll drop v0.3.0 and move on to Phase 3.
+
+- Swap default tables with the customized tables built by Ammon
+- Add "Roll another table" option to the table editer
+  - If one result should lead into another result, let the tables be linked with a couple of clicks rather than manual edits to each row
+  - for example on the Norse Names list, family names are a roll on the given name list plus a roll on the -sson/-sdottir list (two lists that are paired, with different sizes and dice rolls)
+  - We should also allow somewhat more dynamic/configurable rolling, allow users to create specific "Roll Table" buttons that will roll two or more tables that aren't normally linked
+- Tables need to be able to be marked as roll tables and information tables
+- Table edit mode should be a view on notes that are only tables
+  - Right now the view modes are "edit" and "read", There should be a view direct table edit view as well as the button that currently switches to that view
+- We should create a built-in light mode (so we would have Light, Dark, and High Contrast)
+  - Light mode should be a cream/off-white color like old parchment
+  - We should follow the system settings, but allow the user to change it however they want
+- I'd like a theme with accent colors (like dark mode, but with neon green accents), that might just be a theme that I make when we configure the theme editor
+
 ### Phase 3: climax
 
 Play at the table and solo play. This needs panes the user can arrange, so layouts come first.
