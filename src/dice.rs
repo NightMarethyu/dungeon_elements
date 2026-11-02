@@ -1298,17 +1298,13 @@ impl Roller {
 /// rolled on, and buttons to copy it or make a note of it.
 fn table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Message> {
     let values: Vec<String> = rolled.values.iter().map(i64::to_string).collect();
-    let mut view = column![
-        text(format!(
-            "{} ({}: {})",
-            rolled.name,
-            rolled.die,
-            values.join(", ")
-        ))
-        .size(12)
-        .color(c.text_muted),
-    ]
-    .spacing(6);
+    // A table rolled with its linked tables shows each of their rolls below instead.
+    let title = if values.is_empty() {
+        rolled.name.clone()
+    } else {
+        format!("{} ({}: {})", rolled.name, rolled.die, values.join(", "))
+    };
+    let mut view = column![text(title).size(12).color(c.text_muted)].spacing(6);
     if rolled.results.len() > 1 && !rolled.each_column {
         for (column, value) in &rolled.results {
             view = view.push(

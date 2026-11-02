@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Linked roll tables
+
+- The table editor has **Linked tables**: **Also roll** picks tables to roll after this one (a Norse given name, then a surname) and **Rolled after** picks tables it needs rolled first (a father's name before a Norse surname), with no change to the rows. The results come back as one, like "Sven Leifsson", wherever the table is rolled, and the Roll Tables list shows the links under the table's name.
+- Each linked table, and each column of a table rolled column by column, is **Joined with** a space, no space or a comma, picked in the table editor, so nobody needs to start results with a hyphen. Results that do still join with no space.
+- The links are kept as d1 roll tables in a hidden file in the campaign, `.dungeon_elements/linked tables.md`, and follow notes and headings when they are renamed.
+
 ### Undo and Redo
 
 - **Ctrl+Z** takes back the last change to a note, and **Ctrl+Y** (or **Ctrl+Shift+Z**) does it again. They are at the top of the **Edit** menu and the right-click menus, and as arrows at the left of the formatting toolbar, and they say what they would do, like **Undo Typing** or **Undo Roll**.

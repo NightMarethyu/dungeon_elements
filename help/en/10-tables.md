@@ -77,7 +77,19 @@ Tick **Roll each column**, above the table in the reading view or under it in th
 
 A link in a column rolls just the column of the same name in the table it links to, when that table has one. So a table with a First and a Family column, each listing `[[English names#Male]]`, `[[Japanese names#Male]]` and so on, takes a first name from one culture and a family name from another, like Isaac Akinaka. Columns after it whose results start with a hyphen, like a Norse name's -sson, come along too. Which tables roll each column is kept in the campaign, in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 
-Rolling each column puts the results together with spaces. A result that starts with a hyphen joins the one before it instead: `Ash` and `-ford` make "Ashford".
+Rolling each column puts the results together with spaces. To change that, pick **Joined with** under a column's name in the table editor: **a space** (Bjorn Ashby), **no space** (Bjorn and sson make Bjornsson) or **a comma**, for a list like "rope, lantern, chalk". A result that starts with a hyphen still joins the one before it with no space: `Ash` and `-ford` make "Ashford".
+
+## Tables rolled together
+
+A table can roll other tables with it, so one click gives a whole result, like a given name and a surname. Set this under **Linked tables** at the bottom of the table editor, with no change to the rows:
+
+- **Also roll** names tables to roll after this one, in order. Pick each from the dropdown. Rolling Norse given names with Norse surnames as an Also roll gives "Sven Leifsson".
+- **Rolled after** names tables this one needs rolled first, like a father's name before a Norse surname. Rolling the surname table on its own, from anywhere, rolls the father's name first: "Leifsson".
+- Each table's result is joined to the one before it with a space, no space or a comma, picked beside it. The **↑** and **↓** buttons change the order, and **×** takes a table out.
+
+The tables are rolled together wherever the table is rolled: its Roll button, the Roll Tables list (which shows "Also rolls" and "After" under the table's name), Inspire Me, a field's table button, the Tables menu and links from other tables. Inside one of these rolls, a table that is already being rolled with its linked tables is rolled on its own, so two tables that name each other don't roll forever.
+
+Dungeon Elements keeps these in `.dungeon_elements/linked tables.md` in the campaign: a plain d1 roll table for each, with a link to each table, so renaming a note or a table's heading keeps them. There's no need to open it.
 
 ## Built-in tables
 

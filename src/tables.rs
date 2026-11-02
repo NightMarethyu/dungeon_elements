@@ -55,6 +55,14 @@ pub struct Table {
     /// The tables its results link to that aren't rolled, as [`link_key`]s. This is kept
     /// in the campaign's settings, not the note.
     pub not_rolled: BTreeSet<String>,
+    /// How each result column joins the one before it when the columns are rolled on
+    /// their own, from the campaign's settings. A column with none set takes a space.
+    pub joins: Vec<Join>,
+    /// The tables rolled with it, from the table editor's Also roll and Rolled after.
+    pub links: Links,
+    /// What is rolled in its place when it is rolled: the d1 table that rolls it and its
+    /// linked tables, kept in [`LINKED_FILE`].
+    pub linked: Option<Box<Table>>,
 }
 
 /// One row of a roll table: the numbers it covers and its results.
@@ -231,6 +239,9 @@ fn read(heading: Option<String>, rows: Vec<Vec<String>>, range: Range<usize>) ->
         range,
         written,
         not_rolled: BTreeSet::new(),
+        joins: Vec::new(),
+        links: Links::default(),
+        linked: None,
     };
     for cells in rows {
         let Some(first) = cells.first() else {
@@ -354,6 +365,8 @@ pub struct Rolled {
     /// Each result column's header and what it gave, with links and dice rolled.
     pub results: Vec<(String, String)>,
     pub each_column: bool,
+    /// How each result joins the one before it, when they are put in a row.
+    pub joins: Vec<Join>,
     /// The tables its results rolled on, in order.
     pub inner: Vec<Rolled>,
 }
@@ -362,10 +375,15 @@ impl Rolled {
     /// The result as one line: the result, the columns' results in a row, or each
     /// column's header and result.
     pub fn text(&self) -> String {
-        let filled = self.results.iter().filter(|(_, value)| !value.is_empty());
         if self.results.len() == 1 || self.each_column {
-            joined(filled.map(|(_, value)| value.as_str()))
+            joined(self.results.iter().enumerate().map(|(index, (_, value))| {
+                (
+                    self.joins.get(index).copied().unwrap_or_default(),
+                    value.as_str(),
+                )
+            }))
         } else {
+            let filled = self.results.iter().filter(|(_, value)| !value.is_empty());
             filled
                 .map(|(column, value)| format!("{column}: {value}"))
                 .collect::<Vec<_>>()
@@ -389,24 +407,231 @@ impl Rolled {
 
     /// For the list of earlier rolls: `Weather (6): Grey drizzle`.
     pub fn line(&self) -> String {
+        if self.values.is_empty() {
+            return format!("{}: {}", self.name, self.text());
+        }
         let values: Vec<String> = self.values.iter().map(i64::to_string).collect();
         format!("{} ({}): {}", self.name, values.join(", "), self.text())
     }
 }
 
-/// Results in a row, with spaces between them. A result starting with a hyphen joins the
-/// one before it: Ash and -ford make Ashford.
-fn joined<'a>(values: impl Iterator<Item = &'a str>) -> String {
+/// Results in a row, each joined to the one before it as its [`Join`] says: with a space,
+/// with nothing, or with a comma. A result starting with a hyphen joins the one before it
+/// with nothing whatever its join (Ash and -ford make Ashford), and one starting with a
+/// comma follows it straight after. Empty results are left out.
+fn joined<'a>(values: impl Iterator<Item = (Join, &'a str)>) -> String {
     let mut text = String::new();
-    for value in values {
-        match value.strip_prefix('-').filter(|rest| !rest.is_empty()) {
-            Some(rest) => text.push_str(rest),
-            None => {
-                if !text.is_empty() {
-                    text.push(' ');
+    for (join, value) in values {
+        let (join, value) = if let Some(rest) = value
+            .strip_prefix('-')
+            .map(|rest| rest.trim_start_matches('-'))
+            .filter(|rest| !rest.trim().is_empty())
+        {
+            (Join::NoSpace, rest)
+        } else if let Some(rest) = value.strip_prefix(',') {
+            (Join::Comma, rest.trim_start())
+        } else {
+            (join, value)
+        };
+        if value.trim().is_empty() || value.trim() == "-" {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push_str(join.separator());
+        }
+        text.push_str(value);
+    }
+    text
+}
+
+/// How a result joins the one before it when results are put in a row.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Join {
+    /// With a space: Bjorn Ashby.
+    #[default]
+    Space,
+    /// With nothing between them: Bjorn and sson make Bjornsson.
+    NoSpace,
+    /// With a comma and a space, for a list: rope, lantern, chalk.
+    Comma,
+}
+
+impl Join {
+    pub const ALL: [Join; 3] = [Join::Space, Join::NoSpace, Join::Comma];
+
+    /// What goes between it and the result before it.
+    pub fn separator(self) -> &'static str {
+        match self {
+            Join::Space => " ",
+            Join::NoSpace => "",
+            Join::Comma => ", ",
+        }
+    }
+
+    /// What starts a cell of the linked tables' file to say how it joins.
+    fn prefix(self) -> &'static str {
+        match self {
+            Join::Space => "",
+            Join::NoSpace => "-",
+            Join::Comma => ", ",
+        }
+    }
+}
+
+impl std::fmt::Display for Join {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Join::Space => "a space",
+            Join::NoSpace => "no space",
+            Join::Comma => "a comma",
+        })
+    }
+}
+
+/// Where the tables each table rolls with are kept, in the campaign folder: one d1 table
+/// for each table that has some, with one link a column, so rolling it rolls them all.
+/// Nobody needs to open it: the table editor's Also roll and Rolled after change it.
+pub const LINKED_FILE: &str = ".dungeon_elements/linked tables.md";
+/// The headers of the linked tables' columns: the tables rolled first, the table itself,
+/// and the tables rolled after it.
+const FIRST: &str = "Rolled first";
+const THIS: &str = "This table";
+const ALSO: &str = "Also rolled";
+
+/// The tables a table is rolled with, by the links that name them, like `Norse names#Male`,
+/// each with how its result joins the one before it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Links {
+    /// Rolled first, in order: Norse surnames need a father's name.
+    pub before: Vec<(String, Join)>,
+    /// How the table's own result joins the ones rolled first.
+    pub join: Join,
+    /// Rolled after it, in order: a Norse given name, then a surname.
+    pub after: Vec<(String, Join)>,
+}
+
+impl Links {
+    pub fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.after.is_empty()
+    }
+
+    /// The d1 table that rolls the table, linked to as `own`, with these tables.
+    pub fn table(&self, own: &str) -> Option<Table> {
+        let section = self.markdown(own, own)?;
+        find(&section).into_iter().next()
+    }
+
+    /// The section of [`LINKED_FILE`] for the table linked to as `own`, under `heading`:
+    /// none if it has no links.
+    pub fn markdown(&self, heading: &str, own: &str) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let cell = |target: &str, join: Join| format!("{}[[{target}]]", join.prefix());
+        let mut header = vec!["d1".to_string()];
+        let mut row = vec!["1".to_string()];
+        for (target, join) in &self.before {
+            header.push(FIRST.into());
+            row.push(cell(target, *join));
+        }
+        header.push(THIS.into());
+        row.push(cell(own, self.join));
+        for (target, join) in &self.after {
+            header.push(ALSO.into());
+            row.push(cell(target, *join));
+        }
+        // A heading can't hold a link's brackets or a `#`.
+        let heading = heading.replace(['[', ']', '#'], " ");
+        Some(format!(
+            "## {}\n\n{}",
+            heading.trim(),
+            write(&[header, row])
+        ))
+    }
+
+    /// A short line for the Roll Tables list, like `After Norse names - Male` and
+    /// `Also rolls Norse surnames`. None without links.
+    pub fn summary(&self) -> Option<String> {
+        let names = |links: &[(String, Join)]| {
+            links
+                .iter()
+                .map(|(target, _)| label(target))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut parts = Vec::new();
+        if !self.before.is_empty() {
+            parts.push(format!("After {}", names(&self.before)));
+        }
+        if !self.after.is_empty() {
+            parts.push(format!("Also rolls {}", names(&self.after)));
+        }
+        (!parts.is_empty()).then(|| parts.join(". "))
+    }
+}
+
+/// The tables in [`LINKED_FILE`]'s `text`: for each, the link to the table it is for, as
+/// written (like `Norse surnames`), its links, and the d1 table that rolls them.
+pub fn read_linked(text: &str) -> Vec<(String, Links, Table)> {
+    let mut found = Vec::new();
+    for table in find(text) {
+        let Some(row) = table.rows.first() else {
+            continue;
+        };
+        let mut links = Links::default();
+        let mut own = None;
+        for (header, cell) in table.columns.iter().zip(&row.cells) {
+            let cell = cell.trim();
+            let (join, rest) = if let Some(rest) = cell.strip_prefix('-') {
+                (Join::NoSpace, rest)
+            } else if let Some(rest) = cell.strip_prefix(',') {
+                (Join::Comma, rest)
+            } else {
+                (Join::Space, cell)
+            };
+            let Some(target) = link_targets(rest).into_iter().next() else {
+                continue;
+            };
+            match header.trim() {
+                header if header.eq_ignore_ascii_case(THIS) && own.is_none() => {
+                    own = Some(target);
+                    links.join = join;
                 }
-                text.push_str(value);
+                _ if own.is_none() => links.before.push((target, join)),
+                _ => links.after.push((target, join)),
             }
+        }
+        if let Some(own) = own
+            && !links.is_empty()
+        {
+            found.push((own, links, table));
+        }
+    }
+    found
+}
+
+/// The text of [`LINKED_FILE`] with these `sections`, each the table's name, the link to
+/// it and its links.
+pub fn write_linked(sections: &[(String, String, Links)]) -> String {
+    let mut text = String::from(
+        "These are the tables rolled with other roll tables, set with Also roll and Rolled after in the table editor. Dungeon Elements keeps this file up to date, so there's no need to change it here.\n",
+    );
+    for (heading, own, links) in sections {
+        if let Some(section) = links.markdown(heading, own) {
+            text.push('\n');
+            text.push_str(&section);
         }
     }
     text
@@ -424,9 +649,13 @@ pub fn roll(
     rng: &mut fastrand::Rng,
     lookup: &mut Lookup<'_>,
 ) -> Rolled {
-    roll_at(name, table, each_column, rng, lookup, 0)
+    roll_at(name, table, each_column, rng, lookup, 0, &[])
 }
 
+/// Rolls `table`, or with tables linked to it (Also roll and Rolled after), its
+/// [`Table::linked`] table in its place. `linking` names the tables whose linked tables
+/// are being rolled already: those are rolled on their own, so the link from a linked
+/// table back to its own table rolls it, and two tables linked to each other stop.
 fn roll_at(
     name: &str,
     table: &Table,
@@ -434,7 +663,21 @@ fn roll_at(
     rng: &mut fastrand::Rng,
     lookup: &mut Lookup<'_>,
     depth: usize,
+    linking: &[String],
 ) -> Rolled {
+    let key = name.trim().to_lowercase();
+    if depth < MAX_DEPTH
+        && !linking.contains(&key)
+        && let Some(linked) = &table.linked
+    {
+        let mut linking = linking.to_vec();
+        linking.push(key);
+        // Each table it rolled shows its own die and number, so the d1's aren't shown.
+        let mut rolled = roll_at(name, linked, true, rng, lookup, depth + 1, &linking);
+        rolled.die = String::new();
+        rolled.values = Vec::new();
+        return rolled;
+    }
     let each_column = each_column && table.has_columns();
     let columns = if table.columns.is_empty() {
         vec![String::new()]
@@ -466,6 +709,7 @@ fn roll_at(
                     rng,
                     lookup,
                     depth,
+                    linking,
                     &mut inner,
                 )
             }
@@ -479,6 +723,7 @@ fn roll_at(
         values,
         results,
         each_column,
+        joins: table.joins.clone(),
         inner,
     }
 }
@@ -488,7 +733,8 @@ fn roll_at(
 ///
 /// A link in a column rolls only the column of the same name in the table it links to,
 /// when that table has one, so a name's family name can come from another table than its
-/// first name.
+/// first name. The tables named in `linking` are rolled without their linked tables.
+#[allow(clippy::too_many_arguments)]
 fn expand(
     cell: &str,
     column: &str,
@@ -496,6 +742,7 @@ fn expand(
     rng: &mut fastrand::Rng,
     lookup: &mut Lookup<'_>,
     depth: usize,
+    linking: &[String],
     inner: &mut Vec<Rolled>,
 ) -> String {
     let mut out = String::new();
@@ -518,6 +765,12 @@ fn expand(
                 Some(columns) => {
                     let table = Table {
                         columns: table.columns[columns.clone()].to_vec(),
+                        joins: table
+                            .joins
+                            .get(columns.clone())
+                            .unwrap_or_default()
+                            .to_vec(),
+                        linked: None,
                         rows: table
                             .rows
                             .iter()
@@ -528,14 +781,14 @@ fn expand(
                             .collect(),
                         ..table
                     };
-                    let rolled = roll_at(&name, &table, false, rng, lookup, depth + 1);
-                    out.push_str(&joined(
-                        rolled.results.iter().map(|(_, value)| value.as_str()),
-                    ));
+                    let mut rolled = roll_at(&name, &table, false, rng, lookup, depth + 1, linking);
+                    rolled.each_column = true;
+                    out.push_str(&rolled.text());
                     inner.push(rolled);
                 }
                 None => {
-                    let rolled = roll_at(&name, &table, each_column, rng, lookup, depth + 1);
+                    let rolled =
+                        roll_at(&name, &table, each_column, rng, lookup, depth + 1, linking);
                     out.push_str(&rolled.text());
                     inner.push(rolled);
                 }
@@ -560,11 +813,12 @@ fn columns_named(table: &Table, header: &str) -> Option<Range<usize>> {
         .position(|column| column.trim().eq_ignore_ascii_case(header.trim()))?;
     let mut end = start + 1;
     while end < table.columns.len()
-        && table.rows.iter().all(|row| {
-            row.cells
-                .get(end)
-                .is_some_and(|cell| cell.trim_start().starts_with('-'))
-        })
+        && (table.joins.get(end) == Some(&Join::NoSpace)
+            || table.rows.iter().all(|row| {
+                row.cells
+                    .get(end)
+                    .is_some_and(|cell| cell.trim_start().starts_with('-'))
+            }))
     {
         end += 1;
     }
@@ -646,6 +900,10 @@ pub struct Settings {
     /// The groups of built-in tables open in the Roll Tables list, by [`Group::key`].
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub open_groups: BTreeSet<String>,
+    /// For each table, how its result columns join the one before them, by the column's
+    /// header, when not with a space.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub joins: BTreeMap<String, BTreeMap<String, Join>>,
 }
 
 impl Settings {
@@ -673,6 +931,37 @@ impl Settings {
         } else {
             self.not_rolled.insert(key.to_string(), not_rolled);
         }
+    }
+
+    /// Sets how the result columns of table `key`, headed `columns`, join the one before
+    /// them.
+    pub fn set_joins(&mut self, key: &str, columns: &[String], joins: &[Join]) {
+        let set: BTreeMap<String, Join> = columns
+            .iter()
+            .zip(joins)
+            .skip(1)
+            .filter(|(_, join)| **join != Join::Space)
+            .map(|(column, join)| (column.trim().to_string(), *join))
+            .collect();
+        if set.is_empty() {
+            self.joins.remove(key);
+        } else {
+            self.joins.insert(key.to_string(), set);
+        }
+    }
+
+    /// How each of the result columns of table `key`, headed `columns`, joins the one
+    /// before it.
+    pub fn joins(&self, key: &str, columns: &[String]) -> Vec<Join> {
+        let set = self.joins.get(key);
+        columns
+            .iter()
+            .map(|column| {
+                set.and_then(|set| set.get(column.trim()))
+                    .copied()
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     /// Sets whether the table `key` rolls each column on its own.
@@ -1022,6 +1311,13 @@ impl List {
                             .color(c.text_muted),
                     )
                     .padding(iced::padding::left(46)),
+                );
+            }
+            // The tables it is rolled with, from the table editor.
+            if let Some(summary) = entry.table.links.summary() {
+                line = line.push(
+                    container(text(summary).size(11).color(c.text_muted))
+                        .padding(iced::padding::left(46)),
                 );
             }
             if entry.table.has_columns() {
@@ -1391,6 +1687,217 @@ mod tests {
         // A table whose first column isn't a die isn't a roll table.
         assert!(find("| Name | Age |\n| --- | --- |\n| Bo | 3 |\n").is_empty());
         assert!(find("| +2 | x |\n| --- | --- |\n| 1 | a |\n").is_empty());
+    }
+
+    #[test]
+    fn a_d1_table_is_a_roll_table() {
+        let table = find("| d1 | A | B |\n| --- | --- | --- |\n| 1 | x | y |\n").remove(0);
+        assert_eq!(table.die.bounds(), (1, 1));
+        assert_eq!(table.rows[0].cells, ["x", "y"]);
+    }
+
+    #[test]
+    fn joins_results_with_spaces_nothing_or_commas() {
+        let row = |pairs: &[(Join, &str)]| joined(pairs.iter().copied());
+        assert_eq!(
+            row(&[(Join::Space, "Bjorn"), (Join::Space, "Ashby")]),
+            "Bjorn Ashby"
+        );
+        assert_eq!(
+            row(&[(Join::Space, "Bjorn"), (Join::NoSpace, "sson")]),
+            "Bjornsson"
+        );
+        assert_eq!(
+            row(&[
+                (Join::Space, "rope"),
+                (Join::Comma, "lantern"),
+                (Join::Comma, "chalk")
+            ]),
+            "rope, lantern, chalk"
+        );
+        // The hyphen in a result still joins it, whatever its column says, even twice.
+        assert_eq!(
+            row(&[(Join::Space, "Ash"), (Join::Space, "-ford")]),
+            "Ashford"
+        );
+        assert_eq!(
+            row(&[(Join::Space, "Ash"), (Join::NoSpace, "--ford")]),
+            "Ashford"
+        );
+        assert_eq!(
+            row(&[(Join::Space, "rope"), (Join::Space, ", chalk")]),
+            "rope, chalk"
+        );
+        // Empty results are left out.
+        assert_eq!(
+            row(&[(Join::Space, "a"), (Join::Comma, ""), (Join::Comma, "b")]),
+            "a, b"
+        );
+    }
+
+    #[test]
+    fn each_column_rolls_join_as_the_settings_say() {
+        let mut table =
+            find("| d1 | Item | Item |\n| --- | --- | --- |\n| 1 | rope | chalk |\n").remove(0);
+        let mut settings = Settings::default();
+        let key = "gear.md#Packs";
+        settings.set_joins(key, &table.columns, &[Join::Space, Join::Comma]);
+        table.joins = settings.joins(key, &table.columns);
+        let mut rng = fastrand::Rng::with_seed(1);
+        assert_eq!(
+            roll("Packs", &table, true, &mut rng, &mut no_tables).text(),
+            "rope, chalk"
+        );
+
+        // Only joins other than a space are kept, and none for a table with none.
+        settings.set_joins(key, &table.columns, &[Join::Space, Join::Space]);
+        assert!(settings.joins.is_empty());
+        let yaml = serde_yaml_ng::to_string(&settings).unwrap();
+        assert!(!yaml.contains("joins"), "{yaml}");
+        settings.set_joins(
+            key,
+            &["A".into(), "B".into()],
+            &[Join::Space, Join::NoSpace],
+        );
+        let yaml = serde_yaml_ng::to_string(&settings).unwrap();
+        assert!(yaml.contains("no_space"), "{yaml}");
+        assert_eq!(
+            serde_yaml_ng::from_str::<Settings>(&yaml).unwrap(),
+            settings
+        );
+    }
+
+    const GIVEN: &str = "| d2 | Given |\n| --- | --- |\n| 1 | Bjorn |\n| 2 | Leif |\n";
+    const SURNAME: &str = "| d1 | Ending |\n| --- | --- |\n| 1 | sson |\n";
+    const FATHER: &str = "| d1 | Father |\n| --- | --- |\n| 1 | Ulf |\n";
+
+    /// Finds the tables above by name, each with `linked` set from `file`, as the app does.
+    fn norse(file: &str) -> impl FnMut(&str) -> Option<(String, Table, bool)> + '_ {
+        move |target: &str| {
+            let text = match target {
+                "Given" => GIVEN,
+                "Surname" => SURNAME,
+                "Father" => FATHER,
+                _ => return None,
+            };
+            let mut table = find(text).remove(0);
+            if let Some((_, links, linked)) = read_linked(file)
+                .into_iter()
+                .find(|(own, _, _)| own == target)
+            {
+                table.links = links;
+                table.linked = Some(Box::new(linked));
+            }
+            Some((target.to_string(), table, false))
+        }
+    }
+
+    #[test]
+    fn linked_tables_are_kept_as_d1_tables() {
+        let surname = Links {
+            before: vec![("Father".into(), Join::Space)],
+            join: Join::NoSpace,
+            after: Vec::new(),
+        };
+        let given = Links {
+            before: Vec::new(),
+            join: Join::Space,
+            after: vec![
+                ("Father".into(), Join::Space),
+                ("Surname".into(), Join::NoSpace),
+            ],
+        };
+        let file = write_linked(&[
+            ("Surname".into(), "Surname".into(), surname.clone()),
+            ("Given".into(), "Given".into(), given.clone()),
+            ("Nothing".into(), "Nothing".into(), Links::default()),
+        ]);
+        assert!(file.contains("| d1 "), "{file}");
+        assert!(file.contains("-[[Surname]]"), "{file}");
+        assert!(!file.contains("Nothing"), "{file}");
+        let read = read_linked(&file);
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].0, "Surname");
+        assert_eq!(read[0].1, surname);
+        assert_eq!(read[1].0, "Given");
+        assert_eq!(read[1].1, given);
+        assert_eq!(read[1].2.columns, [THIS, ALSO, ALSO]);
+        assert_eq!(
+            given.summary().as_deref(),
+            Some("Also rolls Father, Surname")
+        );
+        assert_eq!(surname.summary().as_deref(), Some("After Father"));
+    }
+
+    #[test]
+    fn rolling_a_table_rolls_its_linked_tables() {
+        let file = write_linked(&[
+            (
+                "Given".into(),
+                "Given".into(),
+                Links {
+                    after: vec![("Surname".into(), Join::Space)],
+                    ..Links::default()
+                },
+            ),
+            (
+                "Surname".into(),
+                "Surname".into(),
+                Links {
+                    before: vec![("Father".into(), Join::Space)],
+                    join: Join::NoSpace,
+                    ..Links::default()
+                },
+            ),
+        ]);
+        let mut lookup = norse(&file);
+        let mut rng = fastrand::Rng::with_seed(3);
+        let (name, given, _) = lookup("Given").unwrap();
+        let rolled = roll(&name, &given, false, &mut rng, &mut lookup);
+        let text = rolled.text();
+        assert!(text == "Bjorn Ulfsson" || text == "Leif Ulfsson", "{text}");
+        // The history shows what each table rolled, not the d1.
+        assert!(rolled.values.is_empty());
+        assert_eq!(rolled.inner.len(), 2);
+        assert!(rolled.line().starts_with("Given: "), "{}", rolled.line());
+
+        // Rolled after: a surname gets its father's name first, on its own too.
+        let (name, surname, _) = lookup("Surname").unwrap();
+        let rolled = roll(&name, &surname, false, &mut rng, &mut lookup);
+        assert_eq!(rolled.text(), "Ulfsson");
+
+        // Two tables that roll each other stop.
+        let looped = write_linked(&[
+            (
+                "Given".into(),
+                "Given".into(),
+                Links {
+                    after: vec![("Father".into(), Join::Space)],
+                    ..Links::default()
+                },
+            ),
+            (
+                "Father".into(),
+                "Father".into(),
+                Links {
+                    after: vec![("Given".into(), Join::Space)],
+                    ..Links::default()
+                },
+            ),
+        ]);
+        let mut looping = norse(&looped);
+        let (name, given, _) = looping("Given").unwrap();
+        let text = roll(&name, &given, false, &mut rng, &mut looping).text();
+        assert_eq!(text.split(' ').count(), 3, "{text}");
+
+        // A link from another table rolls the linked tables too.
+        let names = find("| d1 | Name |\n| --- | --- |\n| 1 | [[Given]] the Bold |\n").remove(0);
+        let rolled = roll("Names", &names, false, &mut rng, &mut lookup);
+        assert!(
+            rolled.text().ends_with("Ulfsson the Bold"),
+            "{}",
+            rolled.text()
+        );
     }
 
     #[test]
