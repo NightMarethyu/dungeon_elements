@@ -4,6 +4,14 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Ammon's name tables
+
+- The built-in English, Norse, Latin, Greek and Japanese names are much longer lists: about 70 given names each for women and men, and as many family names. Their **Female** and **Male** tables still give a full name, like Alice Ashby, from a given name and a family name rolled on their own.
+- A Norse woman picked (Norse names, or **Norse - Female**) is always a -sdottir, and a man a -sson. **Names** and the **Mixed** tables roll the ending, so it can come out either way.
+- The **Mixed** tables take their family names from family names, not from a second first name.
+- New story prompts: **Tropes** (50), **Verbs** (100), and **Tropes and Verbs**, which rolls one of each. The walkthrough rolls on it to sum up a campaign.
+- Some of the World tables have new rows, like **Campaign names**, **Historic events** and **Costs and limits**.
+
 ### Undo and Redo
 
 - **Ctrl+Z** takes back the last change to a note, and **Ctrl+Y** (or **Ctrl+Shift+Z**) does it again. They are at the top of the **Edit** menu and the right-click menus, and as arrows at the left of the formatting toolbar, and they say what they would do, like **Undo Typing** or **Undo Roll**.

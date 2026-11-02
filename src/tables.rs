@@ -795,7 +795,7 @@ macro_rules! built_in {
 }
 
 /// The tables built into the app, in the order the Roll Tables list shows them.
-pub const BUILT_IN: [BuiltIn; 42] = [
+pub const BUILT_IN: [BuiltIn; 45] = [
     built_in!("Names", false, Names),
     built_in!("Female names", false, Names),
     built_in!("Male names", false, Names),
@@ -818,6 +818,9 @@ pub const BUILT_IN: [BuiltIn; 42] = [
     built_in!("Twists", false, StoryPrompts),
     built_in!("What's here", false, StoryPrompts),
     built_in!("Feel of a place", false, StoryPrompts),
+    built_in!("Tropes and Verbs", false, StoryPrompts),
+    built_in!("Tropes", false, StoryPrompts),
+    built_in!("Verbs", false, StoryPrompts),
     built_in!("Action and Theme", true, StoryPrompts),
     built_in!("Campaign names", true, World),
     built_in!("Threats", false, World),
@@ -1349,7 +1352,7 @@ mod tests {
         assert_eq!(groups, sorted);
         let count = |group| groups.iter().filter(|other| **other == group).count();
         assert_eq!(count(Group::Names), 17);
-        assert_eq!(count(Group::StoryPrompts), 6);
+        assert_eq!(count(Group::StoryPrompts), 9);
         assert_eq!(count(Group::World), 13);
         assert_eq!(count(Group::Adventure), 6);
     }
@@ -1626,6 +1629,119 @@ mod tests {
         let (name, norse, each_column) = built_in_link("Norse names#Male").unwrap();
         let rolled = roll(&name, &norse, each_column, &mut rng, &mut built_in_link);
         assert!(rolled.text().ends_with("sson"), "{}", rolled.text());
+    }
+
+    #[test]
+    fn every_link_in_a_built_in_table_finds_its_table() {
+        // A renamed heading would leave a link that rolls nothing, so a roll shows
+        // "[[Norse names#Female]]" in place of a name.
+        for table in BUILT_IN {
+            for link in links::targets(table.text) {
+                assert!(
+                    built_in_link(&link).is_some(),
+                    "{} links to {link}, which no built-in table has",
+                    table.name
+                );
+            }
+        }
+    }
+
+    fn rolls(target: &str, times: usize) -> Vec<String> {
+        let mut rng = fastrand::Rng::with_seed(7);
+        let (name, table, each_column) = built_in_link(target).unwrap();
+        (0..times)
+            .map(|_| roll(&name, &table, each_column, &mut rng, &mut built_in_link).text())
+            .collect()
+    }
+
+    #[test]
+    fn a_culture_gives_full_names() {
+        for culture in [
+            "English", "Norse", "Celtic", "Latin", "Greek", "Arabic", "Slavic", "Japanese",
+        ] {
+            for target in [
+                format!("{culture} names"),
+                format!("{culture} names#Female"),
+                format!("{culture} names#Male"),
+            ] {
+                for name in rolls(&target, 20) {
+                    assert!(
+                        name.split_whitespace().count() >= 2 && !name.contains("[["),
+                        "{target} gave {name}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_norse_name_picked_has_the_matching_ending() {
+        for name in rolls("Norse names#Female", 20) {
+            assert!(name.ends_with("sdottir"), "{name}");
+        }
+        for name in rolls("Norse names#Male", 20) {
+            assert!(name.ends_with("sson"), "{name}");
+        }
+        // Norse names rolls a daughter or a son, each with the right ending.
+        let (name, table, each_column) = built_in_link("Norse names").unwrap();
+        let mut rng = fastrand::Rng::with_seed(3);
+        for _ in 0..40 {
+            let rolled = roll(&name, &table, each_column, &mut rng, &mut built_in_link);
+            let female = rolled.inner[0].name == "Female";
+            let text = rolled.text();
+            assert!(
+                text.ends_with(if female { "sdottir" } else { "sson" }),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn random_norse_family_names_can_end_either_way() {
+        for target in ["Norse names#Family Names", "Norse names#Any"] {
+            let names = rolls(target, 60);
+            assert!(names.iter().any(|name| name.ends_with("sson")), "{target}");
+            assert!(
+                names.iter().any(|name| name.ends_with("sdottir")),
+                "{target}"
+            );
+            assert!(names.iter().all(|name| !name.contains('-')), "{target}");
+        }
+        // Names and the Mixed tables use them.
+        let names = built_in("Names").unwrap().text;
+        assert!(names.contains("[[Norse names#Any]]"));
+        for mixed in ["Mixed female names", "Mixed male names"] {
+            assert!(
+                built_in(mixed)
+                    .unwrap()
+                    .text
+                    .contains("| [[Norse names#Family Names]] |"),
+                "{mixed}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_names_take_a_family_name_not_a_second_first_name() {
+        // The Family column links to family names, not given names.
+        for mixed in ["Mixed female names", "Mixed male names"] {
+            let table = built_in(mixed).unwrap().table().unwrap();
+            for row in &table.rows {
+                assert!(!row.cells[1].contains("Given"), "{mixed}: {}", row.cells[1]);
+            }
+        }
+    }
+
+    #[test]
+    fn tropes_and_verbs_gives_one_of_each() {
+        for text in rolls("Tropes and Verbs", 10) {
+            assert!(
+                text.starts_with("Trope: ") && text.contains("; Verb: "),
+                "{text}"
+            );
+        }
+        assert_eq!(built_in("Tropes").unwrap().table().unwrap().rows.len(), 50);
+        assert_eq!(built_in("Verbs").unwrap().table().unwrap().rows.len(), 100);
     }
 
     #[test]
