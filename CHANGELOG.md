@@ -9,6 +9,11 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - A note that holds only tables, with their headings and short lines of text between them, has a third view beside **Edit** and **Read**: **Table**. It shows every table in the note in the table editor, one under the other, each named by its heading, and the lines of text between them are changed in place, as in the reading view.
 - Moving from one table to the next keeps what was changed in the first, and Ctrl+Z undoes it as one step.
 - Such notes open in the Table view. **View > Open Table Notes in Table View** turns that off. Other notes keep Edit and Read, and their tables keep the **Edit Table** button.
+### Linked roll tables
+
+- The table editor has **Linked tables**: **Also roll** picks tables to roll after this one (a Norse given name, then a surname) and **Rolled after** picks tables it needs rolled first (a father's name before a Norse surname), with no change to the rows. The results come back as one, like "Sven Leifsson", wherever the table is rolled, and the Roll Tables list shows the links under the table's name.
+- Each linked table, and each column of a table rolled column by column, is **Joined with** a space, no space or a comma, picked in the table editor, so nobody needs to start results with a hyphen. Results that do still join with no space.
+- The links are kept as d1 roll tables in a hidden file in the campaign, `.dungeon_elements/linked tables.md`, and follow notes and headings when they are renamed.
 
 ### Ammon's name tables
 

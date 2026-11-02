@@ -2818,6 +2818,7 @@ impl Workspace {
 
     /// Every roll table in the campaign.
     fn all_tables(&self) -> Vec<tables::Entry> {
+        let linked = self.linked_tables();
         let mut found = Vec::new();
         for path in markdown_files(&self.tree) {
             let Some(text) = self.note_text(&path) else {
@@ -2829,7 +2830,7 @@ impl Workspace {
                     each_column: self.rolls_each_column(&path, table.heading.as_deref()),
                     path: path.clone(),
                     note: note.clone(),
-                    table,
+                    table: self.with_settings_from(&path, table, &linked),
                 });
             }
         }
@@ -2890,11 +2891,148 @@ impl Workspace {
         found.or_else(|| tables::built_in_link(target))
     }
 
-    /// `table`, from the note at `path`, with the links it doesn't roll from the settings.
-    fn with_settings(&self, path: &Path, mut table: tables::Table) -> tables::Table {
+    /// `table`, from the note at `path`, with what the campaign keeps for it outside the
+    /// note: the links it doesn't roll, how its columns join, and the tables rolled with it.
+    fn with_settings(&self, path: &Path, table: tables::Table) -> tables::Table {
+        let linked = self.linked_tables();
+        self.with_settings_from(path, table, &linked)
+    }
+
+    /// Like [`Self::with_settings`], with the linked tables already read.
+    fn with_settings_from(
+        &self,
+        path: &Path,
+        mut table: tables::Table,
+        linked: &[Linked],
+    ) -> tables::Table {
         let key = tables::key(&self.root, path, table.heading.as_deref());
         table.not_rolled = self.not_rolled(&key);
+        table.joins = self.table_settings.joins(&key, &table.columns);
+        let key = key.to_lowercase();
+        if let Some(found) = linked.iter().find(|found| found.key == key) {
+            table.links = found.links.clone();
+            table.linked = Some(Box::new(found.table.clone()));
+        }
         table
+    }
+
+    /// Where the campaign keeps the tables rolled with other tables.
+    fn linked_path(&self) -> PathBuf {
+        self.root.join(tables::LINKED_FILE)
+    }
+
+    /// The tables rolled with other tables (Also roll and Rolled after), each by the
+    /// [`tables::key`] of the table it is for.
+    fn linked_tables(&self) -> Vec<Linked> {
+        let from = self.linked_path();
+        let Ok(text) = std::fs::read_to_string(&from) else {
+            return Vec::new();
+        };
+        tables::read_linked(&text)
+            .into_iter()
+            .filter_map(|(own, links, table)| {
+                let (note, heading) = match own.split_once('#') {
+                    Some((note, heading)) => (note.trim(), Some(heading.trim())),
+                    None => (own.trim(), None),
+                };
+                let path = self.index.resolve(note, &from)?;
+                Some(Linked {
+                    key: tables::key(&self.root, path, heading).to_lowercase(),
+                    own,
+                    links,
+                    table,
+                })
+            })
+            .collect()
+    }
+
+    /// The tables rolled with the table under `heading` in the note at `path`.
+    fn links_of(&self, path: &Path, heading: Option<&str>) -> tables::Links {
+        let key = tables::key(&self.root, path, heading).to_lowercase();
+        self.linked_tables()
+            .into_iter()
+            .find(|found| found.key == key)
+            .map(|found| found.links)
+            .unwrap_or_default()
+    }
+
+    /// What a table editor needs for the Linked tables part and its columns' joins, for
+    /// the table under `heading` in the note at `path`, with columns headed `columns`.
+    fn editor_links(
+        &self,
+        path: &Path,
+        heading: Option<&str>,
+        columns: &[String],
+    ) -> (tables::Links, Vec<tables::Join>, Vec<table_picker::Choice>) {
+        let key = tables::key(&self.root, path, heading);
+        (
+            self.links_of(path, heading),
+            self.table_settings.joins(&key, columns),
+            self.link_choices(),
+        )
+    }
+
+    /// What the table editor's Also roll and Rolled after dropdowns offer: the campaign's
+    /// tables first, as those are the ones most often rolled together, then the built-in.
+    fn link_choices(&self) -> Vec<table_picker::Choice> {
+        let (built_in, campaign): (Vec<_>, Vec<_>) = table_picker::choices(self.table_refs())
+            .into_iter()
+            .partition(|choice| {
+                choice.adds().iter().all(|table| {
+                    let note = table.split('#').next().unwrap_or(table);
+                    tables::built_in(note).is_some()
+                })
+            });
+        campaign.into_iter().chain(built_in).collect()
+    }
+
+    /// Keeps `links` as the tables rolled with the table under `heading` in the note at
+    /// `path`, which was under `old`. Returns whether they changed.
+    fn save_links(
+        &mut self,
+        path: &Path,
+        old: Option<&str>,
+        heading: Option<&str>,
+        links: &tables::Links,
+    ) -> Result<bool, String> {
+        let old_key = tables::key(&self.root, path, old).to_lowercase();
+        let key = tables::key(&self.root, path, heading).to_lowercase();
+        let found = self.linked_tables();
+        let before = found
+            .iter()
+            .find(|found| found.key == old_key || found.key == key)
+            .map(|found| found.links.clone())
+            .unwrap_or_default();
+        if before == *links && old_key == key {
+            return Ok(false);
+        }
+        let from = self.linked_path();
+        let mut sections: Vec<(String, String, tables::Links)> = found
+            .into_iter()
+            .filter(|found| found.key != old_key && found.key != key)
+            .map(|found| (found.own.clone(), found.own, found.links))
+            .collect();
+        if !links.is_empty() {
+            let note = self
+                .index
+                .link_text(path, &from, false)
+                .unwrap_or_else(|| self.tree_name(path, false));
+            let own = match heading {
+                Some(heading) => format!("{note}#{heading}"),
+                None => note,
+            };
+            let name = match heading {
+                Some(heading) => heading.to_string(),
+                None => self.tree_name(path, false),
+            };
+            sections.push((name, own, links.clone()));
+        }
+        if let Some(folder) = from.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&from, tables::write_linked(&sections))
+            .map_err(|error| error.to_string())?;
+        Ok(true)
     }
 
     /// The tables that the results of table `key` link to without rolling them.
@@ -2968,10 +3106,27 @@ impl Workspace {
         table: &tables::Table,
         each_column: bool,
     ) -> String {
-        let mut rng = self.dice.rng().clone();
-        let rolled = tables::roll(name, table, each_column, &mut rng, &mut |target| {
-            self.linked_table(target, path)
+        // A table rolled as it is in the editor rolls the tables linked to it there, with
+        // itself as it is there too.
+        let mut table = table.clone();
+        let own = (table.linked.is_none() && !table.links.is_empty()).then(|| {
+            let plain = table.clone();
+            table.linked = table.links.table(name).map(Box::new);
+            plain
         });
+        let mut rng = self.dice.rng().clone();
+        let rolled = tables::roll(
+            name,
+            &table,
+            each_column,
+            &mut rng,
+            &mut |target| match &own {
+                Some(plain) if target.trim().eq_ignore_ascii_case(name.trim()) => {
+                    Some((name.to_string(), plain.clone(), each_column))
+                }
+                _ => self.linked_table(target, path),
+            },
+        );
         *self.dice.rng() = rng;
         let text = rolled.text();
         self.dice.open = true;
@@ -3738,6 +3893,7 @@ impl Workspace {
                 heading.as_deref(),
                 editor.each_column(),
                 editor.not_rolled(),
+                TableLinks::of(&editor),
             );
             self.set_information(
                 &path,
@@ -3793,21 +3949,22 @@ impl Workspace {
         let Some(form) = &mut tab.form else {
             return;
         };
-        let labels: Vec<String> = form
+        let labels: Vec<(String, Vec<String>)> = form
             .unset_tables()
             .into_iter()
-            .map(|(label, _)| label)
+            .map(|(label, editor)| (label, editor.joins().0))
             .collect();
         if labels.is_empty() {
             return;
         }
-        let settings: Vec<(bool, BTreeSet<String>)> = labels
+        let settings: Vec<_> = labels
             .iter()
-            .map(|label| {
+            .map(|(label, columns)| {
                 let key = tables::key(&self.root, &path, Some(label));
                 (
                     self.rolls_each_column(&path, Some(label)),
                     self.not_rolled(&key),
+                    self.editor_links(&path, Some(label), columns),
                 )
             })
             .collect();
@@ -3815,11 +3972,12 @@ impl Workspace {
         let Some(form) = self.active_tab_mut().and_then(|tab| tab.form.as_mut()) else {
             return;
         };
-        for ((_, editor), (each_column, not_rolled)) in
+        for ((_, editor), (each_column, not_rolled, (linked, joins, choices))) in
             form.unset_tables().into_iter().zip(settings)
         {
             editor.set_settings(Some(each_column), not_rolled);
             editor.set_table_links(links.clone());
+            editor.set_links(linked, joins, choices);
         }
     }
 
@@ -3841,7 +3999,15 @@ impl Workspace {
             return;
         }
         let (each_column, not_rolled) = (editor.each_column(), editor.not_rolled());
-        self.save_table_settings(&path, Some(&label), Some(&label), each_column, not_rolled);
+        let linked = TableLinks::of(editor);
+        self.save_table_settings(
+            &path,
+            Some(&label),
+            Some(&label),
+            each_column,
+            not_rolled,
+            linked,
+        );
     }
 
     /// Rolls roll table field `index` of the active tab's form, as it is in its editor.
@@ -3905,6 +4071,7 @@ impl Workspace {
                 Some(&heading),
                 editor.each_column(),
                 editor.not_rolled(),
+                TableLinks::of(&editor),
             );
             self.set_information(&path, Some(&old), Some(&heading), editor.keeps_die());
             if let Some(new) = renamed {
@@ -3929,12 +4096,20 @@ impl Workspace {
         let each_column = self.rolls_each_column(&path, Some(&heading));
         let key = tables::key(&self.root, &path, Some(&heading));
         let not_rolled = self.not_rolled(&key);
+        let columns = self
+            .active_tab()
+            .and_then(|tab| tab.form.as_ref())
+            .and_then(form::Form::table_editor)
+            .map(|editor| editor.joins().0)
+            .unwrap_or_default();
+        let (linked, joins, choices) = self.editor_links(&path, Some(&heading), &columns);
         let information = self.is_information(&path, Some(&heading));
         if let Some(tab) = self.active_tab_mut()
             && let Some((_, editor)) = tab.form.as_mut().and_then(form::Form::table_editor_mut)
         {
             editor.set_settings(Some(each_column), not_rolled);
             editor.set_table_links(links);
+            editor.set_links(linked, joins, choices);
             if information && editor.is_roll() {
                 editor.set_roll(false);
             }
@@ -3943,7 +4118,8 @@ impl Workspace {
 
     /// Keeps what the table editor set for the table under `heading` in the note at
     /// `path`, which was under `old`: whether it rolls each column (if it could be set),
-    /// and the tables it links to without rolling.
+    /// the tables it links to without rolling, how its columns join, and the tables
+    /// rolled with it.
     fn save_table_settings(
         &mut self,
         path: &Path,
@@ -3951,6 +4127,7 @@ impl Workspace {
         heading: Option<&str>,
         each_column: Option<bool>,
         not_rolled: BTreeSet<String>,
+        linked: TableLinks,
     ) {
         let old_key = tables::key(&self.root, path, old);
         let key = tables::key(&self.root, path, heading);
@@ -3960,10 +4137,25 @@ impl Workspace {
             self.table_settings.set(&old_key, false);
             self.table_settings
                 .set_not_rolled(&old_key, BTreeSet::new());
+            self.table_settings.set_joins(&old_key, &[], &[]);
         }
         self.table_settings.set(&key, each_column);
         self.table_settings.set_not_rolled(&key, not_rolled);
+        let mut links_changed = false;
+        if let TableLinks(Some((links, columns, joins))) = &linked {
+            self.table_settings.set_joins(&key, columns, joins);
+            links_changed = match self.save_links(path, old, heading, links) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    self.status = format!("Could not keep the tables rolled with it: {error}");
+                    false
+                }
+            };
+        }
         if self.table_settings == before {
+            if links_changed {
+                self.refresh_tables();
+            }
             return;
         }
         if let Err(error) = self.table_settings.save(&self.root) {
@@ -4024,6 +4216,17 @@ impl Workspace {
             changed += count;
             if let Some(index) = tab {
                 let _ = self.reload_tab(index);
+            }
+        }
+        // The tables rolled with other tables link to them in a hidden file.
+        let linked = self.linked_path();
+        if let Ok(text) = std::fs::read_to_string(&linked)
+            && let Some((text, count)) =
+                links::rename_heading(&text, &linked, &self.index, note, old, new)
+        {
+            match std::fs::write(&linked, text) {
+                Ok(()) => changed += count,
+                Err(_) => problems.push(tables::LINKED_FILE.to_string()),
             }
         }
         self.status = match changed {
@@ -4212,6 +4415,11 @@ impl Workspace {
             editor.set_roll(false);
         }
         editor.set_table_links(self.table_link_keys());
+        editor.set_links(
+            table.links.clone(),
+            table.joins.clone(),
+            self.link_choices(),
+        );
         if shared {
             editor.keep_heading();
         }
@@ -9335,6 +9543,17 @@ impl Workspace {
             }
         }
 
+        // The tables rolled with other tables link to them in a hidden file.
+        let linked = self.linked_path();
+        if let Ok(text) = std::fs::read_to_string(&linked)
+            && let Some((text, count)) = links::relink_note(&text, &linked, &rename)
+        {
+            match std::fs::write(&linked, text) {
+                Ok(()) => changed_links += count,
+                Err(_) => problems.push(tables::LINKED_FILE.to_string()),
+            }
+        }
+
         // Unsaved changes in open tabs get their links rewritten as well.
         for index in 0..self.tabs.len() {
             let tab = &self.tabs[index];
@@ -10808,6 +11027,33 @@ fn markdown_files(entries: &[Entry]) -> Vec<PathBuf> {
     files
 }
 
+/// What the table editor sets for a table besides its rows: the tables rolled with it,
+/// and how its columns join, by their headers.
+/// None when the editor wasn't given them, so they are left as they are.
+struct TableLinks(Option<(tables::Links, Vec<String>, Vec<tables::Join>)>);
+
+impl TableLinks {
+    fn of(editor: &table_editor::Editor) -> Self {
+        let (columns, joins) = editor.joins();
+        TableLinks(
+            editor
+                .has_links()
+                .then(|| (editor.links().clone(), columns, joins)),
+        )
+    }
+}
+
+/// The tables rolled with one of the campaign's tables, from [`tables::LINKED_FILE`].
+struct Linked {
+    /// The [`tables::key`] of the table they are for, without case.
+    key: String,
+    /// The link to that table, as written in the file.
+    own: String,
+    links: tables::Links,
+    /// The d1 table that rolls them all.
+    table: tables::Table,
+}
+
 /// What a scan of the campaign's notes found, besides the file tree.
 #[derive(Default)]
 struct Scan {
@@ -12248,6 +12494,86 @@ mod tests {
 
     fn shown(workspace: &Workspace) -> String {
         workspace.active_tab().unwrap().text().unwrap()
+    }
+
+    #[test]
+    fn linked_tables_roll_together_and_follow_renames() {
+        let mut workspace = workspace_with(
+            "linked_tables",
+            &[
+                (
+                    "tables/Given.md",
+                    "| d1 | Name |\n| --- | --- |\n| 1 | Bjorn |\n",
+                ),
+                (
+                    "tables/Endings.md",
+                    "## Sons\n\n| d1 | Ending |\n| --- | --- |\n| 1 | sson |\n",
+                ),
+            ],
+        );
+        let root = workspace.root.clone();
+        let given = root.join("tables/Given.md");
+        let endings = root.join("tables/Endings.md");
+        let links = tables::Links {
+            after: vec![("Endings#Sons".into(), tables::Join::NoSpace)],
+            ..tables::Links::default()
+        };
+        workspace.save_table_settings(
+            &given,
+            None,
+            None,
+            Some(false),
+            BTreeSet::new(),
+            TableLinks(Some((
+                links.clone(),
+                vec!["Name".into()],
+                vec![tables::Join::Space],
+            ))),
+        );
+        let file = std::fs::read_to_string(root.join(tables::LINKED_FILE)).unwrap();
+        assert!(file.contains("| d1"), "{file}");
+        assert_eq!(workspace.links_of(&given, None), links);
+
+        workspace.roll_table(&given, 0);
+        let (_, table, _) = workspace.linked_table("Given", &given).unwrap();
+        assert!(table.linked.is_some());
+        let rolled = workspace.roll_found(&given, "Given", &table, false);
+        assert_eq!(rolled, "Bjornsson");
+
+        // Renaming the notes and the heading keeps the links.
+        workspace.rename_note(&given, "Norse given").unwrap();
+        let given = root.join("tables/Norse given.md");
+        workspace.rename_heading_links(&endings, "Sons", "Son of");
+        std::fs::write(
+            &endings,
+            "## Son of\n\n| d1 | Ending |\n| --- | --- |\n| 1 | sson |\n",
+        )
+        .unwrap();
+        let file = std::fs::read_to_string(root.join(tables::LINKED_FILE)).unwrap();
+        assert!(file.contains("[[Norse given]]"), "{file}");
+        assert!(file.contains("[[Endings#Son of]]"), "{file}");
+        let (_, table, _) = workspace.linked_table("Norse given", &given).unwrap();
+        assert_eq!(
+            workspace.roll_found(&given, "Norse given", &table, false),
+            "Bjornsson"
+        );
+
+        // Taking the links away leaves the file without the table.
+        workspace.save_table_settings(
+            &given,
+            None,
+            None,
+            Some(false),
+            BTreeSet::new(),
+            TableLinks(Some((
+                tables::Links::default(),
+                vec!["Name".into()],
+                vec![tables::Join::Space],
+            ))),
+        );
+        let file = std::fs::read_to_string(root.join(tables::LINKED_FILE)).unwrap();
+        assert!(!file.contains("| d1"), "{file}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

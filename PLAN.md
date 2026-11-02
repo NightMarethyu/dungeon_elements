@@ -200,7 +200,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - The dice pane gets two lists: **Dice** (the roll history today) and **Tables** (the results of roll table rolls, newest first, each with its table's name), from everywhere a table is rolled: Inspire me, field table buttons, the reading view, the Tables menu and the Roll Tables list
   - Each result has **Copy** and **Make Note** buttons. Make Note asks for the note's name (the result to start with) and where it goes: the campaign's folders with their types, plus **Plain note (no type)**
   - Like the dice history, it is kept while the app is open
-- [ ] Linked tables in the table editor
+- [x] Linked tables in the table editor
   - **Also roll**: a table can name one or more tables to roll after it, picked in a couple of clicks with no change to each row (Norse given name, then Norse surname). The results are joined into one, with no space before an ending like -sson
     - When joining results of multiple tables we need to ensure that the default format is to add a space, but we should allow a user to mark a column as needing no space (what we currently do when a column's results start with '-'), or needing commas. We can leave the current table formats, but I want to ensure that a user who wants to have their results come back as a comma separated list, regular spaces between results, or no space, they can do that without needing to know/remember to type special characters before each item in a column.
   - **Rolled after**: a table can be marked as needing another table's roll first (Norse surnames need a father's name). Rolling it on its own rolls that table first, and the editor and the Roll Tables list show the link
