@@ -50,7 +50,7 @@ Write your world in plain Markdown, link it together like a wiki, and keep every
 
 - Campaigns are plain files, so you can edit them in Obsidian or any text editor at the same time. The campaign folder is watched: notes changed, renamed, or deleted elsewhere show up right away, and if you have unsaved changes it asks which version to keep.
 - Notes the app can't show as intended (broken front matter, a word in a number field, a broken link) get a ⚠ in the tree. Hover it to see what's wrong, and click it for a list of fixes.
-- Pick a color theme in **View** (Dark or High Contrast), or make your own (see [Themes](#themes)).
+- Pick a color theme in **View > Theme** (System, which follows your computer's light or dark setting, Light, Dark or High Contrast), or make your own (see [Themes](#themes)).
 
 ## Why Dungeon Elements?
 
@@ -112,7 +112,7 @@ See [PLAN.md](PLAN.md) for the full plan and checklists.
 
 ## Themes
 
-Every color in the app comes from a theme. To make your own, copy [`themes/dark.yaml`](themes/dark.yaml), change its `name` and colors, and save it in your themes folder:
+Every color in the app comes from a theme. To make your own, copy [`themes/light.yaml`](themes/light.yaml) or [`themes/dark.yaml`](themes/dark.yaml), change its `name` and colors, and save it in your themes folder:
 
 - Windows: `%APPDATA%\dungeon_elements\themes`
 - Linux and macOS: `~/.config/dungeon_elements/themes`

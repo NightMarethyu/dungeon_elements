@@ -12,10 +12,28 @@ use iced::Color;
 use serde::Deserialize;
 
 const DARK: &str = include_str!("../themes/dark.yaml");
+const LIGHT: &str = include_str!("../themes/light.yaml");
 const HIGH_CONTRAST: &str = include_str!("../themes/high-contrast.yaml");
 
-/// The name of the theme used when none is chosen, or the chosen one is missing.
+/// The name of the theme used when the chosen one is missing, or the computer
+/// has no light or dark preference.
 pub const DEFAULT: &str = "Dark";
+
+/// The theme used when the computer asks for light colors.
+pub const LIGHT_NAME: &str = "Light";
+
+/// The choice under View > Theme that follows the computer: Light or Dark to
+/// match it. It is the default for people who haven't picked a theme.
+pub const SYSTEM: &str = "System";
+
+/// The theme that matches the computer's light or dark setting.
+pub fn for_system(mode: iced::theme::Mode) -> &'static str {
+    match mode {
+        iced::theme::Mode::Light => LIGHT_NAME,
+        // With no preference, Dark, as before there was a choice.
+        iced::theme::Mode::Dark | iced::theme::Mode::None => DEFAULT,
+    }
+}
 
 /// A color for each part of the window. See `themes/dark.yaml` for what each one colors.
 #[derive(Debug, Clone, Copy)]
@@ -226,11 +244,22 @@ pub fn to_hex(color: Color) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
-/// The built-in themes.
+/// The built-in themes: Light, Dark and High Contrast.
 pub fn built_in() -> Vec<Theme> {
+    let light = parse(LIGHT, None, None).expect("themes/light.yaml is valid");
     let dark = parse(DARK, None, None).expect("themes/dark.yaml is valid");
-    let light = parse(HIGH_CONTRAST, None, None).expect("themes/high-contrast.yaml is valid");
-    vec![dark, light]
+    let high_contrast =
+        parse(HIGH_CONTRAST, None, None).expect("themes/high-contrast.yaml is valid");
+    vec![light, dark, high_contrast]
+}
+
+/// The themes a user theme's missing colors come from: Dark for `base: dark`,
+/// High Contrast for `base: light`, as they always have.
+fn bases(themes: &[Theme]) -> (Theme, Theme) {
+    let find = |name: &str| themes.iter().find(|theme| theme.name == name).cloned();
+    let dark = find(DEFAULT).expect("Dark is built in");
+    let light = find("High Contrast").expect("High Contrast is built in");
+    (dark, light)
 }
 
 /// The folder users put their own themes in, if the config folder can be found.
@@ -244,6 +273,7 @@ pub fn user_folder() -> Option<PathBuf> {
 /// A user theme with the same name as an earlier one replaces it.
 pub fn load(folder: Option<&Path>) -> (Vec<Theme>, Vec<String>) {
     let mut themes = built_in();
+    let (dark, light) = bases(&themes);
     let mut problems = Vec::new();
 
     let Some(Ok(read_dir)) = folder.map(fs::read_dir) else {
@@ -265,7 +295,7 @@ pub fn load(folder: Option<&Path>) -> (Vec<Theme>, Vec<String>) {
 
         let theme = fs::read_to_string(&path)
             .map_err(|error| error.to_string())
-            .and_then(|yaml| parse(&yaml, Some(&themes[0]), Some(&themes[1])));
+            .and_then(|yaml| parse(&yaml, Some(&dark), Some(&light)));
 
         match theme {
             Ok(theme) if theme.name.is_empty() => {
@@ -288,9 +318,77 @@ mod tests {
 
     #[test]
     fn built_in_themes_load() {
-        let themes = built_in();
-        assert_eq!(themes[0].name, DEFAULT);
-        assert_eq!(themes[1].name, "High Contrast");
+        let names: Vec<_> = built_in().into_iter().map(|theme| theme.name).collect();
+        assert_eq!(names, [LIGHT_NAME, DEFAULT, "High Contrast"]);
+    }
+
+    #[test]
+    fn system_picks_light_or_dark() {
+        use iced::theme::Mode;
+        assert_eq!(for_system(Mode::Light), "Light");
+        assert_eq!(for_system(Mode::Dark), "Dark");
+        assert_eq!(for_system(Mode::None), "Dark");
+    }
+
+    /// WCAG's contrast ratio between two colors, from 1 to 21.
+    fn contrast(a: Color, b: Color) -> f32 {
+        let luminance = |c: Color| {
+            let channel = |v: f32| {
+                if v <= 0.039_28 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+        };
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn light_text_is_readable_everywhere() {
+        let light = built_in().remove(0);
+        let c = light.colors;
+        let backgrounds = [
+            c.background,
+            c.sidebar,
+            c.menu_bar,
+            c.menu,
+            c.tab_active,
+            c.tab_inactive,
+            c.field_background,
+            c.selection,
+            c.hover,
+        ];
+        let inks = [
+            c.text,
+            c.text_muted,
+            c.accent,
+            c.danger,
+            c.warning,
+            c.success,
+            c.code_comment,
+            c.code_string,
+            c.code_number,
+            c.code_keyword,
+            c.code_function,
+            c.code_type,
+        ];
+        for ink in inks {
+            for paper in backgrounds {
+                let ratio = contrast(ink, paper);
+                assert!(
+                    ratio >= 4.5,
+                    "{} on {} is only {ratio:.1}:1",
+                    to_hex(ink),
+                    to_hex(paper)
+                );
+            }
+        }
+        assert!(contrast(c.text, c.background) >= 12.0);
+        assert!(contrast(c.accent_text, c.accent) >= 4.5);
+        assert!(contrast(c.status_text, c.status_bar) >= 4.5);
     }
 
     #[test]
@@ -306,22 +404,22 @@ mod tests {
 
     #[test]
     fn missing_colors_come_from_the_base() {
-        let themes = built_in();
+        let (dark, light) = bases(&built_in());
         let theme = parse(
             "name: Forest\nbase: light\ncolors:\n  accent: \"#228b22\"\n",
-            Some(&themes[0]),
-            Some(&themes[1]),
+            Some(&dark),
+            Some(&light),
         )
         .unwrap();
 
         assert_eq!(theme.colors.accent, Color::from_rgb8(0x22, 0x8b, 0x22));
-        assert_eq!(theme.colors.background, themes[1].colors.background);
+        assert_eq!(theme.colors.background, light.colors.background);
     }
 
     #[test]
     fn rejects_bad_themes() {
-        let themes = built_in();
-        let parse = |yaml| parse(yaml, Some(&themes[0]), Some(&themes[1]));
+        let (dark, light) = bases(&built_in());
+        let parse = |yaml| parse(yaml, Some(&dark), Some(&light));
 
         assert!(parse("name: X\ncolors:\n  backgrund: \"#000\"\n").is_err());
         assert!(parse("name: X\ncolors:\n  text: red\n").is_err());

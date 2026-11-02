@@ -14,6 +14,11 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - The table editor has its own Undo and Redo while it is open: rows added, moved or removed, columns, the die, Calculate ranges, and typing a burst at a time. **Cancel** still puts the whole table back.
 - Undo keeps only the words that changed in each step, not a copy of the note, and works them out when typing pauses rather than on every key, so it doesn't slow typing down.
 
+### Themes
+
+- A new built-in **Light** theme: cream, like old parchment, with dark ink. Every color in it is checked for contrast, so text stays easy to read on each background. The built-in themes are now Light, Dark and High Contrast.
+- **View > Theme > System**, the new default, uses Light or Dark to match the computer's own setting, and checks it again whenever you come back to the app. Picking any other theme stops following it, and if you had already picked a theme, it stays picked.
+
 ### Menus
 
 - The menu bar is sorted so each menu holds one kind of thing. A new **Campaign** menu has the walkthrough, the walkthrough questions, **Note Types...** (once Edit > Types...), **Export Campaign Structure...** and **Show Campaign Folder**. A new **Tables** menu has the Roll Tables list, the dice roller, **New Roll Table...** and **Add Roll Table Here**. **Maps** is there, greyed out, for the map editor to come.
