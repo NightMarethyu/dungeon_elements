@@ -78,7 +78,7 @@ chapters:
         short: Pitch
         note: campaign
         field: pitch
-        table: Action and Theme
+        table: Tropes and Verbs
       - ask: What game or rules will you use?
         short: Game system
         note: campaign
