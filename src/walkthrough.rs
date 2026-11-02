@@ -100,6 +100,10 @@ pub struct Chapter {
 pub struct Question {
     /// The question. `{name}` is the name of the note it is about.
     pub ask: String,
+    /// A few words for the question in the walkthrough's left menu, like "Goals". With
+    /// none, the menu shows the start of the question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short: Option<String>,
     /// A line under the question, to help answer it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
@@ -135,6 +139,17 @@ impl Question {
             Some(field) => format!("{}.{field}", self.note),
             None => self.note.clone(),
         }
+    }
+
+    /// What the walkthrough's left menu calls the question: its short title, or else the
+    /// start of the question.
+    pub fn short_title(&self) -> String {
+        if let Some(short) = self.short.as_deref().map(str::trim)
+            && !short.is_empty()
+        {
+            return short.to_string();
+        }
+        start_of(&self.ask)
     }
 
     /// The question about the note called `name`, with `{name}` filled in.
@@ -283,6 +298,37 @@ impl Questions {
                 .map(move |question| (chapter, question))
         })
     }
+}
+
+/// The longest a question's start is in the walkthrough's left menu, in letters.
+const SHORT_LENGTH: usize = 28;
+
+/// The start of question `ask`, cut after a word if it is long, for a question with no
+/// short title. `{name}` is shown as "…".
+pub fn start_of(ask: &str) -> String {
+    let ask = ask.replace("{name}", "…");
+    let ask = ask.trim();
+    if ask.chars().count() <= SHORT_LENGTH {
+        return ask.to_string();
+    }
+    let mut short = String::new();
+    for word in ask.split_whitespace() {
+        let longer = if short.is_empty() {
+            word.to_string()
+        } else {
+            format!("{short} {word}")
+        };
+        if longer.chars().count() > SHORT_LENGTH {
+            break;
+        }
+        short = longer;
+    }
+    if short.is_empty() {
+        // One long word: cut it.
+        short = ask.chars().take(SHORT_LENGTH).collect();
+    }
+    let short = short.trim_end_matches([',', ':', ';', '.', '?', '!']);
+    format!("{short}…")
 }
 
 /// Reads walkthrough questions from YAML, checking that every question goes into one of
@@ -1567,6 +1613,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_question_is_called_by_its_short_title_or_the_start_of_it() {
+        let questions = Questions::built_in();
+        // Every built-in question has a short title.
+        for (_, question) in questions.all() {
+            assert!(
+                question
+                    .short
+                    .as_deref()
+                    .is_some_and(|short| !short.trim().is_empty()),
+                "\"{}\" has no short title",
+                question.ask
+            );
+        }
+        assert_eq!(question(&questions, "factions.goal").short_title(), "Goals");
+
+        let mut asked = question(&questions, "factions.goal").clone();
+        asked.short = Some("  ".into());
+        assert_eq!(asked.short_title(), "What do the … want?");
+        asked.ask = "What will the {name} do next if no one stops them?".into();
+        assert_eq!(asked.short_title(), "What will the … do next if…");
+        assert_eq!(
+            start_of("Sum it up in one sentence."),
+            "Sum it up in one sentence."
+        );
+        assert_eq!(
+            start_of("What should it feel like: grim, heroic, funny?"),
+            "What should it feel like…"
+        );
+        assert_eq!(start_of(&"a".repeat(40)), format!("{}…", "a".repeat(28)));
     }
 
     #[test]

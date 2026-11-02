@@ -7,10 +7,11 @@
 //! that ask for a list of names a box for each, with Add Another. The app writes the answers (see
 //! [`crate::walkthrough`]); this keeps the GM's place and draws the tab.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use iced::widget::{
-    button, column, container, row, rule, scrollable, space, svg, text, text_input,
+    button, column, container, row, rule, scrollable, space, svg, text, text_input, tooltip,
 };
 use iced::{Center, Element, Fill};
 use serde_yaml_ng::Value;
@@ -31,6 +32,10 @@ const NAMES_KEY: &str = "name";
 pub enum Message {
     /// Opens a chapter at its first question.
     Chapter(usize),
+    /// Opens or closes a chapter in the left menu, to show its questions.
+    ToggleChapter(usize),
+    /// Goes to question `question` of chapter `chapter`, from the left menu.
+    Question(usize, usize),
     Back,
     Next,
     Skip,
@@ -100,6 +105,8 @@ struct ChapterState {
     answered: usize,
     total: usize,
     skipped: bool,
+    /// Whether each of its questions is answered.
+    questions: Vec<bool>,
 }
 
 pub struct Walkthrough {
@@ -111,6 +118,10 @@ pub struct Walkthrough {
     steps: Vec<Step>,
     at: usize,
     chapters: Vec<ChapterState>,
+    /// The chapters opened in the left menu to show their questions.
+    open: HashSet<usize>,
+    /// The chapter the GM was last in, which the menu opened when they got there.
+    opened_at: Option<usize>,
     /// The answer being typed: a form of the note it goes into, or of the name asked for.
     pub form: Option<Form>,
     /// The names being typed, for a question that asks for a list of them.
@@ -159,6 +170,8 @@ impl Walkthrough {
             steps: Vec::new(),
             at: 0,
             chapters: Vec::new(),
+            open: HashSet::new(),
+            opened_at: None,
             form: None,
             names: None,
             names_label: String::new(),
@@ -206,16 +219,29 @@ impl Walkthrough {
             .questions
             .chapters
             .iter()
-            .map(|chapter| ChapterState {
-                answered: chapter
+            .map(|chapter| {
+                let questions: Vec<bool> = chapter
                     .questions
                     .iter()
-                    .filter(|question| self.progress.answered(campaign, &self.questions, question))
-                    .count(),
-                total: chapter.questions.len(),
-                skipped: self.progress.is_skipped(&chapter.id),
+                    .map(|question| self.progress.answered(campaign, &self.questions, question))
+                    .collect();
+                ChapterState {
+                    answered: questions.iter().filter(|answered| **answered).count(),
+                    total: chapter.questions.len(),
+                    skipped: self.progress.is_skipped(&chapter.id),
+                    questions,
+                }
             })
             .collect();
+        // The chapter being worked on starts open in the menu; one closed by hand stays
+        // closed until the GM moves to another.
+        let chapter = self.chapter();
+        if chapter != self.opened_at {
+            if let Some(chapter) = chapter {
+                self.open.insert(chapter);
+            }
+            self.opened_at = chapter;
+        }
         self.load_step(campaign, open_text);
     }
 
@@ -667,6 +693,8 @@ impl Walkthrough {
         campaign: &Campaign,
         open_text: &dyn Fn(&Path) -> Option<String>,
     ) {
+        // An answer written just before may have made notes, and so steps.
+        self.steps = self.find_steps(campaign);
         let Some(at) = self
             .steps
             .iter()
@@ -680,6 +708,48 @@ impl Walkthrough {
         }
         self.at = at;
         self.refresh(campaign, open_text);
+    }
+
+    /// Opens or closes chapter `chapter` in the left menu.
+    pub fn toggle_chapter(&mut self, chapter: usize) {
+        if !self.open.remove(&chapter) {
+            self.open.insert(chapter);
+        }
+    }
+
+    /// Goes to question `question` of chapter `chapter` (about the first of its notes). A
+    /// skipped question, or chapter, isn't skipped any more. A question about notes that
+    /// aren't made yet has nowhere to go.
+    pub fn open_question(
+        &mut self,
+        chapter: usize,
+        question: usize,
+        campaign: &Campaign,
+        open_text: &dyn Fn(&Path) -> Option<String>,
+    ) {
+        self.steps = self.find_steps(campaign);
+        let Some(at) = self.steps.iter().position(|step| {
+            matches!(step, Step::Question { chapter: c, question: q, .. }
+                if *c == chapter && *q == question)
+        }) else {
+            return;
+        };
+        if let Some(chapter) = self.questions.chapters.get(chapter) {
+            let id = chapter.id.clone();
+            let key = chapter.questions[question].key();
+            self.progress.skip(&id, false);
+            self.progress.skip(&key, false);
+        }
+        self.go(at, campaign, open_text);
+    }
+
+    /// Whether question `question` of chapter `chapter` has a step to go to: one about a
+    /// list of notes has none until they are made.
+    fn has_step(&self, chapter: usize, question: usize) -> bool {
+        self.steps.iter().any(|step| {
+            matches!(step, Step::Question { chapter: c, question: q, .. }
+                if *c == chapter && *q == question)
+        })
     }
 
     fn go(&mut self, at: usize, campaign: &Campaign, open_text: &dyn Fn(&Path) -> Option<String>) {
@@ -697,6 +767,67 @@ impl Walkthrough {
             .find(|question| question.note == note && question.field.is_none())
     }
 
+    /// A question in the left menu, under its open chapter: its short title, with a tick
+    /// once it is answered.
+    fn question_entry<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        chapter: usize,
+        at: usize,
+        question: &'a Question,
+        on: fn(Message) -> M,
+    ) -> Element<'a, M> {
+        let here = matches!(self.step(), Step::Question { chapter: c, question: q, .. }
+            if *c == chapter && *q == at);
+        let answered = self.chapters[chapter]
+            .questions
+            .get(at)
+            .copied()
+            .unwrap_or_default();
+        let reachable = self.has_step(chapter, at);
+        let skipped = self.progress.is_skipped(&question.key());
+        let color = if reachable && !skipped && !answered {
+            c.text
+        } else {
+            c.text_muted
+        };
+        let label = row![
+            text(question.short_title())
+                .size(13)
+                .color(color)
+                .width(Fill),
+            answered.then(|| text("✓").size(12).color(c.text_muted)),
+        ]
+        .spacing(6)
+        .align_y(Center);
+        let entry = button(label)
+            .width(Fill)
+            .padding(iced::Padding {
+                top: 4.0,
+                right: 8.0,
+                bottom: 4.0,
+                left: 32.0,
+            })
+            .style(style::flat(c, here))
+            .on_press_maybe(reachable.then(|| on(Message::Question(chapter, at))));
+        if reachable {
+            return entry.into();
+        }
+        // A question about notes not made yet says which question makes them.
+        let tip = match self.name_question(&question.note) {
+            Some(names) => format!("Answer \"{}\" first", names.short_title()),
+            None => "Nothing to ask about yet".to_string(),
+        };
+        tooltip(
+            entry,
+            container(text(tip).size(12).color(c.text))
+                .padding([4, 8])
+                .style(style::dropdown(c)),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    }
+
     /// Draws the tab. `answer` is the answer box, drawn by the form, and `chips` the
     /// notes to link to while one is being typed in it.
     pub fn view<'a, M: Clone + 'a>(
@@ -709,33 +840,53 @@ impl Walkthrough {
         on: fn(Message) -> M,
     ) -> Element<'a, M> {
         let current = self.chapter();
-        let chapters = column(self.questions.chapters.iter().enumerate().map(
-            |(index, chapter)| -> Element<'a, M> {
-                let state = &self.chapters[index];
-                let progress = if state.skipped && state.answered == 0 {
-                    "Skipped".to_string()
-                } else if state.skipped {
-                    format!("{} of {}, the rest skipped", state.answered, state.total)
-                } else if state.answered == state.total {
-                    "Done".to_string()
-                } else {
-                    format!("{} of {}", state.answered, state.total)
-                };
-                button(
-                    column![
-                        text(&chapter.title).size(14),
-                        text(progress).size(12).color(c.text_muted),
-                    ]
-                    .spacing(2),
-                )
-                .width(Fill)
-                .padding([8, 12])
-                .style(style::flat(c, current == Some(index)))
-                .on_press(on(Message::Chapter(index)))
-                .into()
-            },
-        ))
-        .spacing(2);
+        let chapters =
+            column(self.questions.chapters.iter().enumerate().map(
+                |(index, chapter)| -> Element<'a, M> {
+                    let state = &self.chapters[index];
+                    let progress = if state.skipped && state.answered == 0 {
+                        "Skipped".to_string()
+                    } else if state.skipped {
+                        format!("{} of {}, the rest skipped", state.answered, state.total)
+                    } else if state.answered == state.total {
+                        "Done".to_string()
+                    } else {
+                        format!("{} of {}", state.answered, state.total)
+                    };
+                    let open = self.open.contains(&index);
+                    let arrow = button(
+                        text(if open { "▾" } else { "▸" })
+                            .size(13)
+                            .color(c.text_muted)
+                            .width(Fill)
+                            .align_x(Center),
+                    )
+                    .width(22)
+                    .padding([8, 0])
+                    .style(style::flat(c, false))
+                    .on_press(on(Message::ToggleChapter(index)));
+                    let title = button(
+                        column![
+                            text(&chapter.title).size(14),
+                            text(progress).size(12).color(c.text_muted),
+                        ]
+                        .spacing(2),
+                    )
+                    .width(Fill)
+                    .padding([8, 8])
+                    .style(style::flat(c, current == Some(index) && !open))
+                    .on_press(on(Message::Chapter(index)));
+                    let mut entry = column![row![arrow, title].spacing(2)].spacing(1);
+                    if open {
+                        entry =
+                            entry.extend(chapter.questions.iter().enumerate().map(
+                                |(at, question)| self.question_entry(c, index, at, question, on),
+                            ));
+                    }
+                    entry.into()
+                },
+            ))
+            .spacing(2);
         let sidebar = container(scrollable(
             column![text("Walkthrough").size(12).color(c.text_muted), chapters]
                 .spacing(10)

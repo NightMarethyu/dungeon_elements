@@ -12,7 +12,7 @@ The walkthrough opens in a tab of its own. Close it like any other tab and open 
 
 ## Answering
 
-The chapters are listed on the left, with how many of their questions are answered. Click one to go to it.
+The chapters are listed on the left, with how many of their questions are answered. Click one to go to it. The triangle beside a chapter opens it to list its questions by short titles, with a tick by each one answered, and the chapter you're in starts open. Click a question to go straight to it. A question about notes that aren't made yet, like the factions' goals before the factions are named, is greyed out until they are. Going to another chapter or question keeps what you typed, as **Next** does.
 
 On the right is one question, with the box you answer in. Under it, **Goes into** names the note the answer is written into, and the field it fills. Click the note's name to open it.
 
@@ -70,7 +70,7 @@ A template can bring questions of its own, made for its folders, and a campaign 
 
 1. A campaign starts out asking the built-in questions, which get better as the app updates. Click **Start from the Default Questions** to make a copy of them for this campaign to change.
 2. The chapters are listed on the left. Click one to see its questions, or **Add Chapter** for a new one. A chapter has a title, a line shown at its top, and **↑**, **↓** and **Remove**.
-3. Each question has its text, a hint under it if you like, and two choices:
+3. Each question has its text, a **Short title** for the list on the left of the walkthrough (left empty, the list shows the start of the question), a hint under it if you like, and two choices:
    - **Goes into**: the note the answer is written into, like *factions: several new Factions*.
    - **Field**: which of that note's fields the answer fills. **Its name** (or **Their names**, for several notes) asks for the note's name instead.
 
