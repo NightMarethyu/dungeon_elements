@@ -40,6 +40,7 @@ Click a roll table in the reading view, or **Edit Table** above it, and it opens
 - **Paste a List...** adds a row for each line of a list copied from a web page or a PDF. Numbers at the start of every line, like `3-4`, are kept.
 - **Roll** rolls the table as it is in the editor, to try it.
 - **Done** puts the table back into the note. **Cancel** leaves it as it was.
+- **Ctrl+Z** takes back the last change in the table, like a row added or a die changed, and **Ctrl+Y** does it again. Typing in one box is taken back a burst at a time.
 
 Tables are still ordinary Markdown tables that Obsidian and other apps read. A line break in a result is saved as `<br>`. Which links don't roll is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 

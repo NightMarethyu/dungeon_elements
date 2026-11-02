@@ -84,7 +84,7 @@ The buttons at the top right of a note switch how you see it:
 - Everything else that changes the note is a step of its own: a field filled from a roll, Bold, a list, a ticked task, a field added or removed, a table saved from the table editor.
 - Each note remembers about a thousand steps while the app is open, even after you save, and even after you close its tab and open it again. Closing a note without saving can be undone too: open it again and press Ctrl+Z.
 - Undoing back to the last save shows the note as saved again.
-- In the table editor, **Cancel** puts the table back as it was.
+- While the table editor is open, Undo and Redo work in the table: a row added, a die changed, a result typed. **Cancel** puts the whole table back as it was.
 
 Undo takes back changes to the campaign too: a new note or folder, a rename, a move, a delete, a change to Note Types or the walkthrough questions, a walkthrough answer, a link fix or a ticked quest step. A rename or move is undone together with the links that changed to follow it, and a deleted note or folder comes back with its pictures. Ctrl+Z takes back whichever came last, the change to the open note or the change to the campaign, and the Edit menu says which, like **Undo Rename Saltmarsh**. The campaign remembers about two hundred of these steps while the app is open.
 

@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use iced::keyboard::{Key, Modifiers, key};
 use iced::widget::{
@@ -30,6 +31,12 @@ const TAKES_WIDTH: f32 = 92.0;
 const CHANCE_WIDTH: f32 = 52.0;
 /// The room the buttons at the end of each row take.
 const ACTIONS_WIDTH: f32 = 130.0;
+/// How many steps Undo can take back in one table. A table is small, so each step keeps
+/// the whole of it.
+const MAX_STEPS: usize = 200;
+/// A pause in typing this long starts a new Undo step.
+const PAUSE: Duration = Duration::from_secs(1);
+const TYPING: &str = "Typing";
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -134,6 +141,25 @@ pub struct Editor {
     has_settings: bool,
     /// Whether the heading can be renamed here: not when other tables are under it too.
     renamable: bool,
+    /// What Undo and Redo take back and do again, oldest first, with what each did.
+    undo: Vec<(State, &'static str)>,
+    redo: Vec<(State, &'static str)>,
+    /// The box last typed in and when, so a burst of typing is one step.
+    typing: Option<(String, Instant)>,
+}
+
+/// The table as it was before a change, for Undo.
+#[derive(Debug, Clone, PartialEq)]
+struct State {
+    die: String,
+    typing_die: bool,
+    columns: Vec<String>,
+    /// Each row's takes, numbers and results.
+    rows: Vec<(i64, String, Vec<String>)>,
+    calculate: bool,
+    each_column: Option<bool>,
+    heading: Option<(String, String)>,
+    not_rolled: BTreeSet<String>,
 }
 
 #[derive(Debug)]
@@ -157,6 +183,46 @@ impl Row {
 
     fn is_empty(&self) -> bool {
         self.cells.iter().all(|cell| cell.text().trim().is_empty())
+    }
+}
+
+/// What `message` would be as an Undo step, if it can change the table: its label, and
+/// for typing, the box typed in, so a burst of typing in one box is one step.
+fn step(message: &Message) -> Option<(&'static str, Option<String>)> {
+    let typing = |what: String| Some((TYPING, Some(what)));
+    match message {
+        Message::Heading(_) => typing("heading".into()),
+        Message::TypeDie(_) => typing("die".into()),
+        Message::Column(column, _) => typing(format!("column-{column}")),
+        Message::Numbers(row, _) => typing(format!("numbers-{row}")),
+        Message::Cell(_, _, text_editor::Action::Edit(text_editor::Edit::Paste(_))) => {
+            Some(("Paste", None))
+        }
+        Message::Cell(row, column, action) if action.is_edit() => {
+            typing(format!("cell-{row}-{column}"))
+        }
+        Message::RollsOn(..) => Some(("Rolls On", None)),
+        Message::InsertLink(_) => Some(("Insert Link", None)),
+        Message::AddPasted => Some(("Add Pasted Rows", None)),
+        Message::PickDie(_) => Some(("Change Die", None)),
+        Message::Calculate(_) => Some(("Calculate Ranges", None)),
+        Message::SpreadEvenly => Some(("Spread Evenly", None)),
+        Message::EachColumn(_) => Some(("Roll Each Column", None)),
+        Message::AddColumn => Some(("Add Column", None)),
+        Message::MoveColumn(..) => Some(("Move Column", None)),
+        Message::RemoveColumn(_) | Message::ConfirmRemoveColumn(_) => Some(("Remove Column", None)),
+        Message::Takes(..) => Some(("Change Numbers", None)),
+        Message::AddRow | Message::AddRowAfter(_) => Some(("Add Row", None)),
+        Message::MoveRow(..) => Some(("Move Row", None)),
+        Message::RemoveRow(_) | Message::BackspaceRow(_) => Some(("Remove Row", None)),
+        Message::RemoveExtraRows => Some(("Remove Extra Rows", None)),
+        Message::Cell(..)
+        | Message::Paste(_)
+        | Message::ShowPaste(_)
+        | Message::Roll
+        | Message::Click
+        | Message::Done
+        | Message::Cancel => None,
     }
 }
 
@@ -234,6 +300,9 @@ impl Editor {
             embedded: false,
             has_settings: false,
             renamable: true,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing: None,
         }
     }
 
@@ -342,7 +411,9 @@ impl Editor {
 
     /// Finishes the link being typed with `link`. Gives the box to focus again.
     pub fn complete_link(&mut self, link: &str) -> Option<String> {
-        let (cell, id) = self.focused_cell_mut()?;
+        self.focused_cell()?;
+        self.record("Insert Link");
+        let (cell, id) = self.cell_mut()?;
         crate::links::complete(cell, link);
         Some(id)
     }
@@ -361,6 +432,12 @@ impl Editor {
 
     /// The result box last typed in, and its widget id, to change it.
     pub fn focused_cell_mut(&mut self) -> Option<(&mut text_editor::Content, String)> {
+        self.focused_cell()?;
+        self.record("Change");
+        self.cell_mut()
+    }
+
+    fn cell_mut(&mut self) -> Option<(&mut text_editor::Content, String)> {
         let (row, column) = self.focused?;
         let id = self.cell_id(row, column);
         let cell = self.rows.get_mut(row)?.cells.get_mut(column)?;
@@ -595,6 +672,131 @@ impl Editor {
     }
 
     pub fn update(&mut self, message: Message) -> Outcome {
+        // One in a form is part of the note, so the note's Undo covers it.
+        if self.embedded {
+            return self.apply(message);
+        }
+        let Some((label, typed)) = step(&message) else {
+            return self.apply(message);
+        };
+        let now = Instant::now();
+        let burst = typed.as_ref().is_some_and(|typed| {
+            self.typing
+                .as_ref()
+                .is_some_and(|(last, at)| last == typed && now.duration_since(*at) < PAUSE)
+        });
+        if burst {
+            self.typing = typed.map(|typed| (typed, now));
+            return self.apply(message);
+        }
+        let before = self.state();
+        let outcome = self.apply(message);
+        if self.state() != before {
+            self.push(before, label);
+            self.typing = typed.map(|typed| (typed, now));
+        }
+        outcome
+    }
+
+    /// Keeps the table as it is now as a step for Undo, before a change made from outside
+    /// [`Self::update`].
+    fn record(&mut self, label: &'static str) {
+        if !self.embedded {
+            let state = self.state();
+            self.push(state, label);
+            self.typing = None;
+        }
+    }
+
+    fn push(&mut self, state: State, label: &'static str) {
+        self.undo.push((state, label));
+        if self.undo.len() > MAX_STEPS {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    /// What Undo would take back, like "Add Row".
+    pub fn undo_label(&self) -> Option<&'static str> {
+        self.undo.last().map(|(_, label)| *label)
+    }
+
+    /// What Redo would do again.
+    pub fn redo_label(&self) -> Option<&'static str> {
+        self.redo.last().map(|(_, label)| *label)
+    }
+
+    /// Takes back the last change, or with `redo`, does the last change taken back again.
+    /// Gives what it was, or `None` if there was nothing to do.
+    pub fn undo(&mut self, redo: bool) -> Option<&'static str> {
+        let (state, label) = if redo {
+            self.redo.pop()?
+        } else {
+            self.undo.pop()?
+        };
+        let now = self.state();
+        if redo {
+            self.undo.push((now, label));
+        } else {
+            self.redo.push((now, label));
+        }
+        self.restore(state);
+        self.typing = None;
+        self.changed = true;
+        Some(label)
+    }
+
+    fn state(&self) -> State {
+        State {
+            die: self.die.clone(),
+            typing_die: self.typing_die,
+            columns: self.columns.clone(),
+            rows: self
+                .rows
+                .iter()
+                .map(|row| {
+                    let cells = row.cells.iter().map(text_editor::Content::text).collect();
+                    (row.takes, row.numbers.clone(), cells)
+                })
+                .collect(),
+            calculate: self.calculate,
+            each_column: self.each_column,
+            heading: self.heading.clone(),
+            not_rolled: self.not_rolled.clone(),
+        }
+    }
+
+    fn restore(&mut self, state: State) {
+        self.die = state.die;
+        self.typing_die = state.typing_die;
+        self.columns = state.columns;
+        self.rows = state
+            .rows
+            .into_iter()
+            .map(|(takes, numbers, cells)| Row {
+                takes,
+                numbers,
+                cells: cells
+                    .iter()
+                    .map(|cell| text_editor::Content::with_text(cell))
+                    .collect(),
+            })
+            .collect();
+        self.calculate = state.calculate;
+        self.each_column = state.each_column;
+        self.heading = state.heading;
+        self.not_rolled = state.not_rolled;
+        self.removing_column = None;
+        if let Some((row, column)) = self.focused {
+            if row < self.rows.len() && column < self.columns.len() {
+                self.focus = Some(self.cell_id(row, column));
+            } else {
+                self.focused = None;
+            }
+        }
+    }
+
+    fn apply(&mut self, message: Message) -> Outcome {
         let edits = !matches!(
             message,
             Message::Done
@@ -1550,6 +1752,64 @@ mod tests {
     }
 
     const WEATHER: &str = "Before.\n\n| d6  | Weather        |\n| --- | -------------- |\n| 1   | Clear and cold |\n| 2-3 | Grey drizzle   |\n| 4-6 | [[Storms]]     |\n\nAfter.\n";
+
+    fn type_in(editor: &mut Editor, row: usize, typed: &str) {
+        for c in typed.chars() {
+            editor.update(Message::Cell(
+                row,
+                0,
+                text_editor::Action::Edit(text_editor::Edit::Insert(c)),
+            ));
+        }
+    }
+
+    #[test]
+    fn undo_takes_back_each_change_and_redo_does_it_again() {
+        let mut editor = editor(WEATHER);
+        let table = editor.markdown();
+        assert_eq!(editor.undo_label(), None);
+
+        editor.update(Message::AddRow);
+        type_in(&mut editor, 3, "Fog");
+        editor.update(Message::PickDie("d8".into()));
+        let changed = editor.markdown();
+        assert_eq!(editor.undo_label(), Some("Change Die"));
+
+        assert_eq!(editor.undo(false), Some("Change Die"));
+        // Typing in one box is one step.
+        assert_eq!(editor.undo(false), Some(TYPING));
+        assert_eq!(editor.state().rows[3].2[0], "");
+        assert_eq!(editor.undo(false), Some("Add Row"));
+        assert_eq!(editor.markdown(), table);
+        assert_eq!(editor.undo(false), None);
+
+        for _ in 0..3 {
+            editor.undo(true);
+        }
+        assert_eq!(editor.markdown(), changed);
+        assert_eq!(editor.redo_label(), None);
+    }
+
+    #[test]
+    fn a_change_after_undo_ends_redo() {
+        let mut editor = editor(WEATHER);
+        editor.update(Message::RemoveRow(0));
+        editor.undo(false);
+        assert_eq!(editor.redo_label(), Some("Remove Row"));
+        editor.update(Message::MoveRow(0, false));
+        assert_eq!(editor.redo_label(), None);
+        // Clicks and rolls change nothing, so they aren't steps.
+        editor.update(Message::Click);
+        editor.update(Message::Roll);
+        assert_eq!(editor.undo_label(), Some("Move Row"));
+    }
+
+    #[test]
+    fn a_table_in_a_form_leaves_undo_to_the_note() {
+        let mut editor = editor(WEATHER).embedded("field");
+        editor.update(Message::AddRow);
+        assert_eq!(editor.undo_label(), None);
+    }
 
     #[test]
     fn writes_back_the_table_it_read() {

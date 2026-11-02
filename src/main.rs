@@ -550,6 +550,8 @@ struct Tab {
 enum UndoTarget {
     Note,
     Files,
+    /// The open table editor's own steps.
+    Table,
 }
 
 /// How a message counts for the campaign's Undo (see [`Workspace::file_kind`]).
@@ -5738,6 +5740,15 @@ impl Workspace {
     /// What Undo (or with `redo`, Redo) would take back now: the active note's last
     /// change or the campaign's, whichever is newer.
     fn undo_target(&self, redo: bool) -> Option<UndoTarget> {
+        // While the table editor is open, Undo works in the table alone.
+        if let Some(editor) = self.open_table() {
+            let label = if redo {
+                editor.redo_label()
+            } else {
+                editor.undo_label()
+            };
+            return label.map(|_| UndoTarget::Table);
+        }
         let note = self.active_tab().filter(|tab| {
             !self.walkthrough_shown()
                 && !matches!(tab.edit, Some(ReadEdit::Table { .. }))
@@ -5788,6 +5799,51 @@ impl Workspace {
                 self.file_history.last_undo()
             }
             .map(|step| step.label.clone()),
+            UndoTarget::Table => {
+                let editor = self.open_table()?;
+                if redo {
+                    editor.redo_label()
+                } else {
+                    editor.undo_label()
+                }
+                .map(String::from)
+            }
+        }
+    }
+
+    /// The table editor, if it is open in the active note.
+    fn open_table(&self) -> Option<&table_editor::Editor> {
+        let tab = self.active_tab()?;
+        match &tab.edit {
+            Some(ReadEdit::Table { editor, .. }) => Some(editor),
+            _ => tab.form.as_ref()?.table_editor(),
+        }
+    }
+
+    /// Takes back the table editor's last change, or with `redo`, does it again.
+    fn undo_table(&mut self, redo: bool) -> Task<Message> {
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        let editor = match &mut tab.edit {
+            Some(ReadEdit::Table { editor, .. }) => Some(&mut **editor),
+            _ => tab
+                .form
+                .as_mut()
+                .and_then(Form::table_editor_mut)
+                .map(|(_, editor)| editor),
+        };
+        let Some(editor) = editor else {
+            return Task::none();
+        };
+        let Some(label) = editor.undo(redo) else {
+            return Task::none();
+        };
+        let focus = editor.take_focus();
+        self.status = format!("{} {label}", if redo { "Redid" } else { "Undid" });
+        match focus {
+            Some(id) => iced::advanced::widget::operate(form::tab(vec![id], false)).discard(),
+            None => Task::none(),
         }
     }
 
@@ -5798,13 +5854,10 @@ impl Workspace {
         match self.undo_target(redo) {
             Some(UndoTarget::Note) => self.undo_note(redo),
             Some(UndoTarget::Files) => self.undo_files(redo, false),
+            Some(UndoTarget::Table) => self.undo_table(redo),
             None => {
-                let editing_table = self.active_tab().is_some_and(|tab| {
-                    matches!(tab.edit, Some(ReadEdit::Table { .. }))
-                        || tab.form.as_ref().is_some_and(Form::editing_table)
-                });
-                self.status = if editing_table {
-                    "The table editor's Cancel puts the table back as it was".into()
+                self.status = if self.open_table().is_some() {
+                    format!("Nothing to {what} in this table")
                 } else {
                     format!("Nothing to {what}")
                 };
