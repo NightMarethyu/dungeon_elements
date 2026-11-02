@@ -59,6 +59,8 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 - The rolls on the left keep the same width however many are rolled, and scroll when there are more than fit.
 - A **–** in the dice roller's top right corner hides it.
+- The left of the dice roller has two lists: **Dice**, the rolls of dice as before, and **Tables**, every result rolled on a roll table, newest first, each with its table's name. Results come from everywhere a table is rolled: Inspire Me, a field's table button, a table's Roll button, the Tables menu and the Roll Tables list. A new roll shows its list, scrolled to the top, and the lists are kept while the app is open.
+- Each table result has **Copy** and **Make Note**. Make Note asks for the note's name, starting with the result, and where it goes: one of the campaign's folders, listed with its type, like **npcs (NPC)**, or a **Plain note (no type)** in the campaign folder.
 
 ### Inspire Me dropdown
 

@@ -299,8 +299,8 @@ struct Workspace {
     /// The [`Self::step_table_keys`], so steps that link to a roll table can roll it.
     /// Kept up to date by [`Self::rescan`].
     table_keys: BTreeSet<String>,
-    /// The folder the last note made from a roll went in.
-    roll_folder: Option<PathBuf>,
+    /// Where the last note made from a roll went.
+    roll_place: Option<NotePlace>,
     /// The world-building walkthrough, while its tab is open.
     walkthrough: Option<walkthrough_tab::Walkthrough>,
     /// The Undo history of notes closed since the campaign opened, newest last, so
@@ -394,6 +394,24 @@ impl std::fmt::Display for FolderChoice {
     }
 }
 
+/// Where a note made from a roll goes, in the Make Note dialog: a folder, which gives the
+/// note its type, or a plain note with no type in the campaign folder.
+#[derive(Debug, Clone, PartialEq)]
+struct NotePlace {
+    /// `None` for a plain note.
+    folder: Option<PathBuf>,
+    label: String,
+}
+
+impl std::fmt::Display for NotePlace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+/// The label of the plain note choice in the Make Note dialog.
+const PLAIN_NOTE: &str = "Plain note (no type)";
+
 /// A File > Save All in progress.
 #[derive(Default)]
 struct SaveAll {
@@ -467,7 +485,7 @@ enum Dialog {
     /// Makes a note named after a roll table's result, in a folder picked here.
     NoteFromRoll {
         name: String,
-        folder: FolderChoice,
+        place: NotePlace,
         error: Option<String>,
     },
 }
@@ -1301,7 +1319,7 @@ enum Message {
     NewTablePasted(text_editor::Action),
     CreateTable,
     NoteFromRollName(String),
-    NoteFromRollFolder(FolderChoice),
+    NoteFromRollPlace(NotePlace),
     CreateNoteFromRoll,
     /// Ctrl+Shift+F: puts the cursor in the search box.
     FocusSearch,
@@ -2494,7 +2512,7 @@ impl Workspace {
             quests: quests::Quests::default(),
             tables: tables::List::default(),
             table_settings,
-            roll_folder: None,
+            roll_place: None,
             walkthrough: None,
             closed: std::collections::VecDeque::new(),
             snapshot,
@@ -3227,6 +3245,38 @@ impl Workspace {
             },
             path: folder.to_path_buf(),
         }
+    }
+
+    /// Where a note made from a roll can go: a plain note, then each folder of the
+    /// campaign with its type, like "npcs (NPC)". The campaign folder itself is listed
+    /// only when it has a type, since otherwise it is where a plain note goes.
+    fn note_places(&self) -> Vec<NotePlace> {
+        let mut folders = vec![self.root.clone()];
+        collect_folders(&self.tree, &mut folders);
+        let mut places = vec![NotePlace {
+            folder: None,
+            label: PLAIN_NOTE.to_string(),
+        }];
+        for folder in folders {
+            let ty = self.types.get(&folder).and_then(|ty| ty.as_ref().ok());
+            if folder == self.root && ty.is_none() {
+                continue;
+            }
+            let name = if folder == self.root {
+                "The campaign folder".to_string()
+            } else {
+                self.relative(&folder)
+            };
+            let label = match ty {
+                Some(ty) => format!("{name} ({})", ty.label()),
+                None => name,
+            };
+            places.push(NotePlace {
+                folder: Some(folder),
+                label,
+            });
+        }
+        places
     }
 
     /// The folders a new note can go in: the campaign folder and every folder in it, and
@@ -5434,12 +5484,8 @@ impl Workspace {
                         Message::CreateTable,
                     )
                 }
-                Dialog::NoteFromRoll {
-                    name,
-                    folder,
-                    error,
-                } => (
-                    "New note from the roll".to_string(),
+                Dialog::NoteFromRoll { name, place, error } => (
+                    "Make a note from the roll".to_string(),
                     column![
                         column![
                             label("Name"),
@@ -5452,19 +5498,23 @@ impl Workspace {
                         ]
                         .spacing(4),
                         column![
-                            label("Folder"),
+                            label("Where it goes"),
                             pick_list(
-                                self.folder_choices(&folder.path),
-                                Some(folder.clone()),
-                                Message::NoteFromRollFolder
+                                self.note_places(),
+                                Some(place.clone()),
+                                Message::NoteFromRollPlace
                             )
                             .padding(8)
                             .width(Fill)
                             .style(style::choice(c))
                             .menu_style(style::choice_menu(c)),
-                            text("The note gets the folder's fields, like any new note there.")
-                                .size(12)
-                                .color(c.text_muted),
+                            text(if place.folder.is_some() {
+                                "The note gets the folder's fields, like any new note there."
+                            } else {
+                                "A plain note has no fields: just a page to write on, in the campaign folder."
+                            })
+                            .size(12)
+                            .color(c.text_muted),
                         ]
                         .spacing(4),
                     ]
@@ -6058,7 +6108,18 @@ impl Workspace {
         }
 
         let file_kind = self.file_kind(&message);
-        let task = self.handle(message);
+        let dice_changes = self.dice.changes();
+        let mut task = self.handle(message);
+        // A new roll, from anywhere, shows at the top of the dice pane's list.
+        if outer && self.dice.changes() != dice_changes {
+            task = Task::batch([
+                task,
+                iced::widget::operation::snap_to(
+                    dice::LIST,
+                    iced::widget::scrollable::RelativeOffset::START,
+                ),
+            ]);
+        }
 
         if let Some(tab) = self.tabs.iter_mut().find(|tab| Some(tab.id) == id) {
             match kind {
@@ -6598,15 +6659,17 @@ impl Workspace {
                 iced::clipboard::write(result)
             }
             Message::Dice(dice::Message::NewNote(name)) => {
-                // The folder picked last time, since rolls of one kind tend to go together.
-                let folder = self
-                    .roll_folder
-                    .clone()
-                    .filter(|folder| folder.is_dir())
-                    .unwrap_or_else(|| self.root.clone());
+                // The place picked last time, since rolls of one kind tend to go together.
+                let places = self.note_places();
+                let place = self
+                    .roll_place
+                    .as_ref()
+                    .and_then(|last| places.iter().find(|place| place.folder == last.folder))
+                    .unwrap_or(&places[0])
+                    .clone();
                 self.dialog = Some(Dialog::NoteFromRoll {
                     name,
-                    folder: self.folder_choice(&folder),
+                    place,
                     error: None,
                 });
                 iced::widget::operation::focus(DIALOG_INPUT)
@@ -6900,30 +6963,33 @@ impl Workspace {
                 }
                 Task::none()
             }
-            Message::NoteFromRollFolder(choice) => {
-                if let Some(Dialog::NoteFromRoll { folder, .. }) = &mut self.dialog {
-                    *folder = choice;
+            Message::NoteFromRollPlace(choice) => {
+                if let Some(Dialog::NoteFromRoll { place, .. }) = &mut self.dialog {
+                    *place = choice;
                 }
                 Task::none()
             }
             Message::CreateNoteFromRoll => {
-                let Some(Dialog::NoteFromRoll { name, folder, .. }) = &self.dialog else {
+                let Some(Dialog::NoteFromRoll { name, place, .. }) = &self.dialog else {
                     return Task::none();
                 };
-                let (name, folder) = (name.trim().to_string(), folder.path.clone());
+                let (name, place) = (name.trim().to_string(), place.clone());
                 if let Err(error) = campaign::validate_name(&name) {
                     self.dialog_result(Err(error));
                     return Task::none();
                 }
-                let ty = self
-                    .types
-                    .get(&folder)
+                // A plain note goes in the campaign folder, with no type.
+                let folder = place.folder.clone().unwrap_or_else(|| self.root.clone());
+                let ty = place
+                    .folder
+                    .as_ref()
+                    .and_then(|folder| self.types.get(folder))
                     .and_then(|ty| ty.as_ref().ok())
                     .cloned();
                 match create_linked_note(&self.root, &name, Some(&folder), ty.as_ref()) {
                     Ok(path) => {
                         self.dialog = None;
-                        self.roll_folder = Some(folder.clone());
+                        self.roll_place = Some(place);
                         self.rescan();
                         self.expanded.insert(folder);
                         self.open_file(path.clone());

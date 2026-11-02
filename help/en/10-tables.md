@@ -79,7 +79,7 @@ The first header is the die: `d6`, `2d6`, `d100` or `d%`. Each row's first cell 
 - **View > Roll Tables** (Ctrl+Shift+T) lists every roll table in the campaign in the sidebar, in place of the file tree. Click a table's die to roll it, or its name to open it. Close the list with **✕** or **Escape**.
 - In the dice roller, type the table's name, like `Weather`, and press **Enter**. A note with several tables takes its heading too: `Weather#Winter`.
 
-The result shows in the dice roller, with what the die rolled. **Copy** copies it, and **Create New Note** makes a note named after it, in the folder you pick: roll a name, and make the NPC.
+The result shows in the dice roller's **Tables** list, with what the die rolled. The list keeps every table result since the app opened, newest first, wherever it was rolled, with Inspire Me too; **Dice** beside it switches back to your rolls of dice. Each result has **Copy**, which copies it, and **Make Note**, which makes a note named after it, in the folder you pick: roll a name, and make the NPC. The folders are listed with their types, like **npcs (NPC)**, and **Plain note (no type)** makes a note with no fields in the campaign folder.
 
 ## Results that roll more
 
