@@ -174,14 +174,21 @@ The items in Player Management are all things that will just be built as templat
   - History is kept while the app is open, not between runs
   - Built in three steps (done): notes, then files and folders, then the table editor
 
-### Phase 2.5: v0.3.0 Release Prep
+### Phase 2.1: v0.3.0 Release Prep
 
 There are a few things that need to be done before we can release v0.3.0. This give us the space for that clean-up. Once this is done, we'll drop v0.3.0 and move on to Phase 3.
 
 - Swap default tables with the customized tables built by Ammon
+- View roll history
+  - There is a small visual bug when rolling dice. If the user rolls a bunch of single dice, the pane for the dice history gets small and looks odd.
+- When a user clicks the "Inspire Me" button multiple times in a row, there shouldn't be the override warning pop-up
+  - If the user is clicking inspire me multiple times they are likely not feeling inspired by a result and that result should just be overwritten
+  - There should be some way in the dice roll history view to see the results from previous roll table rolls (preferably something separate from the current system which groups all rolls together, so this would be a table result history or something to that effect.)
+    - There should be a copy and make note button next to the results from the table result history. When the user clicks the make note button it should prompt them for a note template (which folder it should go in) and offer the option of a generic note (no template)
 - Add "Roll another table" option to the table editer
   - If one result should lead into another result, let the tables be linked with a couple of clicks rather than manual edits to each row
   - for example on the Norse Names list, family names are a roll on the given name list plus a roll on the -sson/-sdottir list (two lists that are paired, with different sizes and dice rolls)
+    - In the case of one table that requires a previous table's roll (like Norse surnames) We should have a way to mark that.
   - We should also allow somewhat more dynamic/configurable rolling, allow users to create specific "Roll Table" buttons that will roll two or more tables that aren't normally linked
 - Tables need to be able to be marked as roll tables and information tables
 - Table edit mode should be a view on notes that are only tables
@@ -190,6 +197,11 @@ There are a few things that need to be done before we can release v0.3.0. This g
   - Light mode should be a cream/off-white color like old parchment
   - We should follow the system settings, but allow the user to change it however they want
 - I'd like a theme with accent colors (like dark mode, but with neon green accents), that might just be a theme that I make when we configure the theme editor
+- The dice roll pane, should have a collapse option as part of that pane. Right now the way to minimize it is through the dropdown menus and the dice roll button. There should be a - or x in the corner of the dice roll interface that lets the user minimize it from there.
+- The Walkthrough should have the parts of the sections in the left menu.
+  - right now the left menu of the walkthrough only shows the section titles, each title should have an arrow (just a triangle, like on the file tree) that allows the user to expand the section and see the questions (or a customizable title for the question/step)
+  - Each section/question should be clickable to go directly to that part of the walkthrough
+- I would like a progress bar for the walkthrough, but this isn't high priority and can be added to the planned/wished for features
 
 ### Phase 3: climax
 
