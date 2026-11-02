@@ -4,7 +4,7 @@
 
 Press **Ctrl+R** (or **Read** at the top right of a note) to see it formatted: its name as a title, its fields in a box on the right, then its headings, lists, tables, pictures and links. Press it again to go back to editing.
 
-**View > Open Notes in Reading View** opens every note this way.
+**View > Open Notes in Reading View** opens every note this way. A note that holds only tables opens in the **Table view** instead, with every table ready to edit (see the Roll tables guide).
 
 You can edit right in the reading view:
 
