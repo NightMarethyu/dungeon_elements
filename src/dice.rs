@@ -30,8 +30,12 @@ const MAX_COUNT: u32 = 100;
 const MAX_SIDES: u32 = 1000;
 /// The biggest number an expression can add.
 const MAX_NUMBER: u64 = 1_000_000;
-/// How many rolls before the last one are listed under it.
+/// How many rolls of dice before the last one are listed under it.
 const EARLIER: usize = 5;
+/// The most table results the Tables list keeps, newest first.
+const MAX_TABLE_RESULTS: usize = 200;
+/// The scrollable list on the left, scrolled back to the top for each new roll.
+pub const LIST: &str = "dice-list";
 /// The size of each die's button, in pixels.
 const DIE_SIZE: f32 = 64.0;
 /// Shown when an expression can't be read.
@@ -949,20 +953,14 @@ impl Roll {
     }
 }
 
-/// A roll in the list of rolls: of dice, or on a roll table.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Entry {
-    Dice(Roll),
-    Table(tables::Rolled),
-}
-
-impl Entry {
-    fn line(&self) -> String {
-        match self {
-            Entry::Dice(roll) => roll.line(),
-            Entry::Table(rolled) => rolled.line(),
-        }
-    }
+/// The two lists on the left of the pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum List {
+    /// The rolls of dice.
+    #[default]
+    Dice,
+    /// The results of rolls on roll tables, from anywhere in the app.
+    Tables,
 }
 
 pub struct Roller {
@@ -976,8 +974,16 @@ pub struct Roller {
     mode: Mode,
     /// Whether advantage and disadvantage change every die, not only a single d20.
     any_die: bool,
-    /// The latest roll first.
-    rolls: Vec<Entry>,
+    /// The latest roll of dice first.
+    rolls: Vec<Roll>,
+    /// The results of rolls on tables, the latest first. Like the dice, they are kept
+    /// only while the app is open.
+    tables: Vec<tables::Rolled>,
+    /// The list showing on the left.
+    list: List,
+    /// Goes up with each roll and each switch of list, so the list can be scrolled back
+    /// to the top to show the latest.
+    changes: u64,
     rng: fastrand::Rng,
 }
 
@@ -991,6 +997,9 @@ impl Default for Roller {
             mode: Mode::Normal,
             any_die: false,
             rolls: Vec::new(),
+            tables: Vec::new(),
+            list: List::Dice,
+            changes: 0,
             rng: fastrand::Rng::new(),
         }
     }
@@ -1010,6 +1019,8 @@ pub enum Message {
     NewNote(String),
     /// Hide the roller, from the – in its corner.
     Hide,
+    /// Show the Dice or the Tables list.
+    List(List),
 }
 
 impl Roller {
@@ -1037,6 +1048,10 @@ impl Roller {
             Message::Mode(mode) => self.mode = mode,
             Message::AnyDie(any_die) => self.any_die = any_die,
             Message::Hide => self.open = false,
+            Message::List(list) => {
+                self.list = list;
+                self.changes += 1;
+            }
             Message::Copy(_) | Message::NewNote(_) => {}
         }
     }
@@ -1086,18 +1101,17 @@ impl Roller {
 
         self.rolls.insert(
             0,
-            Entry::Dice(Roll {
+            Roll {
                 label,
                 expression: expression.clone(),
                 mode,
                 parts,
-            }),
+            },
         );
         self.rolls.truncate(EARLIER + 1);
-        match &self.rolls[0] {
-            Entry::Dice(roll) => roll,
-            Entry::Table(_) => unreachable!("a roll of dice was just added"),
-        }
+        self.list = List::Dice;
+        self.changes += 1;
+        &self.rolls[0]
     }
 
     /// What is typed in the expression box.
@@ -1110,11 +1124,19 @@ impl Roller {
         &mut self.rng
     }
 
-    /// Shows a roll on a table as the latest roll.
+    /// Adds a roll on a table to the top of the Tables list, and shows the list.
     pub fn add_table(&mut self, rolled: tables::Rolled) {
         self.error = None;
-        self.rolls.insert(0, Entry::Table(rolled));
-        self.rolls.truncate(EARLIER + 1);
+        self.tables.insert(0, rolled);
+        self.tables.truncate(MAX_TABLE_RESULTS);
+        self.list = List::Tables;
+        self.changes += 1;
+    }
+
+    /// Goes up with each roll and each switch of list: when it has, the list on the left
+    /// should be scrolled back to the top, where the latest is.
+    pub fn changes(&self) -> u64 {
+        self.changes
     }
 
     pub fn view<'a>(&'a self, c: Colors, icons: &Icons) -> Element<'a, Message> {
@@ -1217,7 +1239,7 @@ impl Roller {
         });
 
         row![
-            container(self.results(c)).width(260).height(Fill),
+            container(self.lists(c)).width(260).height(Fill),
             rule::vertical(c.border_width.max(1.0)).style(style::separator(c)),
             column![container(bar).padding(padding::top(12).left(16).right(16))]
                 .push(error)
@@ -1229,12 +1251,82 @@ impl Roller {
         .into()
     }
 
-    /// The last roll, and a few before it.
+    /// The Dice or Tables switch, over the list it picks.
+    fn lists(&self, c: Colors) -> Element<'_, Message> {
+        let switch = |list: List, label: String, hint: &str| {
+            tip(
+                c,
+                button(text(label).size(13))
+                    .padding([3, 12])
+                    .style(style::flat(c, self.list == list))
+                    .on_press(Message::List(list)),
+                hint.to_string(),
+            )
+        };
+        let tables_label = match self.tables.len() {
+            0 => "Tables".to_string(),
+            count => format!("Tables ({count})"),
+        };
+        let switches = row![
+            switch(List::Dice, "Dice".into(), "Your rolls of dice"),
+            switch(
+                List::Tables,
+                tables_label,
+                "Results rolled on roll tables, newest first"
+            ),
+        ]
+        .spacing(2);
+
+        let list = match self.list {
+            List::Dice => self.results(c),
+            List::Tables => self.table_list(c),
+        };
+        // The list keeps the column's whole width, however short its lines are, and
+        // scrolls when there are more rolls than fit.
+        column![
+            container(switches).padding(padding::top(8).left(12).right(12)),
+            scrollable(list)
+                .id(LIST)
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new().width(3).scroller_width(3),
+                ))
+                .width(Fill)
+                .height(Fill),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into()
+    }
+
+    /// Every result rolled on a table, the latest first, each with its table's name and
+    /// buttons to copy it or make a note of it.
+    fn table_list(&self, c: Colors) -> Element<'_, Message> {
+        let mut view = column![].spacing(10);
+        match self.tables.split_first() {
+            None => {
+                view = view.push(
+                    text("Results rolled on roll tables show here: from Inspire me, a field's table button, a table's Roll button, the Tables menu or the Roll Tables list.")
+                        .size(12)
+                        .color(c.text_muted),
+                );
+            }
+            Some((latest, earlier)) => {
+                view = view.push(table_result(c, latest));
+                for rolled in earlier {
+                    view = view
+                        .push(rule::horizontal(1).style(style::separator(c)))
+                        .push(earlier_table_result(c, rolled));
+                }
+            }
+        }
+        view.padding([10, 16]).width(Fill).into()
+    }
+
+    /// The last roll of dice, and a few before it.
     fn results(&self, c: Colors) -> Element<'_, Message> {
         let mut view = column![text("Result:").size(14)].spacing(6);
 
         match self.rolls.first() {
-            Some(Entry::Table(rolled)) => view = view.push(table_result(c, rolled)),
             None => {
                 view = view.push(
                     text("Click a die, or type dice like 2d6+3, to roll.")
@@ -1242,7 +1334,7 @@ impl Roller {
                         .color(c.text_muted),
                 );
             }
-            Some(Entry::Dice(roll)) => {
+            Some(roll) => {
                 // Dice that don't count, like the lower d20 with advantage, are crossed
                 // out, and numbers added are shown with their sign.
                 let mut numbers: Vec<Element<'_, Message>> = Vec::new();
@@ -1304,15 +1396,7 @@ impl Roller {
             }
         }
 
-        // The list keeps the column's whole width, however short its lines are, and
-        // scrolls when there are more rolls than fit.
-        scrollable(view.padding([12, 16]).width(Fill))
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::new().width(3).scroller_width(3),
-            ))
-            .width(Fill)
-            .height(Fill)
-            .into()
+        view.padding([10, 16]).width(Fill).into()
     }
 }
 
@@ -1347,24 +1431,42 @@ fn table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Messag
     for inner in &rolled.inner {
         view = view.push(text(inner.line()).size(11).color(c.text_muted));
     }
+    view.push(result_buttons(c, rolled)).into()
+}
+
+/// A result rolled before the latest: its table's name, the result, and its buttons.
+fn earlier_table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Message> {
+    column![
+        text(&rolled.name).size(11).color(c.text_muted),
+        text(rolled.text()).size(13).color(c.text),
+        result_buttons(c, rolled),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// Copy and Make Note, for a result rolled on a table.
+fn result_buttons<'a>(c: Colors, rolled: &tables::Rolled) -> Element<'a, Message> {
     let name = rolled.note_name();
-    view.push(
-        row![
+    row![
+        tip(
+            c,
             button(text("Copy").size(12))
                 .padding([3, 10])
                 .style(style::secondary(c))
                 .on_press(Message::Copy(rolled.text())),
-            tip(
-                c,
-                button(text("Create New Note").size(12))
-                    .padding([3, 10])
-                    .style(style::secondary(c))
-                    .on_press_maybe((!name.is_empty()).then(|| Message::NewNote(name.clone()))),
-                format!("Make a note called {name}"),
-            ),
-        ]
-        .spacing(6),
-    )
+            "Copy the result".to_string(),
+        ),
+        tip(
+            c,
+            button(text("Make Note").size(12))
+                .padding([3, 10])
+                .style(style::secondary(c))
+                .on_press_maybe((!name.is_empty()).then(|| Message::NewNote(name.clone()))),
+            format!("Make a note called {name}"),
+        ),
+    ]
+    .spacing(6)
     .into()
 }
 
@@ -1537,10 +1639,7 @@ mod tests {
 
     impl Roller {
         fn dice_roll(&self, index: usize) -> &Roll {
-            match &self.rolls[index] {
-                Entry::Dice(roll) => roll,
-                Entry::Table(_) => panic!("not a roll of dice"),
-            }
+            &self.rolls[index]
         }
     }
 
@@ -1767,6 +1866,46 @@ mod tests {
         }
         assert_eq!(roller.rolls.len(), EARLIER + 1);
         assert_eq!(roller.dice_roll(0).dice().count(), 1);
+    }
+
+    fn rolled(name: &str, result: &str) -> tables::Rolled {
+        tables::Rolled {
+            name: name.into(),
+            die: "1d6".into(),
+            values: vec![3],
+            results: vec![("Result".into(), result.into())],
+            each_column: false,
+            inner: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn table_results_get_their_own_list() {
+        let mut roller = Roller::default();
+        roller.update(Message::Roll(Die::D20));
+        assert_eq!(roller.list, List::Dice);
+
+        roller.add_table(rolled("Names", "Alice Ashby"));
+        roller.add_table(rolled("Place names", "Thornby"));
+        // Table rolls don't push dice out of the Dice list, and show the Tables list.
+        assert_eq!(roller.rolls.len(), 1);
+        assert_eq!(roller.list, List::Tables);
+        let names: Vec<&str> = roller.tables.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["Place names", "Names"]);
+
+        // Rolling dice shows the Dice list again; the switch picks either.
+        roller.update(Message::Roll(Die::D6));
+        assert_eq!(roller.list, List::Dice);
+        roller.update(Message::List(List::Tables));
+        assert_eq!(roller.list, List::Tables);
+        assert_eq!(roller.tables.len(), 2);
+
+        // Many more than the dice history keeps, up to a limit.
+        for index in 0..MAX_TABLE_RESULTS + 5 {
+            roller.add_table(rolled("Names", &index.to_string()));
+        }
+        assert_eq!(roller.tables.len(), MAX_TABLE_RESULTS);
+        assert_eq!(roller.tables[0].text(), (MAX_TABLE_RESULTS + 4).to_string());
     }
 
     #[test]

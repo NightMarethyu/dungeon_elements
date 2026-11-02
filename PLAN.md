@@ -196,7 +196,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Clicking Inspire me (or a table button on a field) again replaces the result it just put there, with no "Replace?" question: someone clicking again wasn't inspired by it
   - It still asks when the field holds anything else: text the person typed, or a rolled result they have changed since. That is the rule for "in a row", so it doesn't depend on how fast someone clicks
   - Each replaced roll is still one Undo step
-- [ ] Table result history, after the dice pane fixes
+- [x] Table result history, after the dice pane fixes
   - The dice pane gets two lists: **Dice** (the roll history today) and **Tables** (the results of roll table rolls, newest first, each with its table's name), from everywhere a table is rolled: Inspire me, field table buttons, the reading view, the Tables menu and the Roll Tables list
   - Each result has **Copy** and **Make Note** buttons. Make Note asks for the note's name (the result to start with) and where it goes: the campaign's folders with their types, plus **Plain note (no type)**
   - Like the dice history, it is kept while the app is open
