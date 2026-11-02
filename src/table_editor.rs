@@ -25,7 +25,8 @@ use iced::{Center, Element, Fill, Length};
 
 use crate::dice::Expression;
 use crate::style;
-use crate::tables::{self, Table};
+use crate::table_picker;
+use crate::tables::{self, Join, Links, Table};
 use crate::theme::Colors;
 
 /// The choice in the die list that lets any die be typed.
@@ -90,10 +91,29 @@ pub enum Message {
     BackspaceRow(usize),
     /// Removes the rows the die has no numbers left for.
     RemoveExtraRows,
+    /// How a result column (after the first) joins the one before it.
+    ColumnJoin(usize, Join),
+    /// A change to the tables rolled with this one.
+    Link(LinkEdit),
     /// A click on the editor, not on anything in it, which keeps it open.
     Click,
     Done,
     Cancel,
+}
+
+/// A change to the tables rolled with the table: those rolled first (Rolled after) when
+/// `first` is set, or after it (Also roll).
+#[derive(Debug, Clone)]
+pub enum LinkEdit {
+    /// Adds the tables a choice in the dropdown adds.
+    Add(bool, table_picker::Choice),
+    Remove(bool, usize),
+    /// Moves a table one place earlier (true) or later.
+    Move(bool, usize, bool),
+    /// How a table's result joins the one before it.
+    Join(bool, usize, Join),
+    /// How the table's own result joins the ones rolled first.
+    Own(Join),
 }
 
 /// What a message did to the editor.
@@ -139,6 +159,12 @@ pub struct Editor {
     table_links: BTreeSet<String>,
     /// The tables its results link to that aren't rolled.
     not_rolled: BTreeSet<String>,
+    /// How each result column joins the one before it, one for each column.
+    joins: Vec<Join>,
+    /// The tables rolled with it.
+    links: Links,
+    /// What the Also roll and Rolled after dropdowns offer. Without any, they don't show.
+    choices: Vec<table_picker::Choice>,
     /// The result box last typed or clicked in.
     focused: Option<(usize, usize)>,
     /// The Paste a List box, if it shows.
@@ -149,6 +175,8 @@ pub struct Editor {
     embedded: bool,
     /// Whether [`Self::set_settings`] was called.
     has_settings: bool,
+    /// Whether [`Self::set_links`] was called.
+    has_links: bool,
     /// Whether the heading can be renamed here: not when other tables are under it too.
     renamable: bool,
     /// What Undo and Redo take back and do again, oldest first, with what each did.
@@ -171,6 +199,8 @@ struct State {
     each_column: Option<bool>,
     heading: Option<(String, String)>,
     not_rolled: BTreeSet<String>,
+    joins: Vec<Join>,
+    links: Links,
 }
 
 #[derive(Debug)]
@@ -229,6 +259,12 @@ fn step(message: &Message) -> Option<(&'static str, Option<String>)> {
         Message::MoveRow(..) => Some(("Move Row", None)),
         Message::RemoveRow(_) | Message::BackspaceRow(_) => Some(("Remove Row", None)),
         Message::RemoveExtraRows => Some(("Remove Extra Rows", None)),
+        Message::ColumnJoin(..) => Some(("Join Columns", None)),
+        Message::Link(LinkEdit::Add(true, _)) => Some(("Rolled After", None)),
+        Message::Link(LinkEdit::Add(false, _)) => Some(("Also Roll", None)),
+        Message::Link(LinkEdit::Remove(..)) => Some(("Remove Linked Table", None)),
+        Message::Link(LinkEdit::Move(..)) => Some(("Move Linked Table", None)),
+        Message::Link(LinkEdit::Join(..) | LinkEdit::Own(_)) => Some(("Join Tables", None)),
         Message::Cell(..)
         | Message::Paste(_)
         | Message::ShowPaste(_)
@@ -258,12 +294,16 @@ impl Editor {
             .clone()
             .map(|heading| (heading.clone(), heading));
         editor.not_rolled = table.not_rolled.clone();
+        editor.joins = table.joins.clone();
+        editor.joins.resize(editor.columns.len(), Join::Space);
+        editor.links = table.links.clone();
         editor
     }
 
     /// An editor with nothing in it yet, for [`Self::read_roll`] and
     /// [`Self::read_information`] to fill.
     fn blank(die: String, roll: bool, columns: Vec<String>, rows: Vec<Row>) -> Self {
+        let joins = vec![Join::Space; columns.len()];
         Editor {
             range: 0..0,
             name: String::new(),
@@ -281,11 +321,15 @@ impl Editor {
             heading: None,
             table_links: BTreeSet::new(),
             not_rolled: BTreeSet::new(),
+            joins,
+            links: Links::default(),
+            choices: Vec::new(),
             focused: None,
             paste: None,
             prefix: "table".into(),
             embedded: false,
             has_settings: false,
+            has_links: false,
             renamable: true,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -511,6 +555,36 @@ impl Editor {
         self.has_settings = true;
     }
 
+    /// Gives the editor the tables rolled with it and how its columns join, and what the
+    /// Also roll and Rolled after dropdowns offer.
+    pub fn set_links(
+        &mut self,
+        links: Links,
+        joins: Vec<Join>,
+        choices: Vec<table_picker::Choice>,
+    ) {
+        self.links = links;
+        self.joins = joins;
+        self.joins.resize(self.columns.len(), Join::Space);
+        self.choices = choices;
+        self.has_links = true;
+    }
+
+    /// Whether it was given the tables rolled with it, with [`Self::set_links`].
+    pub fn has_links(&self) -> bool {
+        self.has_links
+    }
+
+    /// The tables rolled with it.
+    pub fn links(&self) -> &Links {
+        &self.links
+    }
+
+    /// How each result column joins the one before it, with the columns' headers.
+    pub fn joins(&self) -> (Vec<String>, Vec<Join>) {
+        (self.columns.clone(), self.joins.clone())
+    }
+
     /// Whether it was given the settings for its table, with [`Self::set_settings`].
     pub fn has_settings(&self) -> bool {
         self.has_settings
@@ -610,6 +684,8 @@ impl Editor {
         }
         let mut table = tables::find(&self.markdown()).into_iter().next()?;
         table.not_rolled = self.not_rolled.clone();
+        table.joins = self.joins.clone();
+        table.links = self.links.clone();
         table.heading = self.heading().map(|(_, new)| new.to_string());
         Some(table)
     }
@@ -934,6 +1010,8 @@ impl Editor {
             each_column: self.each_column,
             heading: self.heading.clone(),
             not_rolled: self.not_rolled.clone(),
+            joins: self.joins.clone(),
+            links: self.links.clone(),
         }
     }
 
@@ -958,6 +1036,8 @@ impl Editor {
         self.each_column = state.each_column;
         self.heading = state.heading;
         self.not_rolled = state.not_rolled;
+        self.joins = state.joins;
+        self.links = state.links;
         self.removing_column = None;
         if let Some((row, column)) = self.focused {
             if row < self.rows.len() && column < self.columns.len() {
@@ -980,6 +1060,9 @@ impl Editor {
                 | Message::Cell(..)
                 | Message::RemoveColumn(_)
                 | Message::ConfirmRemoveColumn(false)
+                // Kept in the campaign, not the table, so the note isn't changed.
+                | Message::ColumnJoin(..)
+                | Message::Link(_)
         );
         self.changed |= edits;
         match message {
@@ -1037,6 +1120,7 @@ impl Editor {
             }
             Message::AddColumn => {
                 self.columns.push(String::new());
+                self.joins.push(Join::Space);
                 for row in &mut self.rows {
                     row.cells.push(text_editor::Content::new());
                 }
@@ -1050,6 +1134,7 @@ impl Editor {
                 };
                 if let Some(other) = other.filter(|other| *other < self.columns.len()) {
                     self.columns.swap(index, other);
+                    self.joins.swap(index, other);
                     for row in &mut self.rows {
                         row.cells.swap(index, other);
                     }
@@ -1129,6 +1214,12 @@ impl Editor {
                 }
             }
             Message::Click | Message::Roll => {}
+            Message::ColumnJoin(index, join) => {
+                if let Some(slot) = self.joins.get_mut(index) {
+                    *slot = join;
+                }
+            }
+            Message::Link(edit) => self.edit_links(edit),
             Message::Heading(heading) => {
                 if let Some((_, new)) = &mut self.heading {
                     *new = heading;
@@ -1366,11 +1457,81 @@ impl Editor {
         }
     }
 
+    /// Whether a link to `table` names this table, which can't be rolled with itself.
+    fn is_own(&self, table: &str) -> bool {
+        let table = table.trim();
+        let own = |name: &str| table.eq_ignore_ascii_case(name.trim());
+        own(&self.name) || own(&self.name()) || table.ends_with(&format!("#{}", self.name()))
+    }
+
+    fn edit_links(&mut self, edit: LinkEdit) {
+        match edit {
+            LinkEdit::Add(first, choice) => {
+                for table in choice.adds() {
+                    let known = self
+                        .links
+                        .before
+                        .iter()
+                        .chain(&self.links.after)
+                        .any(|(other, _)| other.eq_ignore_ascii_case(table));
+                    if known || self.is_own(table) {
+                        continue;
+                    }
+                    let list = if first {
+                        &mut self.links.before
+                    } else {
+                        &mut self.links.after
+                    };
+                    list.push((table.clone(), Join::Space));
+                }
+            }
+            LinkEdit::Remove(first, index) => {
+                let list = if first {
+                    &mut self.links.before
+                } else {
+                    &mut self.links.after
+                };
+                if index < list.len() {
+                    list.remove(index);
+                }
+            }
+            LinkEdit::Move(first, index, earlier) => {
+                let list = if first {
+                    &mut self.links.before
+                } else {
+                    &mut self.links.after
+                };
+                let other = if earlier {
+                    index.checked_sub(1)
+                } else {
+                    Some(index + 1)
+                };
+                if let Some(other) = other.filter(|other| *other < list.len()) {
+                    list.swap(index, other);
+                }
+            }
+            LinkEdit::Join(first, index, join) => {
+                let list = if first {
+                    &mut self.links.before
+                } else {
+                    &mut self.links.after
+                };
+                if let Some((_, slot)) = list.get_mut(index) {
+                    *slot = join;
+                }
+            }
+            LinkEdit::Own(join) => self.links.join = join,
+        }
+    }
+
     fn remove_column(&mut self, index: usize) {
         if self.columns.len() <= 1 || index >= self.columns.len() {
             return;
         }
         self.columns.remove(index);
+        if index < self.joins.len() {
+            self.joins.remove(index);
+        }
         for row in &mut self.rows {
             if index < row.cells.len() {
                 row.cells.remove(index);
@@ -1658,6 +1819,7 @@ impl Editor {
                 .color(c.text_muted)
                 .width(Length::Fixed(width))
         };
+        let show_joins = self.roll && self.each_column() == Some(true);
         let mut header = row![].spacing(6).align_y(Center);
         if self.roll {
             header = header.push(label("Rolls", ROLLS_WIDTH));
@@ -1687,7 +1849,36 @@ impl Editor {
                     ))
                     .push(small("×", Some(Message::RemoveColumn(index))));
             }
-            header = header.push(row![input, tools].spacing(2).align_y(Center).width(Fill));
+            let named = row![input, tools].spacing(2).align_y(Center);
+            // Rolling each column puts the results in a row, joined as each column says.
+            let join = self.joins.get(index).copied().unwrap_or_default();
+            if show_joins && index > 0 {
+                header = header.push(
+                    column![
+                        named,
+                        hint(
+                            row![
+                                text("Joined with").size(11).color(c.text_muted),
+                                pick_list(Join::ALL, Some(join), move |join| {
+                                    map(Message::ColumnJoin(index, join))
+                                })
+                                .text_size(12)
+                                .padding([2, 6])
+                                .style(style::choice(c))
+                                .menu_style(style::choice_menu(c)),
+                            ]
+                            .spacing(6)
+                            .align_y(Center)
+                            .into(),
+                            "How this column's result follows the one before it: Bjorn Ashby (a space), Bjornsson (no space) or rope, lantern (a comma)",
+                        ),
+                    ]
+                    .spacing(4)
+                    .width(Fill),
+                );
+            } else {
+                header = header.push(named.width(Fill));
+            }
         }
         header = header.push(
             container(hint(
@@ -1834,6 +2025,11 @@ impl Editor {
             );
         }
 
+        // An information table isn't rolled, so nothing is rolled with it.
+        if self.roll && !self.choices.is_empty() {
+            editor = editor.push(self.links_view(c, map));
+        }
+
         if let Some(index) = self.removing_column {
             let name = self.columns.get(index).map_or("", String::as_str);
             let name = if name.trim().is_empty() {
@@ -1886,6 +2082,169 @@ impl Editor {
         )
         .on_press(map(Message::Click))
         .into()
+    }
+}
+
+impl Editor {
+    /// The tables rolled with this one: Rolled after (rolled first) and Also roll (rolled
+    /// after it), each with how its result joins the one before it.
+    fn links_view<'a, M: Clone + 'a>(
+        &'a self,
+        c: Colors,
+        map: impl Fn(Message) -> M + Copy + 'a,
+    ) -> Element<'a, M> {
+        let small = |label: &'a str, message: Option<Message>| {
+            button(text(label).size(12))
+                .padding([2, 6])
+                .style(style::flat(c, false))
+                .on_press_maybe(message.map(map))
+        };
+        let joins = |join: Join, on: Box<dyn Fn(Join) -> Message + 'a>| {
+            pick_list(Join::ALL, Some(join), move |join| map(on(join)))
+                .text_size(12)
+                .padding([2, 6])
+                .style(style::choice(c))
+                .menu_style(style::choice_menu(c))
+        };
+        let label = |words: &'a str| text(words).size(12).color(c.text_muted);
+        let name = |table: &str| {
+            text(tables::label(table))
+                .size(13)
+                .color(c.text)
+                .font(iced::Font {
+                    weight: iced::font::Weight::Bold,
+                    ..iced::Font::DEFAULT
+                })
+        };
+        let picked = |table: &String| {
+            self.links
+                .before
+                .iter()
+                .chain(&self.links.after)
+                .any(|(other, _)| other.eq_ignore_ascii_case(table))
+        };
+        let offered: Vec<table_picker::Choice> = self
+            .choices
+            .iter()
+            .filter(|choice| {
+                choice
+                    .adds()
+                    .iter()
+                    .any(|table| !picked(table) && !self.is_own(table))
+            })
+            .cloned()
+            .collect();
+        let add = |first: bool, placeholder: &'a str| {
+            pick_list(
+                offered.clone(),
+                None::<table_picker::Choice>,
+                move |choice| map(Message::Link(LinkEdit::Add(first, choice))),
+            )
+            .placeholder(placeholder)
+            .text_size(12)
+            .padding([3, 8])
+            .width(220)
+            .style(style::choice(c))
+            .menu_style(style::choice_menu(c))
+        };
+        // One line for each linked table: its name, how it joins, and buttons.
+        let lines = |first: bool, list: &'a [(String, Join)], joined_first: bool| {
+            let mut lines = column![].spacing(4);
+            let last = list.len().saturating_sub(1);
+            for (index, (table, join)) in list.iter().enumerate() {
+                let mut line = row![name(table)].spacing(8).align_y(Center);
+                if index > 0 || joined_first {
+                    line = line.push(label("joined with")).push(joins(
+                        *join,
+                        Box::new(move |join| Message::Link(LinkEdit::Join(first, index, join))),
+                    ));
+                }
+                line = line
+                    .push(small(
+                        "↑",
+                        (index > 0).then_some(Message::Link(LinkEdit::Move(first, index, true))),
+                    ))
+                    .push(small(
+                        "↓",
+                        (index < last)
+                            .then_some(Message::Link(LinkEdit::Move(first, index, false))),
+                    ))
+                    .push(small(
+                        "×",
+                        Some(Message::Link(LinkEdit::Remove(first, index))),
+                    ));
+                lines = lines.push(line);
+            }
+            lines
+        };
+
+        let mut section = column![
+            text("Linked tables").size(13).color(c.text).font(iced::Font {
+                weight: iced::font::Weight::Bold,
+                ..iced::Font::DEFAULT
+            }),
+            text("Roll other tables with this one, and get one result, like a given name and then a surname.")
+                .size(12)
+                .color(c.text_muted),
+        ]
+        .spacing(6);
+
+        let after_tip = "Tables this one needs rolled first, like a father's name before a Norse surname. Rolling this table on its own rolls them first";
+        let mut first = column![
+            row![
+                tooltip(
+                    label("Rolled after"),
+                    container(text(after_tip).size(12))
+                        .padding([4, 8])
+                        .max_width(320)
+                        .style(style::dropdown(c)),
+                    tooltip::Position::Top,
+                ),
+                add(true, "Add a table to roll first..."),
+            ]
+            .spacing(8)
+            .align_y(Center)
+        ]
+        .spacing(4);
+        if !self.links.before.is_empty() {
+            first = first.push(lines(true, &self.links.before, false)).push(
+                row![
+                    label("then"),
+                    name(&self.name()),
+                    label("joined with"),
+                    joins(
+                        self.links.join,
+                        Box::new(|join| Message::Link(LinkEdit::Own(join)))
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Center),
+            );
+        }
+        section = section.push(first);
+
+        let also_tip =
+            "Tables rolled after this one, in order, with their results joined to its result";
+        let mut after = column![
+            row![
+                tooltip(
+                    label("Also roll"),
+                    container(text(also_tip).size(12))
+                        .padding([4, 8])
+                        .max_width(320)
+                        .style(style::dropdown(c)),
+                    tooltip::Position::Top,
+                ),
+                add(false, "Add a table to roll after..."),
+            ]
+            .spacing(8)
+            .align_y(Center)
+        ]
+        .spacing(4);
+        if !self.links.after.is_empty() {
+            after = after.push(lines(false, &self.links.after, true));
+        }
+        section.push(after).into()
     }
 }
 
@@ -2009,6 +2368,45 @@ mod tests {
                 text_editor::Action::Edit(text_editor::Edit::Insert(c)),
             ));
         }
+    }
+
+    #[test]
+    fn links_and_joins_are_picked_in_the_editor_and_undone() {
+        let mut editor = editor(WEATHER);
+        let choices = table_picker::choices(vec![("Endings".into(), None)]);
+        let endings = choices
+            .iter()
+            .find(|choice| choice.to_string() == "Endings")
+            .unwrap()
+            .clone();
+        editor.set_links(Links::default(), Vec::new(), choices);
+        assert!(editor.has_links());
+
+        editor.update(Message::Link(LinkEdit::Add(false, endings.clone())));
+        // A table already picked isn't added again.
+        editor.update(Message::Link(LinkEdit::Add(true, endings)));
+        editor.update(Message::Link(LinkEdit::Join(false, 0, Join::NoSpace)));
+        assert_eq!(
+            editor.links().after,
+            [("Endings".to_string(), Join::NoSpace)]
+        );
+        assert!(editor.links().before.is_empty());
+        assert_eq!(editor.undo_label(), Some("Join Tables"));
+        editor.undo(false);
+        editor.undo(false);
+        assert!(editor.links().is_empty());
+        editor.undo(true);
+        assert_eq!(editor.links().after, [("Endings".to_string(), Join::Space)]);
+
+        // A column's join moves with it, and goes with it.
+        editor.update(Message::AddColumn);
+        editor.update(Message::ColumnJoin(1, Join::Comma));
+        assert_eq!(editor.joins().1, [Join::Space, Join::Comma]);
+        editor.update(Message::MoveColumn(1, true));
+        assert_eq!(editor.joins().1, [Join::Comma, Join::Space]);
+        editor.update(Message::RemoveColumn(0));
+        assert_eq!(editor.joins().1, [Join::Space]);
+        assert_eq!(editor.table().unwrap().links.after.len(), 1);
     }
 
     #[test]

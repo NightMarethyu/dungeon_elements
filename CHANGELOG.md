@@ -4,6 +4,12 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Linked roll tables
+
+- The table editor has **Linked tables**: **Also roll** picks tables to roll after this one (a Norse given name, then a surname) and **Rolled after** picks tables it needs rolled first (a father's name before a Norse surname), with no change to the rows. The results come back as one, like "Sven Leifsson", wherever the table is rolled, and the Roll Tables list shows the links under the table's name.
+- Each linked table, and each column of a table rolled column by column, is **Joined with** a space, no space or a comma, picked in the table editor, so nobody needs to start results with a hyphen. Results that do still join with no space.
+- The links are kept as d1 roll tables in a hidden file in the campaign, `.dungeon_elements/linked tables.md`, and follow notes and headings when they are renamed.
+
 ### Ammon's name tables
 
 - The built-in English, Norse, Latin, Greek and Japanese names are much longer lists: about 70 given names each for women and men, and as many family names. Their **Female** and **Male** tables still give a full name, like Alice Ashby, from a given name and a family name rolled on their own.
@@ -11,6 +17,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - The **Mixed** tables take their family names from family names, not from a second first name.
 - New story prompts: **Tropes** (50), **Verbs** (100), and **Tropes and Verbs**, which rolls one of each. The walkthrough rolls on it to sum up a campaign.
 - Some of the World tables have new rows, like **Campaign names**, **Historic events** and **Costs and limits**.
+
 ### Roll tables and information tables
 
 - A table is either a **roll table**, with a Roll button and a place in the Roll Tables list, or an **information table**, like prices, a calendar or a party list: no Roll button, not in the Roll Tables list, and not offered when picking a table to roll on.

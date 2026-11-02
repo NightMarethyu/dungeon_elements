@@ -28,6 +28,13 @@ pub struct Choice {
     label: String,
 }
 
+impl Choice {
+    /// The tables it adds, like `English names#Female`.
+    pub fn adds(&self) -> &[String] {
+        &self.adds
+    }
+}
+
 impl std::fmt::Display for Choice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.label)
