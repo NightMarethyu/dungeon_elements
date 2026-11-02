@@ -55,6 +55,15 @@ Not every table is for rolling. A list of prices, a calendar or the party's name
 
 Which tables with a die are information tables is kept in `.dungeon_elements/tables.yaml`, so the notes stay plain tables.
 
+## The Table view
+
+A note that holds only tables, like a shop's prices and rumors or a list of names, opens in the **Table view**: every table in the table editor, one under the other, each with its heading as its name at the top. **Table** is beside **Edit** and **Read** at the top right of such a note.
+
+- Change any table right where it is. Clicking into another table keeps what you changed in the one before, and **Ctrl+S** saves the note.
+- The short lines of text between the tables are changed in place, as in the reading view: click one, type, and click elsewhere.
+- A note counts as holding only tables when it has at least one table, no fields, and nothing else but headings and short lines of text. Notes with more writing, lists or pictures keep **Edit** and **Read**, and their tables keep the **Edit Table** button.
+- **View > Open Table Notes in Table View** is on to start with. Turn it off to open these notes like any other, and click **Table** when you want it.
+
 ## The die and the rows
 
 The first header is the die: `d6`, `2d6`, `d100` or `d%`. Each row's first cell is the numbers it covers:

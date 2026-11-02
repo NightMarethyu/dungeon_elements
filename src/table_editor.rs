@@ -173,6 +173,9 @@ pub struct Editor {
     prefix: String,
     /// Whether it is part of a form, always open: it has no Done or Cancel then.
     embedded: bool,
+    /// Whether it is one of the tables of a note's Table view, always open: it has no
+    /// Done or Cancel, and its heading is the big box at its top.
+    table_view: bool,
     /// Whether [`Self::set_settings`] was called.
     has_settings: bool,
     /// Whether [`Self::set_links`] was called.
@@ -328,6 +331,7 @@ impl Editor {
             paste: None,
             prefix: "table".into(),
             embedded: false,
+            table_view: false,
             has_settings: false,
             has_links: false,
             renamable: true,
@@ -519,6 +523,20 @@ impl Editor {
         self.embedded = true;
         self.focus = None;
         self
+    }
+
+    /// Makes it one of the tables of a note's Table view, always open, with widget ids
+    /// that start with `prefix`. It keeps its own Undo, and saves when it is left.
+    pub fn in_table_view(mut self, prefix: &str) -> Self {
+        self.prefix = prefix.to_string();
+        self.table_view = true;
+        self.focus = None;
+        self
+    }
+
+    /// Whether it shows the heading the table is under, in a box to rename it.
+    pub fn shows_heading(&self) -> bool {
+        self.heading.is_some() && self.renamable
     }
 
     /// The widget id of its part `part`.
@@ -1672,6 +1690,15 @@ impl Editor {
         };
         // A table under a heading is named by it, and can be renamed here.
         let name: Element<'a, M> = match self.heading.as_ref().filter(|_| self.renamable) {
+            // In the Table view, the heading is the table's title.
+            Some((_, heading)) if self.table_view => text_input("The table's name", heading)
+                .id(self.id("heading"))
+                .on_input(move |value| map(Message::Heading(value)))
+                .size(22)
+                .padding([4, 8])
+                .width(Fill)
+                .style(style::input(c))
+                .into(),
             Some((_, heading)) => row![
                 text("Name").size(13).color(c.text_muted),
                 text_input("The table's name", heading)
@@ -1696,7 +1723,7 @@ impl Editor {
         };
         // One in a form has the field's label for a name, and is always open.
         let name = (!self.embedded).then_some(name);
-        let finish = (!self.embedded).then(|| {
+        let finish = (!self.embedded && !self.table_view).then(|| {
             row![
                 button(text("Cancel").size(13))
                     .padding([4, 10])

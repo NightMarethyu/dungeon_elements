@@ -42,6 +42,7 @@ pub enum Command {
     ShowExtensions,
     ShowTypeFiles,
     OpenInReading,
+    OpenTablesInTableView,
     ReloadThemes,
     RefreshTree,
     ExpandAll,
@@ -67,7 +68,7 @@ pub enum Command {
 use Command::*;
 
 impl Command {
-    pub const ALL: [Command; 48] = [
+    pub const ALL: [Command; 49] = [
         NewNote,
         NewFolder,
         OpenFile,
@@ -99,6 +100,7 @@ impl Command {
         ShowExtensions,
         ShowTypeFiles,
         OpenInReading,
+        OpenTablesInTableView,
         ReloadThemes,
         RefreshTree,
         ExpandAll,
@@ -310,6 +312,12 @@ impl Command {
                 "open_in_reading",
                 "Open Notes in Reading View",
                 "Open notes ready to read instead of to edit",
+                None,
+            ),
+            OpenTablesInTableView => (
+                "open_tables_in_table_view",
+                "Open Table Notes in Table View",
+                "Open notes that hold only tables with every table ready to edit",
                 None,
             ),
             ReloadThemes => (

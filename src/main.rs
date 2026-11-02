@@ -271,6 +271,8 @@ struct Workspace {
     dice: dice::Roller,
     /// Whether notes open in the reading view rather than an editor.
     open_in_reading: bool,
+    /// Whether notes that hold only tables open in the Table view.
+    tables_in_table_view: bool,
     /// Pictures from the web shown in the reading view, by their URL.
     web: web::Pictures,
     /// The right-click menu that is open, and where in the window.
@@ -535,6 +537,13 @@ struct Tab {
     preview: Option<Preview>,
     /// What is being edited in the reading view, if anything.
     edit: Option<ReadEdit>,
+    /// Whether the reading view shows as the Table view: a note that holds only tables,
+    /// with every table in the table editor.
+    table_view: bool,
+    /// The Table view's table editors, with the block each is, and what they were made
+    /// from, so they are made again when that changes. The one being edited is in `edit`.
+    table_editors: Vec<(usize, Box<table_editor::Editor>)>,
+    table_editors_for: String,
     /// The file the text was last saved to, if any.
     path: Option<PathBuf>,
     /// The folder a new note is saved in.
@@ -709,6 +718,8 @@ fn undo_kind(message: &Message) -> UndoKind {
         Message::KeepMine | Message::ReloadFromDisk => Step("Reload from Disk"),
         // The table editor keeps its changes to itself until they are saved.
         Message::TableEditor(_) => Ignore,
+        // Moving to another table in the Table view saves the one left.
+        Message::TableViewEditor(..) => Step("Table Change"),
         Message::MenuHovered(_)
         | Message::SubmenuHovered(_)
         | Message::Modifiers(_)
@@ -832,6 +843,23 @@ impl Tab {
     /// Whether the form shows, rather than the Markdown source or the reading view.
     fn shows_form(&self) -> bool {
         self.form.is_some() && !self.source && !self.reading()
+    }
+
+    /// Whether the note holds only tables, with their headings and short lines of text,
+    /// and no type fields, so it can show in the Table view.
+    fn is_table_note(&self) -> bool {
+        if !self.is_note()
+            || self
+                .form
+                .as_ref()
+                .is_some_and(|form| !form.ty.fields.is_empty())
+        {
+            return false;
+        }
+        match &self.preview {
+            Some(preview) => preview::is_table_note(preview.source()),
+            None => preview::is_table_note(&self.text().unwrap_or_else(|_| self.content.text())),
+        }
     }
 
     /// Whether the reading view shows the note formatted, instead of an editor.
@@ -1093,6 +1121,11 @@ enum Message {
     /// Shows the active tab in the reading view (true) or an editor (false).
     SetReading(bool),
     ToggleOpenInReading(bool),
+    /// Shows the active tab's note, which holds only tables, in the Table view.
+    ShowTableView,
+    ToggleTablesInTableView(bool),
+    /// A message from the Table view's table editor for the table that is block `.0`.
+    TableViewEditor(usize, table_editor::Message),
     /// A link in the reading view was clicked.
     PreviewLink(String),
     /// A task box in the reading view was clicked; its `[ ]` is here in the note's text.
@@ -1328,6 +1361,7 @@ impl App {
         self.screen = Screen::Workspace(Box::new(Workspace::open(
             root,
             self.settings.open_in_reading,
+            self.settings.open_tables_in_table_view,
         )));
     }
 
@@ -1703,6 +1737,14 @@ impl App {
                 self.save_settings();
                 if let Screen::Workspace(workspace) = &mut self.screen {
                     workspace.open_in_reading = on;
+                }
+                return Task::none();
+            }
+            Message::ToggleTablesInTableView(on) => {
+                self.settings.open_tables_in_table_view = on;
+                self.save_settings();
+                if let Screen::Workspace(workspace) = &mut self.screen {
+                    workspace.tables_in_table_view = on;
                 }
                 return Task::none();
             }
@@ -2155,6 +2197,11 @@ impl App {
                 true,
                 settings.open_in_reading,
             ),
+            Command::OpenTablesInTableView => (
+                Message::ToggleTablesInTableView(!settings.open_tables_in_table_view),
+                true,
+                settings.open_tables_in_table_view,
+            ),
             Command::ReloadThemes => (Message::ReloadThemes, true, false),
             Command::RefreshTree => (Message::RefreshTree, open, false),
             Command::ExpandAll => (Message::ExpandAll, open, false),
@@ -2270,6 +2317,7 @@ impl App {
                     Do(ShowExtensions),
                     Do(ShowTypeFiles),
                     Do(OpenInReading),
+                    Do(OpenTablesInTableView),
                     Gap,
                 ]);
                 // System comes first: it is the default, and follows the computer.
@@ -2396,7 +2444,7 @@ impl App {
 }
 
 impl Workspace {
-    fn open(root: PathBuf, open_in_reading: bool) -> Self {
+    fn open(root: PathBuf, open_in_reading: bool, tables_in_table_view: bool) -> Self {
         let tree = campaign::scan(&root);
         let (own_types, types) = load_types(&root, &tree);
         let scan = scan_notes(&tree);
@@ -2434,6 +2482,7 @@ impl Workspace {
             drag: None,
             dice: dice::Roller::default(),
             open_in_reading,
+            tables_in_table_view,
             web: web::Pictures::new(),
             context: None,
             hovered_block: None,
@@ -3726,6 +3775,9 @@ impl Workspace {
             source: false,
             preview: None,
             edit: None,
+            table_view: false,
+            table_editors: Vec::new(),
+            table_editors_for: String::new(),
             disk: path.as_deref().and_then(check::modified_time),
             path,
             folder,
@@ -3749,7 +3801,14 @@ impl Workspace {
             _ => history::History::new(&text),
         };
         self.active = Some(id);
-        if read {
+        let table_view =
+            self.tables_in_table_view && self.active_tab().is_some_and(Tab::is_table_note);
+        if table_view {
+            self.read_active_tab();
+            if let Some(tab) = self.active_tab_mut() {
+                tab.table_view = true;
+            }
+        } else if read {
             self.read_active_tab();
         }
     }
@@ -4308,46 +4367,12 @@ impl Workspace {
             Some(edited) if index > edited => index.saturating_add_signed(added),
             _ => index,
         };
-        let Some(tab) = self.active_tab() else {
-            return Task::none();
-        };
-        let Some(preview) = &tab.preview else {
-            return Task::none();
-        };
-        let Some(range) = preview.block_range(index) else {
-            return Task::none();
-        };
-        let source = preview.source().to_string();
-        let Some(table) = tables::find_all(&source)
-            .into_iter()
-            .find(|table| table.range.start == range.start)
+        let Some(editor) = self
+            .active_tab()
+            .and_then(|tab| self.table_editor_at(tab, index))
         else {
             return Task::none();
         };
-        let path = tab.note_path();
-        let information = table.has_die() && self.is_information(&path, table.heading.as_deref());
-        let name = table.name(&self.tree_name(&path, false));
-        let each_column = self.rolls_each_column(&path, table.heading.as_deref());
-        // A heading with more than one table under it can't be renamed from one of them.
-        let shared = tables::find_all(&source)
-            .iter()
-            .filter(|other| other.heading.is_some() && other.heading == table.heading)
-            .count()
-            > 1;
-        let table = self.with_settings(&path, table);
-        let mut editor = table_editor::Editor::new(&source, &table, &name, Some(each_column));
-        if information {
-            editor.set_roll(false);
-        }
-        editor.set_table_links(self.table_link_keys());
-        editor.set_links(
-            table.links.clone(),
-            table.joins.clone(),
-            self.link_choices(),
-        );
-        if shared {
-            editor.keep_heading();
-        }
         let mut editor = Box::new(editor);
         let focus = editor.take_focus();
         if let Some(tab) = self.active_tab_mut() {
@@ -4360,6 +4385,78 @@ impl Workspace {
         match focus {
             Some(id) => iced::widget::operation::focus(id),
             None => Task::none(),
+        }
+    }
+
+    /// A table editor for the table that is block `index` of `tab`'s reading view, if that
+    /// block is a table: one of the Table view's, in the Table view.
+    fn table_editor_at(&self, tab: &Tab, index: usize) -> Option<table_editor::Editor> {
+        let preview = tab.preview.as_ref()?;
+        let range = preview.block_range(index)?;
+        let source = preview.source();
+        let found = tables::find_all(source);
+        let table = found
+            .iter()
+            .find(|table| table.range.start == range.start)?
+            .clone();
+        let path = tab.note_path();
+        let information = table.has_die() && self.is_information(&path, table.heading.as_deref());
+        let name = table.name(&self.tree_name(&path, false));
+        let each_column = self.rolls_each_column(&path, table.heading.as_deref());
+        // A heading with more than one table under it can't be renamed from one of them.
+        let shared = found
+            .iter()
+            .filter(|other| other.heading.is_some() && other.heading == table.heading)
+            .count()
+            > 1;
+        let table = self.with_settings(&path, table);
+        let mut editor = table_editor::Editor::new(source, &table, &name, Some(each_column));
+        if information {
+            editor.set_roll(false);
+        }
+        editor.set_table_links(self.table_link_keys());
+        editor.set_links(
+            table.links.clone(),
+            table.joins.clone(),
+            self.link_choices(),
+        );
+        if shared {
+            editor.keep_heading();
+        }
+        if tab.table_view {
+            editor = editor.in_table_view(&format!("table-view-{index}"));
+        }
+        Some(editor)
+    }
+
+    /// Makes the Table view's table editors again if the active tab's note or its tables'
+    /// settings changed since they were made.
+    fn refresh_table_editors(&mut self) {
+        let Some(tab) = self.active_tab().filter(|tab| tab.table_view) else {
+            return;
+        };
+        let Some(preview) = &tab.preview else {
+            return;
+        };
+        let path = tab.note_path();
+        let source = preview.source();
+        let made_from = format!(
+            "{source}\u{0}{:?}{:?}",
+            self.information_tables(&path, source),
+            self.each_column_tables(&path, source)
+        );
+        if made_from == tab.table_editors_for {
+            return;
+        }
+        let editors = (0..preview.block_count())
+            .filter_map(|block| {
+                self.table_editor_at(tab, block)
+                    .map(|editor| (block, Box::new(editor)))
+            })
+            .collect();
+        if let Some(tab) = self.active_tab_mut() {
+            tab.table_editors = editors;
+            tab.table_editors_for = made_from;
         }
     }
 
@@ -5979,6 +6076,7 @@ impl Workspace {
         }
         if outer {
             self.after_files(file_kind, files);
+            self.refresh_table_editors();
         }
         self.depth -= 1;
         task
@@ -6449,6 +6547,7 @@ impl Workspace {
                 | Message::ToggleSource
                 | Message::SetSource(_)
                 | Message::SetReading(_)
+                | Message::ShowTableView
                 | Message::PreviewLink(_)
                 | Message::FollowLink(_)
                 | Message::NewNote
@@ -7526,13 +7625,44 @@ impl Workspace {
                 if self.active_tab().is_some_and(Tab::is_note) {
                     self.read_active_tab();
                 }
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.table_view = false;
+                }
                 Task::none()
             }
             Message::SetReading(false) => {
                 if let Some(tab) = self.active_tab_mut() {
                     tab.preview = None;
+                    tab.table_view = false;
                 }
                 Task::none()
+            }
+            Message::ShowTableView => {
+                if self.active_tab().is_some_and(Tab::is_table_note) {
+                    self.read_active_tab();
+                    if let Some(tab) = self.active_tab_mut() {
+                        tab.table_view = true;
+                    }
+                }
+                Task::none()
+            }
+            Message::TableViewEditor(index, message) => {
+                let live = matches!(
+                    self.active_tab().and_then(|tab| tab.edit.as_ref()),
+                    Some(ReadEdit::Table { index: live, .. }) if *live == index
+                );
+                if !live {
+                    // Saves the table that was being edited, and opens this one in its place,
+                    // without moving the focus from the box that was clicked.
+                    let _ = self.edit_table(index);
+                    if !matches!(
+                        self.active_tab().and_then(|tab| tab.edit.as_ref()),
+                        Some(ReadEdit::Table { .. })
+                    ) {
+                        return Task::none();
+                    }
+                }
+                self.update(Message::TableEditor(message))
             }
             Message::EditBlock(index) => {
                 // A roll table is edited in the table editor, not as Markdown.
@@ -8916,10 +9046,18 @@ impl Workspace {
             }
             switches = switches.push(switch(
                 "Read",
-                reading,
+                reading && !tab.table_view,
                 Message::SetReading(true),
                 "Read the note formatted (Ctrl+R switches)",
             ));
+            if tab.table_view || tab.is_table_note() {
+                switches = switches.push(switch(
+                    "Table",
+                    tab.table_view,
+                    Message::ShowTableView,
+                    "Edit every table in the note, one under the other",
+                ));
+            }
             bar = bar.push(container(switches).padding([0, 6]));
         }
 
@@ -10657,7 +10795,36 @@ impl Workspace {
                 on_page: Message::FinishEditing,
                 block: None,
                 field: None,
+                tables: Vec::new(),
+                hidden: Vec::new(),
             };
+            if tab.table_view {
+                let live = match &tab.edit {
+                    Some(ReadEdit::Table { index, .. }) => Some(*index),
+                    _ => None,
+                };
+                for (block, editor) in &tab.table_editors {
+                    // The heading right above a table is its name, in its editor.
+                    if editor.shows_heading() && *block > 0 && preview.is_heading(block - 1) {
+                        editing.hidden.push(block - 1);
+                    }
+                    if Some(*block) != live {
+                        let block = *block;
+                        let editor = editor.view(
+                            c,
+                            move |message| Message::TableViewEditor(block, message),
+                            shortcut,
+                            self.link_colors(c),
+                        );
+                        // Laid out as the one being edited is, with the place for link
+                        // suggestions under it, so the box clicked keeps the focus when
+                        // it becomes that one.
+                        editing
+                            .tables
+                            .push((block, column![editor, space()].spacing(4).into()));
+                    }
+                }
+            }
             match &tab.edit {
                 Some(ReadEdit::Block { index, content, .. }) => {
                     let editor = block_editor(c, content, self.link_colors(c), accept.clone());
@@ -12312,7 +12479,7 @@ mod tests {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, text).unwrap();
         }
-        let mut workspace = Workspace::open(root.clone(), false);
+        let mut workspace = Workspace::open(root.clone(), false, false);
         workspace.open_file(root.join(notes[0].0));
         workspace
     }
