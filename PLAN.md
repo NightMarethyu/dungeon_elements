@@ -180,11 +180,15 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
 
 - [ ] Ammon's built-in tables
   - Replace the built-in tables in `assets/tables/` with the ones in `assets/tables/Ammons_Tables/`, then delete that folder
-  - Add Ammon's new **Tropes** (d50) and **Verbs** (d100) tables to the Roll Tables list (Story prompts group). Keep **Action and Theme**: the walkthrough falls back to it
+  - Add Ammon's new **Tropes** (d50) and **Verbs** (d100) tables to the Roll Tables list (Story prompts group). Replace the Walkthrough's **Action and Theme** rolls with a roll on the new tropes and verbs table the table can look something like this, it should match the Linked Tables items below so don't take this table as doctrine:
+
+  | d1 | Tropes and Verbs | |
+  | 1 | [[Tropes]] | [[Verbs]] |
   - Rolling a culture's names still gives a full name ("Alice Ashby", not "Alice"): each culture's top table gets a First and a Family column that link to its own given name and family name sections
   - Norse family names: picking a Norse name (Norse names, or Norse - Female / Male in the dropdown) gives a male given name and the matching ending (-sdottir for a woman, -sson for a man). Random rolls (Names and the Mixed tables) roll the ending on the Norse surname table, so it can come out either way. All of this is written in the tables, no code
   - Fix the links whose headings were renamed (like `[[Norse names#Female]]`, now "Female Given Name"), the Mixed tables' Family column (which points at given names), and every place that names a heading part: the name dropdown's choices and saved picks, and the `table:` lists in the default template and walkthrough
   - A test that every link in every built-in table finds its table, so a renamed heading can't break a roll again
+
 - [ ] Dice pane fixes
   - The roll history on the left keeps its width however many single dice are rolled, and scrolls (today it gets narrow and looks odd)
   - A **–** in the pane's top right corner hides it ("Hide dice roller (Ctrl+Shift+D)"), as well as the d20 button and the Tables menu
@@ -198,6 +202,7 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
   - Like the dice history, it is kept while the app is open
 - [ ] Linked tables in the table editor
   - **Also roll**: a table can name one or more tables to roll after it, picked in a couple of clicks with no change to each row (Norse given name, then Norse surname). The results are joined into one, with no space before an ending like -sson
+    - When joining results of multiple tables we need to ensure that the default format is to add a space, but we should allow a user to mark a column as needing no space (what we currently do when a column's results start with '-'), or needing commas. We can leave the current table formats, but I want to ensure that a user who wants to have their results come back as a comma separated list, regular spaces between results, or no space, they can do that without needing to know/remember to type special characters before each item in a column.
   - **Rolled after**: a table can be marked as needing another table's roll first (Norse surnames need a father's name). Rolling it on its own rolls that table first, and the editor and the Roll Tables list show the link
   - Kept as an ordinary roll table: a d1 table with one link per column, in a hidden file in the campaign's `.dungeon_elements/` folder. Today's rolling already handles it (each column, the -sson joins, the history, Undo), and the table editor shows it as Also roll picks, so nobody sees or edits the file. To check: that d1 counts as a die, and that fixing links after a rename covers that folder
   - The per-row **Rolls on** boxes stay, for rows that lead somewhere different
