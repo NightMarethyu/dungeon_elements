@@ -1872,6 +1872,7 @@ mod tests {
             results: vec![("Result".into(), result.into())],
             each_column: false,
             inner: Vec::new(),
+            joins: Vec::new(),
         }
     }
 

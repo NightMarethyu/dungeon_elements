@@ -94,7 +94,10 @@ Every note is a Markdown file with its fields in YAML front matter, and `[[links
 | :---: | --- | --- |
 | **0** ✅ | _Call to Action_ (v0.1) | Basic iced GUI · write, save, and open Markdown · one folder per campaign · YAML metadata · detect outside edits |
 | **1** ✅ | _Inciting Incident_ (v0.2) | Reading view · Obsidian-style `[[links]]` that survive renames · backlinks · formatting toolbar · built-in dice roller |
-| **2** | _Rising Action_ | Basic SVG map editor · name and roll table generators |
+| **2** ✅ | _Rising Action_ (v0.3) | Note types and forms · roll tables, name generators and Inspire Me · quests · campaign walkthrough · search · templates · Undo and Redo |
+| **3** | _Climax_ | Layouts with panes you can arrange · play at the table and solo play |
+| **4** | _Falling Action_ | SVG map editor · maps linked to notes · map generators |
+| **5** | _Resolution_ | Campaign templates · shared settings · PDF manual library |
 
 Dungeon Elements is **not** a virtual tabletop and has no multiplayer sync. It's for building and tracking campaigns, not hosting them.
 
