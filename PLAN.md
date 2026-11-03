@@ -312,6 +312,11 @@ Sharing and reference: everything that leaves the campaign folder or comes in fr
   - [ ] Pick the language in the View menu (or a settings dialog), following the system's language at first
   - [ ] The how-to guides translated, one folder per language in `help/` (falling back to English for guides not translated yet)
   - [ ] Right-to-left languages (Arabic, Hebrew) and scripts that need other fonts (Chinese, Japanese, Korean)
+- [ ] Export for sharing finished work (see [Export](#export)): one export engine with two uses. Not critical to the app's goals, so it waits for 1.0, but it could come sooner
+  - [ ] **Writing export**: export the Journal, or any folder marked as a manuscript (it doesn't have to be named Journal), as one document, for solo campaigns, books, short story collections and so on
+  - [ ] Formats: `.txt` and `.md` for plain text, `.docx` for Microsoft Word and other word processors, `.epub` for ebooks, and `.pdf` for formatted documents
+  - [ ] Creative options, set in the export dialog: scene breaks, chapter headings and chapter breaks, drop capitals, and similar book touches
+  - [ ] **World-bible export**: pick notes, group them and put them in order to share a world (for GMs and writers), in the same formats and with the same options
 
 ## Design
 
@@ -397,6 +402,24 @@ Phase 5. The GM shares parts of the campaign with players without sharing their 
 - A field or `##` section can be marked GM-only in the type, and a note can be marked as a whole. Handouts leave those out.
 - Markdown handouts are a folder of ordinary notes with working links between the notes included; links to notes left out become plain text, so nothing points at secrets.
 - PDF handouts and table maps need a PDF-writing crate (separate from the reader's `pdfium-render`), chosen when this phase starts. Table maps print the SVG at a chosen scale (such as one inch per square) across as many pages as needed, with the overlay drawn on top.
+
+### Export
+
+After 1.0, maybe sooner. For sharing creative work made in the app: a solo campaign written up as a story, a book, a short story collection, or a world bible for players, co-writers or readers. It goes with the Journal and Focus mode (Phase 3), which serve authors as well as GMs and solo players.
+
+- **One engine, two uses.** The writing export and the world-bible export are the same feature with different intentions: both take an ordered list of notes, grouped into parts or chapters, and write them out as one document. Only the starting point differs.
+  - **Writing export** starts from a folder marked as a manuscript (the Journal, or any folder; the name doesn't matter), in the folder's order or by date.
+  - **World-bible export** starts empty: the user picks notes (or whole folders), puts them in groups ("Factions", "The North"), and drags them into order.
+- **Formats**: `.txt` and `.md` for plain text, `.docx` for Microsoft Word and other word processors, `.epub` for ebooks, and `.pdf` for formatted documents. Every format gets the same content and as many of the creative options as it can show (plain text has no drop capitals, for example).
+- **Creative options**, especially for books:
+  - Scene breaks: what a break inside a chapter looks like (a blank line, `* * *`, a small ornament)
+  - Chapter headings and chapter breaks: what starts a chapter (each note, or each group), how the heading reads ("Chapter 3", "Three", or the note's name), and whether each chapter starts on a new page
+  - Drop capitals at the start of each chapter
+  - Room for more, like a title page and table of contents, fonts, or page size for PDF
+- **No Markdown or YAML to touch.** Everything is set in an export dialog with a preview, and the choices are saved with the folder or the world bible (in the campaign folder), so exporting the next draft is one click. Settings can be saved as a named style to reuse in other campaigns, like a theme.
+- What goes in: the note's text, and its fields only when the user asks (a world bible likely wants an NPC's fields; a novel chapter doesn't). `[[Links]]` become plain text, or links within the document when the linked note is included too.
+- Related: [Handouts](#handouts) and [Settings](#settings) export (Phase 5) also leave the campaign folder. Handouts could later be one more use of this engine, with GM-only parts left out, and the PDF writer can be the same one. Crates are chosen when this starts, with licenses that fit MIT, as for the [PDF library](#pdf-library).
+- A smaller first version, if it helps: the writing export to `.md` and `.txt` with scene breaks and chapter headings, then `.docx` and `.epub`, then `.pdf` with the page options and drop capitals, then the world-bible picker on the same engine.
 
 ### Languages
 
