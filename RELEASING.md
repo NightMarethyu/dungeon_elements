@@ -128,6 +128,15 @@ The app has an ad-hoc signature, not an Apple Developer ID (that needs a paid Ap
    - `dungeon_elements-v0.2.0-macos-universal.zip`
 6. Tick **Set as a pre-release** if you want to signal that it's early (0.x), then **Publish release**.
 
+## 6. Update the website
+
+The website ([nightmarethyu.github.io/dungeon_elements](https://nightmarethyu.github.io/dungeon_elements/)) is the `docs` folder on `main`; GitHub Pages publishes it a minute or two after each push. Its Download button always opens the latest release, so it needs only two small changes per release:
+
+1. In `docs/index.html`, change the version in the line that starts `<p class="version">` (`Version 0.2.0` becomes `Version 0.3.0`).
+2. Look at the pictures in `docs/images` and replace any that no longer look like the app. Keep the same file names and a 1200 by 800 window, so the page needs no other change.
+
+Commit and push (or open a pull request), and check the page once it's live.
+
 ## Notes
 
 - If the Windows build stops with "could not add the icon to the Windows executable", the resource compiler (`rc.exe`) wasn't found: make sure a Windows 10/11 SDK is ticked in the Visual Studio Installer under **Desktop development with C++**.
