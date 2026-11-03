@@ -11,6 +11,15 @@ Click the **d20** button at the right of the tab bar, choose **Tables > Dice Rol
 
 The last few rolls stay on the left, so you can look back. Scroll the list to see the older ones.
 
+## Adding a roll to your note
+
+Each roll in the dice roller has an **Add to Note** button (**Add** beside the older ones), and so does each result in the **Tables** list. It puts the roll into the note you have open:
+
+- Where your cursor was, in the note's text or the field you last typed in. A short field gets the roll added at its end.
+- In the reading view, as a new paragraph after the one you last clicked, or at the end of the note if you haven't clicked one.
+
+A roll of dice goes in with its total and the dice, like `2d6+3: 11 (4, 4)`. **Ctrl+Z** takes it back out. The button is greyed out when no note is open.
+
 To hide the dice roller, click the **–** in its top right corner, click the d20 button again, or press **Ctrl+Shift+D**.
 
 ## Rolling from a note

@@ -1740,6 +1740,22 @@ impl Form {
         }
     }
 
+    /// Adds `text` to the end of the short text field last typed in, after a space if it
+    /// has text already. Returns the field's widget id, or `None` if there is no such field.
+    pub fn append_to_focused(&mut self, text: &str) -> Option<String> {
+        let index = self.focus?;
+        let Some(Input::Text(value)) = self.inputs.get_mut(index) else {
+            return None;
+        };
+        let text = text.trim();
+        if value.trim().is_empty() {
+            *value = text.to_string();
+        } else {
+            *value = format!("{} {text}", value.trim_end());
+        }
+        Some(field_id(index))
+    }
+
     /// The note's name, from its `name` field, if the type has one and it is filled in.
     pub fn name(&self) -> Option<String> {
         let index = self.fields[..self.own]
@@ -2980,6 +2996,19 @@ mod tests {
         let mut check = ty.fields[0].clone();
         check.kind = Kind::Checkbox;
         assert!(check.tables().is_empty());
+    }
+
+    #[test]
+    fn a_result_is_added_to_the_end_of_a_short_field() {
+        let mut form = Form::blank(item_type());
+        // Nothing typed in yet: nowhere to add it.
+        assert_eq!(form.append_to_focused("Gold"), None);
+        form.update(Message::Text(0, "Ring of".into()));
+        assert_eq!(form.append_to_focused(" Embers "), Some(field_id(0)));
+        assert!(matches!(&form.inputs[0], Input::Text(text) if text == "Ring of Embers"));
+        form.update(Message::Text(0, String::new()));
+        form.append_to_focused("Ash");
+        assert!(matches!(&form.inputs[0], Input::Text(text) if text == "Ash"));
     }
 
     #[test]

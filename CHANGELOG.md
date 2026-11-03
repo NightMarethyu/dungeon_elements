@@ -2,6 +2,12 @@
 
 All notable changes to Dungeon Elements are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Add to Note
+
+- Each roll in the dice roller, and each result in its **Tables** list, has an **Add to Note** button that puts it into the open note: where the cursor was in the note's text or the field last typed in, or in the reading view, as a new paragraph after the one last clicked (or at the end of the note). Dice go in with their total and the dice, like `2d6+3: 11 (4, 4)`, and Ctrl+Z takes it back out.
+
 ## [0.3.0] - 2026-11-03
 
 ### The Table view
@@ -325,6 +331,7 @@ The first release: Phase 0, _Call to Action_, of the [plan](PLAN.md). Dungeon El
 - Builds are not code-signed, so Windows SmartScreen may warn the first time you run the app ("More info" > "Run anyway").
 - macOS: the app is built on GitHub's Macs but hasn't been tested on one by hand yet. It isn't signed with an Apple Developer ID, so the first time, macOS says it can't check the app: open **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** (on macOS 14 and older, Control-click the app and choose **Open**). Settings and themes live in `~/.config/dungeon_elements`.
 
-[Unreleased]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NightMarethyu/dungeon_elements/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NightMarethyu/dungeon_elements/releases/tag/v0.1.0
