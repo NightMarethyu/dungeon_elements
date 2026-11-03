@@ -540,7 +540,7 @@ impl Progress {
         for path in self.notes.get(name).map(Made::paths).unwrap_or_default() {
             let full = campaign.root.join(&path);
             let path = if full.is_file() {
-                Some(full)
+                Some(as_on_disk(full))
             } else {
                 in_folder(&path)
             };
@@ -1013,6 +1013,26 @@ fn read_form(campaign: &Campaign, ty: &ContentType, path: &Path) -> Result<Form,
 fn write_form(form: &Form, path: &Path) -> Result<(), String> {
     let text = form.to_markdown()?;
     fs::write(path, text).map_err(|error| error.to_string())
+}
+
+/// `path` with its file name spelled as it is on disk. On Windows a note saved as
+/// `eldmoor.md` is found at `Eldmoor.md` too, and the name on disk is the one to show.
+fn as_on_disk(path: PathBuf) -> PathBuf {
+    let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+        return path;
+    };
+    let wanted = name.to_string_lossy().to_lowercase();
+    let same: Vec<_> = fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name())
+        .filter(|found| found.to_string_lossy().to_lowercase() == wanted)
+        .collect();
+    match same.first() {
+        Some(found) if !same.iter().any(|other| other == name) => folder.join(found),
+        _ => path,
+    }
 }
 
 #[cfg(test)]

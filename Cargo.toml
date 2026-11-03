@@ -1,6 +1,6 @@
 [package]
 name = "dungeon_elements"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A local-first campaign manager for tabletop RPGs"
@@ -9,20 +9,37 @@ repository = "https://github.com/NightMarethyu/dungeon_elements"
 
 [dependencies]
 # Today's date in the computer's time zone, and the calendar of date fields.
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4.45", default-features = false, features = [
+  "clock",
+  "std",
+] }
 fastrand = "2"
-iced = { version = "0.14", features = ["advanced", "image-without-codecs", "markdown", "svg"] }
+iced = { version = "0.14", features = [
+  "advanced",
+  "image-without-codecs",
+  "markdown",
+  "svg",
+] }
 # Watching the campaign folder for notes changed in other apps.
 notify-debouncer-mini = "0.7"
 # Pictures in the reading view; iced's own `image` feature would add every format.
-image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+image = { version = "0.25", default-features = false, features = [
+  "gif",
+  "jpeg",
+  "png",
+  "webp",
+] }
 resvg = "0.45"
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 pulldown-cmark = { version = "0.12", default-features = false }
 serde_yaml_ng = "0.10"
 # Syntax colors in code blocks; the pure Rust regex engine keeps Windows builds simple.
-syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"] }
+syntect = { version = "5.3", default-features = false, features = [
+  "default-syntaxes",
+  "parsing",
+  "regex-fancy",
+] }
 # Deleting from the file tree sends files to the Recycle Bin / Trash.
 trash = "5.2"
 # Pictures from the web, trusting the computer's own certificates.
