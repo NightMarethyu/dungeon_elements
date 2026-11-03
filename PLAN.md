@@ -225,27 +225,51 @@ A short stop to patch things up before the climax: the fixes and tweaks that go 
 
 ### Phase 3: climax
 
-Play at the table and solo play. This needs panes the user can arrange, so layouts come first.
+Play at the table, solo play, and writing. This needs panes the user can arrange, so layouts come before the tools that live in panes. The steps are in build order: everything in a step can run at the same time, each item in its own PR, unless it says "after". v0.4.0 is released at the end of Step 3, and v0.4.1 adds pop-out windows (Step 4).
 
-- [ ] Layouts (see [Layouts](#layouts))
-  - [ ] Split the main pane to show two notes side by side, and choose where each pane goes (left, right, bottom, or a tab) and its size
-  - [ ] Collapse panes (file tree, extra notes) while keeping them hidden with an arrow allowing them to be pulled back
-  - [ ] Pop panes out into their own windows, and put them back
-  - [ ] Resize any pane (Click and drag pane edges)
-  - [ ] Save arrangements as named layouts ("Prep", "At the table") and switch from the View menu
-  - [ ] Tool pane added
-    - A tool pane instead of a ribbon (an idea from Adobe's apps): buttons for the tools, under the menu bar by default. With Layouts it can be moved like any pane, or popped out into a floating window that stays above the main window
-    - Users choose which buttons the tool pane shows, picked from a list of everything the menus can do, with no file to edit
-  - [ ] A History pane listing the Undo steps of the note and the campaign, to go back several at once
-- [ ] Undo and Redo inside the Note Types and walkthrough question editors while they are open (their Save is already one step to undo)
+#### Step 1: quick wins (all in parallel, start any time)
+
 - [ ] Custom roll buttons that roll two or more tables that aren't linked (like "Tavern": Inn and shop names, Feel of a place and What's here)
   - Made from the Roll Tables list (**New Roll Button**): a name, then tables picked from a list. Shown in their own group in the Roll Tables list and the Tables menu, and can be set on a field like a table; the results show together in the Tables history
   - Built like linked tables (Phase 2.1): a named d1 table with one link per column, in a hidden file, so rolling it needs almost nothing new
-- [ ] Journaling tool, built for solo play
-  - [ ] A journal folder whose notes are dated sessions, added to quickly while playing
-  - [ ] The dice roller and roll tables built into the journal: a roll, or an oracle question and its answer, goes straight into the entry
-  - [ ] A side-by-side view of the journal with lore, a roll table, or (once Phase 5 has the reader) the rules
-- [ ] Session notes for GMs use the same journal: what happened at the table, linked to the NPCs, quests and places involved
+- [ ] Undo and Redo inside the Note Types and walkthrough question editors while they are open (their Save is already one step to undo)
+- [ ] A progress bar for the walkthrough (moved from Planned features)
+- [ ] A theme editor (View > Theme > Edit Themes..., see [Themes](#themes)), so nobody has to write a theme's YAML by hand. Its first theme: dark with neon green accents
+- [ ] Opening an Obsidian vault (or any folder Dungeon Elements hasn't opened before) offers a template, without changing existing notes (moved from Phase 5)
+- [ ] **Add to note** on each result in the dice pane's Dice and Tables history: puts the result at the cursor in the open note. The first piece of the journal: a roll goes straight into the entry
+
+#### Step 2: layouts, one at a time (see [Layouts](#layouts))
+
+Every pane is the user's to arrange, like Visual Studio Code: the file tree, the notes, the dice tray, the tool pane, and later the journal, maps and roll tables. Each item reworks how the main window is drawn, so they are built one after another, in this order.
+
+- [ ] Resize any pane by dragging its edges, and collapse any pane (the file tree, the dice tray, an extra note) to an arrow that pulls it back
+- [ ] Move panes: choose where each pane goes (left, right, bottom, or a tab), including the file tree and the dice tray, and split the main pane to show two notes side by side
+- [ ] Tool pane
+  - A tool pane instead of a ribbon (an idea from Adobe's apps): buttons for the tools, under the menu bar by default, moved like any pane
+  - Users choose which buttons the tool pane shows, picked from a list of everything the menus can do, with no file to edit
+- [ ] Save arrangements as named layouts ("Prep", "At the table", "Writing") and switch from the View menu
+- [ ] A History pane listing the Undo steps of the note and the campaign, to go back several at once
+
+#### Step 2, beside the layouts: the journal
+
+For solo play, for GMs, and for authors writing a book: one quick way to keep dated entries.
+
+- [ ] A **Journal** folder whose notes are dated entries, added quickly with **New Entry** (a button and a shortcut) that makes today's note and opens it ready to type. New Entry works on any folder whose type has a date, so GMs get the same on Sessions (this covers session notes for GMs: the Sessions type already holds what happened at the table, linked to NPCs, quests and places)
+- [ ] Oracle questions in an entry: ask a yes/no question, roll a built-in oracle table (system-neutral), and the question and answer go into the entry, after Add to note
+
+#### Step 3: play and writing tools (after resize and collapse)
+
+These can run at the same time as each other and the later layout items.
+
+- [ ] The journal side by side with lore, a roll table, or (once Phase 5 has the reader) the rules: an **Open Beside** right-click, after the main pane can split
+- [ ] Timer (moved from Planned features): writing sprints, or in-game timers like Shadowdark's torch timer, as a small pane with start and pause and a sound or flash at zero. Several can run at once
+- [ ] Focus mode for writers (moved from Planned features), inspired by tools like FocusWriter: full screen, every pane hidden, just the note on what looks like a page over a background the user picks, with a word count and an optional daily word goal. The timer can show for sprints. Moving the mouse to an edge shows the hidden panes
+- [ ] Release v0.4.0 (see `RELEASING.md`)
+
+#### Step 4: pop-out windows (v0.4.1)
+
+- [ ] Pop panes out into their own windows, and put them back. A floating tool pane stays above the main window. This needs iced's multi-window support, so it is the largest layout piece and gets its own release
+- [ ] Release v0.4.1
 
 ### Phase 4: falling action
 
@@ -262,8 +286,7 @@ Sharing and reference: everything that leaves the campaign folder or comes in fr
 
 - [ ] Campaign templates (see [Campaign templates](#campaign-templates))
   - [x] New Campaign offers a template: the starter folders, empty, or one of the user's own
-  - [ ] Opening an Obsidian vault for the first time offers a template, without changing existing notes
-  - [x] Save a campaign's setup as a template, and share it as a file (Edit > Types > Export Campaign Structure; Import... adds one)
+    - [x] Save a campaign's setup as a template, and share it as a file (Edit > Types > Export Campaign Structure; Import... adds one)
   - [x] Open Campaign lists the campaigns opened or made before, newest first, with a search box, instead of only a folder picker
   - [ ] Templates can set dice presets and suggest a game system
   - [ ] Built-in templates for specific systems and uses, offered by New Campaign beside the starter folders (for example D&D 5e, Shadowdark, Cairn and Cyberpunk, and uses beyond TTRPGs like a novel or a setting bible)
@@ -300,15 +323,16 @@ The layout plan is in `reference/dungeon_elements_layout_plan.png` and the logo 
 - Built-in themes ship with the app (the YAML lives in `themes/`): Dark (the default) and High Contrast (the reference drawing). More built-in themes later.
 - User themes are YAML files in the app's config folder (`%APPDATA%\dungeon_elements\themes` on Windows, `~/.config/dungeon_elements/themes` on Linux) and appear under View > Theme. A broken theme file is skipped with a warning, never a crash.
 - The logo is recolored to match the theme (black becomes the text color, white the background).
-- Later: a theme editor (View > Theme > Edit Themes...). The user picks the main colors and accents with a color picker, sees the app update live, and saves the result as a theme file in the user themes folder, ready to use or share. Fine-tuning single roles is optional, because anything left out is worked out from the main colors or the `base`.
+- Phase 3: a theme editor (View > Theme > Edit Themes...). The user picks the main colors and accents with a color picker, sees the app update live, and saves the result as a theme file in the user themes folder, ready to use or share. Fine-tuning single roles is optional, because anything left out is worked out from the main colors or the `base`.
   - The first theme to make with it: dark with neon green accents
 
 ### Layouts
 
 Phase 3. Customization is a big part of the app, so the window's layout should be the user's to arrange too.
 
-- Panes (the file tree, the editor, the dice roller, and later maps, roll tables and the journal) can pop out into their own windows, and be put back.
-- The user chooses where each pane appears in the main window (left, right, bottom, or as a tab), and resizes it.
+- Like Visual Studio Code, every pane can be moved, not only the notes: the file tree, the editor, the dice tray, the tool pane, and later the journal, maps and roll tables.
+- The user chooses where each pane appears in the main window (left, right, bottom, or as a tab), resizes it by dragging its edges, and collapses it to an arrow that brings it back.
+- Panes can pop out into their own windows, and be put back (v0.4.1).
 - An arrangement can be saved as a named layout (for example "Prep" and "At the table") and switched from the View menu. Layouts are saved in the app's config folder, like themes, so they can be shared.
 - The default layout is the one in `reference/dungeon_elements_layout_plan.png`.
 
@@ -388,9 +412,4 @@ After 1.0 (a stretch goal once Phase 5 is done). Ammon has international ties, a
 
 ## Planned features
 
-- Focus mode for writers
-  - Full screen app with just what looks like a piece of paper and a background of the user's choosing
-- Timer for specific sprints for writing or for in game timed things like Shadowdark's torch timer
-- Do a check for updated notes, tags, and other file changes and offer fixes
-- A progress bar for the walkthrough
 - More to come as I have more ideas!
