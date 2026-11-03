@@ -6,7 +6,9 @@
 
 Write your world in plain Markdown, link it together like a wiki, and keep every file on your own drive.
 
-![Version: 0.2.0](https://img.shields.io/badge/version-0.2.0-blue)
+**[Website](https://nightmarethyu.github.io/dungeon_elements/) · [Download](https://github.com/NightMarethyu/dungeon_elements/releases/latest) · [Send feedback](https://forms.gle/BvS3x6pUP55mdYxt7)**
+
+![Version: 0.3.0](https://img.shields.io/badge/version-0.3.0-blue)
 ![Status: early development](https://img.shields.io/badge/status-early%20development-orange)
 ![Language: Rust](https://img.shields.io/badge/language-Rust-b7410e?logo=rust)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)

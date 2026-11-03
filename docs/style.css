@@ -1,0 +1,132 @@
+/* Colors come from the app's own themes: Light (themes/light.yaml) and Dark
+   (themes/dark.yaml). The page follows the computer's light or dark setting,
+   like the app's System theme. */
+:root {
+  --background: #f5eedb;
+  --band: #ece1c6;
+  --card: #fbf7ec;
+  --border: #b9a274;
+  --text: #2a2016;
+  --text-muted: #5e4d38;
+  --accent: #7a2e12;
+  --accent-text: #fbf7ec;
+  --link: #7a2e12;
+  --shadow: 0 2px 10px rgb(42 32 22 / 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1e1e1e;
+    --band: #252526;
+    --card: #2d2d2d;
+    --border: #3c3c3c;
+    --text: #cccccc;
+    --text-muted: #a8a8a8;
+    --accent: #57c08c;
+    --accent-text: #0d1f14;
+    --link: #57c08c;
+    --shadow: 0 2px 12px rgb(0 0 0 / 0.5);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--text);
+  font: 1.0625rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+}
+
+a { color: var(--link); }
+a:focus-visible, .button:focus-visible { outline: 3px solid var(--link); outline-offset: 3px; }
+
+h1, h2, h3 { line-height: 1.25; }
+h2 { font-size: 1.9rem; margin: 0 0 0.75rem; }
+h3 { font-size: 1.15rem; margin: 0 0 0.4rem; }
+
+code {
+  font-size: 0.9em;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.3em;
+  overflow-wrap: anywhere;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+section.wrap, .band > .wrap { padding-top: 3.5rem; padding-bottom: 3.5rem; }
+.band { background: var(--band); border-block: 1px solid var(--border); }
+
+.intro { font-size: 1.15rem; margin: 0 0 1.75rem; max-width: 46rem; }
+.small { font-size: 0.95rem; color: var(--text-muted); }
+
+.skip { position: absolute; left: -999px; }
+.skip:focus { left: 16px; top: 16px; background: var(--card); padding: 0.5rem 1rem; z-index: 1; }
+
+/* Header */
+.hero { text-align: center; padding: 3.5rem 0 3rem; background: var(--band); border-bottom: 1px solid var(--border); }
+.logo { display: block; margin: 0 auto 1rem; }
+.hero h1 { font-size: clamp(2.2rem, 7vw, 3.4rem); margin: 0 0 0.5rem; }
+.pitch { font-size: clamp(1.2rem, 3.5vw, 1.5rem); font-weight: 600; margin: 0 auto 0.75rem; max-width: 40rem; }
+.sub { margin: 0 auto 1.75rem; max-width: 38rem; color: var(--text-muted); }
+.version { font-size: 0.95rem; color: var(--text-muted); margin: 1.25rem 0 0; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: center; justify-content: center; margin: 0; }
+#feedback .actions { justify-content: flex-start; margin-bottom: 1rem; }
+
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  font-size: 1.1rem;
+  text-decoration: none;
+  padding: 0.8rem 1.6rem;
+  border-radius: 6px;
+}
+.button:hover { filter: brightness(1.1); }
+.button.secondary { background: transparent; color: var(--link); border: 2px solid var(--link); padding: calc(0.8rem - 2px) calc(1.6rem - 2px); }
+
+/* Screenshots */
+figure { margin: 0; }
+figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+figcaption { margin-top: 0.6rem; font-size: 0.97rem; color: var(--text-muted); }
+.lead-shot { margin-bottom: 2.5rem; }
+.lead-shot figcaption { font-size: 1.05rem; text-align: center; }
+.shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
+
+/* Why */
+.cards { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 1rem; }
+.cards li { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1.1rem 1.2rem; }
+.cards p { margin: 0; }
+
+/* Features */
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem 2.5rem; }
+.features ul { margin: 0; padding-left: 1.2rem; }
+.features li { margin-bottom: 0.35rem; }
+.coming { margin-top: 2rem; font-weight: 600; }
+.note { color: var(--text-muted); }
+
+/* Get started */
+.systems { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 2.5rem; }
+.systems > div { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1.1rem 1.2rem; }
+.systems p { margin: 0 0 0.6rem; }
+.systems p:last-child { margin-bottom: 0; }
+.steps-title { font-size: 1.4rem; }
+.steps { padding-left: 1.4rem; max-width: 46rem; }
+.steps li { margin-bottom: 0.5rem; }
+
+/* Footer */
+footer { background: var(--band); border-top: 1px solid var(--border); padding: 1.75rem 0; text-align: center; }
+footer p { margin: 0.25rem 0; }
