@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn keys_find_their_command() {
-        let ctrl = Modifiers::CTRL;
+        let ctrl = Modifiers::COMMAND; // Cmd on a Mac, Ctrl elsewhere.
         assert_eq!(Command::from_key(&key("r"), ctrl), Some(ReadingView));
         assert_eq!(
             Command::from_key(&key("D"), ctrl | Modifiers::SHIFT),
