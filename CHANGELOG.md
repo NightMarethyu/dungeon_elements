@@ -2,7 +2,7 @@
 
 All notable changes to Dungeon Elements are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0]
 
 ### The Table view
 
@@ -118,7 +118,7 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ### Story prompts
 
-- Built-in story prompts, a few words each to spark an idea: **Wants**, **Trouble**, **Twists**, **What's here** and **Feel of a place**, plus **Action and Theme**, two words to read into, like *Betray* and *Harvest*.
+- Built-in story prompts, a few words each to spark an idea: **Wants**, **Trouble**, **Twists**, **What's here** and **Feel of a place**, plus **Action and Theme**, two words to read into, like _Betray_ and _Harvest_.
 - A long text field that rolls on a table has an **Inspire me** button. New campaigns set it on a quest's Hook, a location's First impression and Description, and an NPC's or faction's Wants and Goal.
 
 ### Name generators
