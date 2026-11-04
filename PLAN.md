@@ -232,6 +232,7 @@ Play at the table, solo play, and writing. This needs panes the user can arrange
 - [ ] Custom roll buttons that roll two or more tables that aren't linked (like "Tavern": Inn and shop names, Feel of a place and What's here)
   - Made from the Roll Tables list (**New Roll Button**): a name, then tables picked from a list. Shown in their own group in the Roll Tables list and the Tables menu, and can be set on a field like a table; the results show together in the Tables history
   - Built like linked tables (Phase 2.1): a named d1 table with one link per column, in a hidden file, so rolling it needs almost nothing new
+  - Built in two steps: making and rolling buttons (kept in `.dungeon_elements/roll buttons.md`, undone like any file change), then setting them on fields and walkthrough questions (not done yet)
 - [ ] Undo and Redo inside the Note Types and walkthrough question editors while they are open (their Save is already one step to undo)
 - [ ] A progress bar for the walkthrough (moved from Planned features)
 - [ ] A theme editor (View > Theme > Edit Themes..., see [Themes](#themes)), so nobody has to write a theme's YAML by hand. Its first theme: dark with neon green accents

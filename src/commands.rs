@@ -56,6 +56,7 @@ pub enum Command {
     // Tables
     NewRollTable,
     AddRollTableHere,
+    NewRollButton,
     // Help
     HowTo,
     Shortcuts,
@@ -68,7 +69,7 @@ pub enum Command {
 use Command::*;
 
 impl Command {
-    pub const ALL: [Command; 49] = [
+    pub const ALL: [Command; 50] = [
         NewNote,
         NewFolder,
         OpenFile,
@@ -112,6 +113,7 @@ impl Command {
         ShowCampaignFolder,
         NewRollTable,
         AddRollTableHere,
+        NewRollButton,
         HowTo,
         Shortcuts,
         WhatsNew,
@@ -378,6 +380,12 @@ impl Command {
                 "new_roll_table",
                 "New Roll Table...",
                 "Make a new roll table",
+                None,
+            ),
+            NewRollButton => (
+                "new_roll_button",
+                "New Roll Button...",
+                "Make a button that rolls two or more tables at once",
                 None,
             ),
             AddRollTableHere => (

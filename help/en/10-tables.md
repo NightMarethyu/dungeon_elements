@@ -111,6 +111,21 @@ The tables are rolled together wherever the table is rolled: its Roll button, th
 
 Dungeon Elements keeps these in `.dungeon_elements/linked tables.md` in the campaign: a plain d1 roll table for each, with a link to each table, so renaming a note or a table's heading keeps them. There's no need to open it.
 
+## Roll buttons
+
+A **roll button** rolls two or more tables that have nothing to do with each other, all with one click. A "Tavern" button might roll **Inn and shop names**, **Feel of a place** and **What's here**, for an inn the party walks into.
+
+1. Click **New Roll Button...** at the top of the Roll Tables list, or choose **Tables > New Roll Button...**.
+2. Give it a name, like Tavern.
+3. Pick the tables from **Add a table...**, in the order you want them. **↑** and **↓** change the order, and **✕** takes a table out.
+4. Click **Save**.
+
+Your buttons are at the top of the Roll Tables list, under **Roll Buttons**, and in the **Tables > Roll Buttons** menu. Click **Roll** beside one, or type its name in the dice roller. The results show together in the dice roller's **Tables** list, each with its table's name, ready to **Add to Note**, copy or make a note from.
+
+Click a button's name to change it. Right-click it to roll, change or delete it, and **Ctrl+Z** brings back one you deleted. If one of its tables is renamed, the button follows; if a table is deleted, the list says which one it can't find.
+
+Dungeon Elements keeps your buttons in `.dungeon_elements/roll buttons.md` in the campaign, as plain d1 roll tables with a link to each table. There's no need to open it.
+
 ## Built-in tables
 
 Some tables come with the app, listed under **Built in** in the Roll Tables list in four groups: **Names**, **Story Prompts**, **World** and **Adventure**. Click a group to open or fold it; the list remembers which are open. The same groups are at the bottom of the **Tables** menu, where picking a table rolls it.
