@@ -4,6 +4,10 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Walkthrough progress
+
+- The walkthrough shows how far you've got: a bar at the top, like "14 of 38 questions answered, 3 skipped", and a thin bar under each chapter on the left. Answered questions fill it in the theme's accent color and skipped ones in a paler shade. An answer typed straight into a note counts too.
+
 ### Theme editor
 
 - **View > Theme > Edit Themes...** makes a color theme with no file to write: pick five colors (Background, Panels, Text, Accent and Status bar), and the rest are worked out from them. The window shows each color as it's picked.

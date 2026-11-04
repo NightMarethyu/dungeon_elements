@@ -12,7 +12,7 @@ The walkthrough opens in a tab of its own. Close it like any other tab and open 
 
 ## Answering
 
-The chapters are listed on the left, with how many of their questions are answered. Click one to go to it. The triangle beside a chapter opens it to list its questions by short titles, with a tick by each one answered, and the chapter you're in starts open. Click a question to go straight to it. A question about notes that aren't made yet, like the factions' goals before the factions are named, is greyed out until they are. Going to another chapter or question keeps what you typed, as **Next** does.
+The chapters are listed on the left, with how many of their questions are answered. Click one to go to it. The triangle beside a chapter opens it to list its questions by short titles, with a tick by each one answered, and the chapter you're in starts open. Click a question to go straight to it. A bar under each chapter fills in as you go, and the bar at the top shows the whole walkthrough, like "14 of 38 questions answered". Answered questions fill it in your theme's accent color, and skipped ones in a paler shade, so you can see what is left. A question about several notes, like each faction's goal, counts once it is answered for all of them. A question about notes that aren't made yet, like the factions' goals before the factions are named, is greyed out until they are. Going to another chapter or question keeps what you typed, as **Next** does.
 
 On the right is one question, with the box you answer in. Under it, **Goes into** names the note the answer is written into, and the field it fills. Click the note's name to open it.
 
