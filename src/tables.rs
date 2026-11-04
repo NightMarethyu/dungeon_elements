@@ -443,6 +443,20 @@ impl Rolled {
         name.trim().trim_end_matches('.').trim().to_string()
     }
 
+    /// The rest of a whole row, for a note made from it: each column after the first that
+    /// gave something, with its header, like `("Wants", "Revenge on her brother")`. A roll
+    /// button's columns are its tables, so a note gets every table's result.
+    pub fn note_details(&self) -> Vec<(String, String)> {
+        if self.results.len() < 2 || self.each_column {
+            return Vec::new();
+        }
+        self.results[1..]
+            .iter()
+            .filter(|(_, value)| !value.trim().is_empty())
+            .map(|(column, value)| (column.trim().to_string(), value.trim().to_string()))
+            .collect()
+    }
+
     /// For the list of earlier rolls: `Weather (6): Grey drizzle`.
     pub fn line(&self) -> String {
         if self.values.is_empty() {

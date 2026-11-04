@@ -10,6 +10,8 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - Buttons are at the top of the Roll Tables list and in **Tables > Roll Buttons**, and typing a button's name in the dice roller rolls it. The results show together in the dice roller's Tables list, each with its table's name.
 - Click a button's name to change it, or right-click it to delete it (Ctrl+Z brings it back). Renamed tables are followed, and a missing table is pointed out.
 - They are kept as d1 roll tables in a hidden file in the campaign, `.dungeon_elements/roll buttons.md`.
+- A field (in Campaign > Note Types) or a walkthrough question can roll on a roll button, picked at the top of **Add a table...**. A long text field gets each table's result on a line of its own, and a short field a list with commas. Renaming a button changes it in the fields and questions that use it.
+- **Make Note** on a roll button's result (or any result with several columns) names the note after the first result and keeps the rest: each goes in the field with the same name, like **Wants** or **Secrets**, or else in the note's text.
 
 ### Add to Note
 

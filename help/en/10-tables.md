@@ -79,7 +79,7 @@ The first header is the die: `d6`, `2d6`, `d100` or `d%`. Each row's first cell 
 - **View > Roll Tables** (Ctrl+Shift+T) lists every roll table in the campaign in the sidebar, in place of the file tree. Click a table's die to roll it, or its name to open it. Close the list with **✕** or **Escape**.
 - In the dice roller, type the table's name, like `Weather`, and press **Enter**. A note with several tables takes its heading too: `Weather#Winter`.
 
-The result shows in the dice roller's **Tables** list, with what the die rolled. The list keeps every table result since the app opened, newest first, wherever it was rolled, with Inspire Me too; **Dice** beside it switches back to your rolls of dice. Each result has **Add to Note**, which puts it into the open note where your cursor was (see [Adding a roll to your note](guide:dice)), **Copy**, which copies it, and **Make Note**, which makes a note named after it, in the folder you pick: roll a name, and make the NPC. The folders are listed with their types, like **npcs (NPC)**, and **Plain note (no type)** makes a note with no fields in the campaign folder.
+The result shows in the dice roller's **Tables** list, with what the die rolled. The list keeps every table result since the app opened, newest first, wherever it was rolled, with Inspire Me too; **Dice** beside it switches back to your rolls of dice. Each result has **Add to Note**, which puts it into the open note where your cursor was (see [Adding a roll to your note](guide:dice)), **Copy**, which copies it, and **Make Note**, which makes a note named after it, in the folder you pick: roll a name, and make the NPC. The folders are listed with their types, like **npcs (NPC)**, and **Plain note (no type)** makes a note with no fields in the campaign folder. When a result has more than one column, like a roll button's, the note is named after the first, and the rest go in the note too: each in the field with the same name, like **Wants** or **Secrets**, or else as a line in the note's text.
 
 ## Results that roll more
 
@@ -124,6 +124,8 @@ Your buttons are at the top of the Roll Tables list, under **Roll Buttons**, and
 
 Click a button's name to change it. Right-click it to roll, change or delete it, and **Ctrl+Z** brings back one you deleted. If one of its tables is renamed, the button follows; if a table is deleted, the list says which one it can't find.
 
+A field or a walkthrough question can roll on a button too: your buttons are at the top of **Add a table...**, marked **(roll button)**. In a long text field each table's result goes on a line of its own; in a short field they go in a list with commas. Renaming a button changes it in the fields and questions that roll on it.
+
 Dungeon Elements keeps your buttons in `.dungeon_elements/roll buttons.md` in the campaign, as plain d1 roll tables with a link to each table. There's no need to open it.
 
 ## Built-in tables
@@ -148,7 +150,7 @@ Roll them like any other table, link to them from your own (`[[Norse names]]`, `
 
 ## Fields that roll on a table
 
-A text or long text field can roll on a table to fill itself in. In **Campaign > Note Types...**, pick the field's tables from **Add a table...**: a whole table, a part of one under a heading, like **English - Female**, or all its parts at once. Click a table to take it out. The first one is picked to start with. The field then has an **Inspire Me** button, in the form, in the reading view and in the walkthrough. Type a word in **Button says**, like Names, and it reads **Inspire Me - Names**.
+A text or long text field can roll on a table to fill itself in. In **Campaign > Note Types...**, pick the field's tables from **Add a table...**: a whole table, a part of one under a heading, like **English - Female**, all its parts at once, or one of your roll buttons (see Roll buttons above). Click a table to take it out. The first one is picked to start with. The field then has an **Inspire Me** button, in the form, in the reading view and in the walkthrough. Type a word in **Button says**, like Names, and it reads **Inspire Me - Names**.
 
 With several tables, a dropdown beside the button picks which one it rolls on: **Any - Female**, **Mixed - Male**, **Norse - Female** and so on. The table picked is remembered for that field in this campaign, in `.dungeon_elements/tables.yaml`, until you pick another. In the type's file the tables are written with commas between them, like `table: Female names, Norse names#Male`.
 
