@@ -486,6 +486,9 @@ enum Dialog {
     /// Makes a note named after a roll table's result, in a folder picked here.
     NoteFromRoll {
         name: String,
+        /// The rest of the roll, each column's header and what it gave, which goes in the
+        /// note too.
+        details: Vec<(String, String)>,
         place: NotePlace,
         error: Option<String>,
     },
@@ -5738,7 +5741,12 @@ impl Workspace {
                         Message::CreateTable,
                     )
                 }
-                Dialog::NoteFromRoll { name, place, error } => (
+                Dialog::NoteFromRoll {
+                    name,
+                    details,
+                    place,
+                    error,
+                } => (
                     "Make a note from the roll".to_string(),
                     column![
                         column![
@@ -5772,6 +5780,11 @@ impl Workspace {
                         ]
                         .spacing(4),
                     ]
+                    .push((!details.is_empty()).then(|| {
+                        text(roll_details_hint(details, place.folder.is_some()))
+                            .size(12)
+                            .color(c.text_muted)
+                    }))
                     .spacing(16)
                     .into(),
                     error,
@@ -7017,7 +7030,7 @@ impl Workspace {
                 iced::clipboard::write(result)
             }
             Message::Dice(dice::Message::AddToNote(result)) => self.add_to_note(&result),
-            Message::Dice(dice::Message::NewNote(name)) => {
+            Message::Dice(dice::Message::NewNote(name, details)) => {
                 // The place picked last time, since rolls of one kind tend to go together.
                 let places = self.note_places();
                 let place = self
@@ -7028,6 +7041,7 @@ impl Workspace {
                     .clone();
                 self.dialog = Some(Dialog::NoteFromRoll {
                     name,
+                    details,
                     place,
                     error: None,
                 });
@@ -7379,10 +7393,17 @@ impl Workspace {
                 Task::none()
             }
             Message::CreateNoteFromRoll => {
-                let Some(Dialog::NoteFromRoll { name, place, .. }) = &self.dialog else {
+                let Some(Dialog::NoteFromRoll {
+                    name,
+                    details,
+                    place,
+                    ..
+                }) = &self.dialog
+                else {
                     return Task::none();
                 };
-                let (name, place) = (name.trim().to_string(), place.clone());
+                let (name, details, place) =
+                    (name.trim().to_string(), details.clone(), place.clone());
                 if let Err(error) = campaign::validate_name(&name) {
                     self.dialog_result(Err(error));
                     return Task::none();
@@ -7395,7 +7416,7 @@ impl Workspace {
                     .and_then(|folder| self.types.get(folder))
                     .and_then(|ty| ty.as_ref().ok())
                     .cloned();
-                match create_linked_note(&self.root, &name, Some(&folder), ty.as_ref()) {
+                match create_note(&self.root, &name, Some(&folder), ty.as_ref(), &details) {
                     Ok(path) => {
                         self.dialog = None;
                         self.roll_place = Some(place);
@@ -11749,6 +11770,81 @@ fn create_linked_note(
     folder: Option<&Path>,
     ty: Option<&ContentType>,
 ) -> Result<PathBuf, String> {
+    create_note(root, target, folder, ty, &[])
+}
+
+/// What the Make a note from the roll dialog says about the rest of the roll's `details`.
+fn roll_details_hint(details: &[(String, String)], typed: bool) -> String {
+    let names: Vec<&str> = details.iter().map(|(column, _)| column.as_str()).collect();
+    let names = match names.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let go = if details.len() == 1 { "goes" } else { "go" };
+    if typed {
+        format!(
+            "{names} {go} in the note too: in its fields with the same name, or else in its text."
+        )
+    } else {
+        format!("{names} {go} in the note's text too.")
+    }
+}
+
+/// Where each of a roll's `details` goes in a new note of the type `ty`: in the field
+/// named like its column (by label, key, or a table it rolls on), or else a line of the
+/// note's text. The front matter gets the short fields, and the sections the long ones.
+fn place_roll_details(
+    ty: Option<&ContentType>,
+    details: &[(String, String)],
+    front: &mut serde_yaml_ng::Mapping,
+) -> (Vec<note::Section>, String) {
+    let mut sections = Vec::new();
+    let mut rest = Vec::new();
+    let mut used = Vec::new();
+    for (column, value) in details {
+        let same = |name: &str| name.trim().eq_ignore_ascii_case(column.trim());
+        let field = ty.and_then(|ty| {
+            ty.fields.iter().find(|field| {
+                field.key != "name"
+                    && field.kind.rolls_tables()
+                    && !used.contains(&field.key)
+                    && (same(&field.label())
+                        || same(&field.key)
+                        || field
+                            .tables()
+                            .iter()
+                            .any(|table| same(table) || same(&tables::label(table))))
+            })
+        });
+        match field {
+            Some(field) if field.kind == types::Kind::Longtext => {
+                used.push(field.key.clone());
+                sections.push(note::Section {
+                    heading: field.label(),
+                    body: value.clone(),
+                    keep_empty: false,
+                });
+            }
+            Some(field) => {
+                used.push(field.key.clone());
+                front.insert(field.key.clone().into(), value.clone().into());
+            }
+            None => rest.push(format!("**{column}:** {value}")),
+        }
+    }
+    (sections, rest.join("\n\n"))
+}
+
+/// Makes a note called `target`, like [`create_linked_note`], with the rest of a roll's
+/// `details` in it (see [`place_roll_details`]).
+fn create_note(
+    root: &Path,
+    target: &str,
+    folder: Option<&Path>,
+    ty: Option<&ContentType>,
+    details: &[(String, String)],
+) -> Result<PathBuf, String> {
     let target = target.trim().replace('\\', "/");
     let target = target.trim_matches('/');
     let target = target
@@ -11798,9 +11894,13 @@ fn create_linked_note(
                     serde_yaml_ng::Value::Sequence(vec![(*name).into()]),
                 );
             }
-            note::to_markdown(&front, &[], "")?
+            let (sections, rest) = place_roll_details(Some(ty), details, &mut front);
+            note::to_markdown(&front, &sections, &rest)?
         }
-        None => String::new(),
+        None => {
+            let (_, rest) = place_roll_details(None, details, &mut Default::default());
+            note::to_markdown(&Default::default(), &[], &rest)?
+        }
     };
 
     path.as_mut_os_string().push(".md");
@@ -13215,6 +13315,71 @@ mod tests {
         let _ = workspace.update(Message::Undo);
         assert_eq!(workspace.roll_buttons().len(), 1, "{}", workspace.status);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn notes_made_from_a_roll_button_keep_every_result() {
+        let mut workspace = workspace_with(
+            "button_note",
+            &[
+                (
+                    "npcs/_type.yaml",
+                    "type: npc\nlabel: NPC\nfields:\n  - key: name\n    label: Name\n    table: Names\n  - key: wants\n    label: Wants\n    table: Wants\n  - key: secrets\n    label: Secrets\n    kind: longtext\n    table: Secrets\n",
+                ),
+                (
+                    "tables/Names.md",
+                    "| d1 | Name |\n| --- | --- |\n| 1 | Mira |\n",
+                ),
+                (
+                    "tables/Wants.md",
+                    "| d1 | Want |\n| --- | --- |\n| 1 | Revenge |\n",
+                ),
+                (
+                    "tables/Secrets.md",
+                    "| d1 | Secret |\n| --- | --- |\n| 1 | She is a spy |\n",
+                ),
+                (
+                    "tables/Quirks.md",
+                    "| d1 | Quirk |\n| --- | --- |\n| 1 | Hums |\n",
+                ),
+            ],
+        );
+        let root = workspace.root.clone();
+        workspace
+            .save_roll_buttons(&[roll_buttons::Button {
+                name: "Stranger".into(),
+                tables: vec![
+                    "Names".into(),
+                    "Wants".into(),
+                    "Secrets".into(),
+                    "Quirks".into(),
+                ],
+            }])
+            .unwrap();
+        workspace.roll_button("Stranger").unwrap();
+        let rolled = workspace.dice.latest_table().unwrap().clone();
+        assert_eq!(rolled.note_name(), "Mira");
+
+        let _ = workspace.update(Message::Dice(dice::Message::NewNote(
+            rolled.note_name(),
+            rolled.note_details(),
+        )));
+        let npcs = workspace
+            .note_places()
+            .into_iter()
+            .find(|place| place.folder.as_deref() == Some(&root.join("npcs")))
+            .unwrap();
+        let _ = workspace.update(Message::NoteFromRollPlace(npcs));
+        let _ = workspace.update(Message::CreateNoteFromRoll);
+
+        // Wants and Secrets go in their fields; Quirks, with no field, in the text.
+        let text = std::fs::read_to_string(root.join("npcs/Mira.md")).unwrap();
+        assert!(text.contains("name: Mira"), "{text}");
+        assert!(text.contains("wants: Revenge"), "{text}");
+        assert!(text.contains("## Secrets\n\nShe is a spy"), "{text}");
+        assert!(text.contains("**Quirks:** Hums"), "{text}");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

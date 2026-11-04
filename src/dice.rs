@@ -1036,7 +1036,9 @@ pub enum Message {
     /// Copy a table's result. The workspace does it.
     Copy(String),
     /// Make a note named after a table's result. The workspace does it.
-    NewNote(String),
+    /// Make a note from a result: its name, and the rest of the result as each column's
+    /// header and what it gave.
+    NewNote(String, Vec<(String, String)>),
     /// Put a result into the open note, where its cursor was. The workspace does it.
     AddToNote(String),
     /// Hide the roller, from the – in its corner.
@@ -1074,7 +1076,7 @@ impl Roller {
                 self.list = list;
                 self.changes += 1;
             }
-            Message::Copy(_) | Message::NewNote(_) | Message::AddToNote(_) => {}
+            Message::Copy(_) | Message::NewNote(..) | Message::AddToNote(_) => {}
         }
     }
 
@@ -1488,6 +1490,7 @@ fn earlier_table_result<'a>(
 /// Add to Note, Copy and Make Note, for a result rolled on a table.
 fn result_buttons<'a>(c: Colors, rolled: &tables::Rolled, note_open: bool) -> Element<'a, Message> {
     let name = rolled.note_name();
+    let details = rolled.note_details();
     row![
         add_to_note(c, rolled.text(), note_open, false),
         tip(
@@ -1503,7 +1506,9 @@ fn result_buttons<'a>(c: Colors, rolled: &tables::Rolled, note_open: bool) -> El
             button(text("Make Note").size(12))
                 .padding([3, 8])
                 .style(style::secondary(c))
-                .on_press_maybe((!name.is_empty()).then(|| Message::NewNote(name.clone()))),
+                .on_press_maybe(
+                    (!name.is_empty()).then(|| Message::NewNote(name.clone(), details)),
+                ),
             format!("Make a note called {name}"),
         ),
     ]
