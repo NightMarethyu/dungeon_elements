@@ -11,6 +11,7 @@ use iced::widget::{
 };
 use iced::{Center, Element, Fill};
 
+use crate::steps::{self, Step, Steps};
 use crate::style;
 use crate::table_picker;
 use crate::theme::Colors;
@@ -66,6 +67,10 @@ pub enum Message {
     Discard,
     Save,
     Cancel,
+    /// Takes back the last change made in the dialog.
+    Undo,
+    /// Does the last change taken back again.
+    Redo,
 }
 
 /// A type saved for any campaign to use, as offered for a folder with no type.
@@ -109,8 +114,19 @@ pub struct Editor {
     pub error: Option<String>,
     /// What an export or import did.
     pub notice: Option<String>,
+    /// Undo and Redo while the dialog is open.
+    steps: Steps<Snapshot>,
 }
 
+/// The dialog as it was before a change, for Undo: every folder's type, and which
+/// folder was shown, so Undo goes back to it.
+#[derive(Clone, PartialEq)]
+struct Snapshot {
+    folders: Vec<Folder>,
+    selected: usize,
+}
+
+#[derive(Clone, PartialEq)]
 struct Folder {
     path: PathBuf,
     /// The folder's path inside the campaign, like `npcs/villains`.
@@ -125,6 +141,7 @@ struct Folder {
     new: bool,
 }
 
+#[derive(Clone, PartialEq)]
 enum State {
     /// The folder has no `_type.yaml`.
     Untyped,
@@ -134,6 +151,7 @@ enum State {
 }
 
 /// A type being edited. Text is kept as typed until it is saved.
+#[derive(Clone)]
 struct Draft {
     /// The type as it was read, so settings the dialog doesn't show (like `icon`) are kept.
     base: ContentType,
@@ -144,6 +162,7 @@ struct Draft {
     removed: Vec<String>,
 }
 
+#[derive(Clone, PartialEq)]
 struct FieldDraft {
     label: String,
     /// Empty for a key made from the label when saved.
@@ -212,6 +231,16 @@ impl FieldDraft {
     }
 }
 
+/// What the dialog shows of a draft; the type it was read from only changes with it.
+impl PartialEq for Draft {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.label == other.label
+            && self.fields == other.fields
+            && self.removed == other.removed
+    }
+}
+
 impl Draft {
     fn from(ty: &ContentType) -> Self {
         Draft {
@@ -268,6 +297,7 @@ impl Editor {
             tables: Vec::new(),
             error: None,
             notice: None,
+            steps: Steps::default(),
         }
     }
 
@@ -326,6 +356,120 @@ impl Editor {
     }
 
     pub fn update(&mut self, message: Message) {
+        match message {
+            Message::Undo => {
+                self.undo(false);
+                return;
+            }
+            Message::Redo => {
+                self.undo(true);
+                return;
+            }
+            _ => {}
+        }
+        let Some(step) = self.step(&message) else {
+            return self.apply(message);
+        };
+        let before = self.snapshot();
+        self.apply(message);
+        let after = self.snapshot();
+        self.steps.record(before, &after, step);
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            folders: self.folders.clone(),
+            selected: self.selected,
+        }
+    }
+
+    /// What Undo would take back, like "Remove Field Status".
+    pub fn undo_label(&self) -> Option<&str> {
+        self.steps.undo_label()
+    }
+
+    /// What Redo would do again.
+    pub fn redo_label(&self) -> Option<&str> {
+        self.steps.redo_label()
+    }
+
+    /// Takes back the last change (or with `redo`, does it again), showing the type it
+    /// was made to. Gives what the change was.
+    pub fn undo(&mut self, redo: bool) -> Option<String> {
+        let (state, label) = self.steps.undo(self.snapshot(), redo)?;
+        self.folders = state.folders;
+        self.selected = state.selected.min(self.folders.len().saturating_sub(1));
+        self.error = None;
+        self.notice = None;
+        Some(label)
+    }
+
+    /// What `message` would be as an Undo step, if it can change a type.
+    fn step(&self, message: &Message) -> Option<Step> {
+        let draft = match self.folders.get(self.selected).map(|folder| &folder.state) {
+            Some(State::Typed(draft)) => Some(draft),
+            _ => None,
+        };
+        let field = |index: usize| {
+            draft
+                .and_then(|draft| draft.fields.get(index))
+                .map(|field| field.label.trim().to_string())
+                .filter(|label| !label.is_empty())
+        };
+        let named = |what: &str, index: usize| {
+            Step::named(match field(index) {
+                Some(label) => format!("{what} {label}"),
+                None => what.to_string(),
+            })
+        };
+        let inherited = |what: &str, key: &str| {
+            let label = self
+                .inherited(self.selected)
+                .and_then(|ty| ty.fields.into_iter().find(|field| field.key == key))
+                .map(|field| field.label())
+                .unwrap_or_else(|| key.to_string());
+            Step::named(format!("{what} {label}"))
+        };
+        Some(match message {
+            Message::Label(_) => Step::typing("label"),
+            Message::Id(_) => Step::typing("id"),
+            Message::FolderName(_) => Step::typing("folder"),
+            Message::FieldLabel(index, _) => Step::typing(format!("label-{index}")),
+            Message::FieldKey(index, _) => Step::typing(format!("key-{index}")),
+            Message::FieldOptions(index, _) => Step::typing(format!("options-{index}")),
+            Message::TagFolder(index, _) => Step::typing(format!("tag-folder-{index}")),
+            Message::FieldTables(index, table_picker::Edit::Inspire(_)) => {
+                Step::typing(format!("inspire-{index}"))
+            }
+            Message::FieldTables(index, table_picker::Edit::Tables(_)) => {
+                named("Change Rolls On of", *index)
+            }
+            Message::FieldKind(index, _) => named("Change Kind of", *index),
+            Message::FieldWidth(index, _) => named("Change Width of", *index),
+            Message::FieldFolder(index, _) => named("Change Links To of", *index),
+            Message::FieldCalendar(index, _) => named("Change Calendar of", *index),
+            Message::MoveUp(index) | Message::MoveDown(index) => named("Move Field", *index),
+            Message::RemoveField(index) => named("Remove Field", *index),
+            Message::AddField => Step::named("Add Field"),
+            Message::ChangeInherited(key) => inherited("Change Field", key),
+            Message::RemoveInherited(key) => inherited("Remove Field", key),
+            Message::KeepInherited(key) => inherited("Bring Back Field", key),
+            Message::AddType => Step::named("Add Type"),
+            Message::UseSaved(SavedType(ty)) => Step::named(format!("Use Type {}", ty.label())),
+            Message::AddNew => Step::named("Add New Type"),
+            Message::Discard => Step::named("Leave Out New Type"),
+            Message::Select(_)
+            | Message::ExportType
+            | Message::ExportStructure
+            | Message::Import
+            | Message::Save
+            | Message::Cancel
+            | Message::Undo
+            | Message::Redo => return None,
+        })
+    }
+
+    fn apply(&mut self, message: Message) {
         self.error = None;
         self.notice = None;
 
@@ -523,7 +667,9 @@ impl Editor {
             | Message::FolderName(_)
             | Message::Discard
             | Message::Save
-            | Message::Cancel => {}
+            | Message::Cancel
+            | Message::Undo
+            | Message::Redo => {}
         }
     }
 
@@ -712,7 +858,14 @@ impl Editor {
 
         container(
             column![
-                text("Types").size(22).color(c.text),
+                row![
+                    steps::button(c, false, self.undo_label().map(String::from), Message::Undo),
+                    steps::button(c, true, self.redo_label().map(String::from), Message::Redo),
+                    space().width(6),
+                    text("Types").size(22).color(c.text),
+                ]
+                .spacing(2)
+                .align_y(Center),
                 row![
                     container(list).width(200).height(Fill),
                     rule::vertical(1).style(style::separator(c)),
@@ -1132,6 +1285,62 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(other).unwrap();
+    }
+
+    fn field_labels(editor: &Editor) -> Vec<String> {
+        match &editor.folders[editor.selected].state {
+            State::Typed(draft) => draft.fields.iter().map(|f| f.label.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn undoes_and_redoes_changes_while_open() {
+        let (root, mut dialog) = editor(types::TEST_ITEM);
+        let start = field_labels(&dialog);
+        assert!(start.len() >= 2);
+        assert_eq!(dialog.undo_label(), None);
+
+        dialog.update(Message::RemoveField(1));
+        assert_eq!(
+            dialog.undo_label(),
+            Some(format!("Remove Field {}", start[1]).as_str())
+        );
+        // Typing in one box is one step.
+        dialog.update(Message::FieldLabel(0, "N".into()));
+        dialog.update(Message::FieldLabel(0, "Na".into()));
+        dialog.update(Message::FieldLabel(0, "Nam".into()));
+        assert_eq!(dialog.undo_label(), Some("Typing"));
+        // Looking at another folder isn't a step, but Undo goes back to the change.
+        dialog.update(Message::Select(1));
+        assert_eq!(dialog.undo(false).as_deref(), Some("Typing"));
+        assert_eq!(dialog.selected, 0);
+        assert_eq!(field_labels(&dialog)[0], start[0]);
+        assert_eq!(
+            dialog.undo(false),
+            Some(format!("Remove Field {}", start[1]))
+        );
+        assert_eq!(field_labels(&dialog), start);
+        // Back where it started, nothing is changed.
+        assert!(!dialog.has_changes());
+        assert_eq!(dialog.undo(false), None);
+
+        assert_eq!(
+            dialog.redo_label(),
+            Some(format!("Remove Field {}", start[1]).as_str())
+        );
+        dialog.update(Message::Redo);
+        assert_eq!(field_labels(&dialog).len(), start.len() - 1);
+        assert!(dialog.has_changes());
+
+        // A new type, and its name, come and go with Undo.
+        dialog.update(Message::AddNew);
+        dialog.update(Message::Label("Deity".into()));
+        let folders = dialog.folders.len();
+        dialog.undo(false);
+        dialog.undo(false);
+        assert_eq!(dialog.folders.len(), folders - 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
