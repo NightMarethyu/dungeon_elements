@@ -1146,6 +1146,12 @@ impl Roller {
         &mut self.rng
     }
 
+    /// The latest roll on a table, at the top of the Tables list.
+    #[cfg(test)]
+    pub fn latest_table(&self) -> Option<&tables::Rolled> {
+        self.tables.first()
+    }
+
     /// Adds a roll on a table to the top of the Tables list, and shows the list.
     pub fn add_table(&mut self, rolled: tables::Rolled) {
         self.error = None;

@@ -1266,6 +1266,13 @@ pub enum Message {
     Menu(Pick, Point),
     New,
     Close,
+    /// Roll the roll button with this name.
+    RollButton(String),
+    /// Make a new roll button, in the New Roll Button dialog.
+    NewButton,
+    /// Change the roll button with this name, in the same dialog.
+    EditButton(String),
+    DeleteButton(String),
 }
 
 /// A table in the Roll Tables list.
@@ -1275,6 +1282,18 @@ pub enum Pick {
     Note(PathBuf, usize),
     /// The built-in table with this name.
     BuiltIn(String),
+    /// The roll button with this name.
+    Button(String),
+}
+
+/// A roll button in the Roll Tables list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ButtonRow {
+    pub name: String,
+    /// The tables it rolls, by name.
+    pub summary: String,
+    /// The tables it rolls that can't be found.
+    pub missing: Vec<String>,
 }
 
 /// The Tables list in the sidebar.
@@ -1287,6 +1306,8 @@ pub struct List {
     built_in: Vec<(String, String, Group)>,
     /// The groups of built-in tables that are open, by [`Group::key`].
     pub open_groups: BTreeSet<String>,
+    /// The campaign's roll buttons, in their own group at the top.
+    pub buttons: Vec<ButtonRow>,
 }
 
 impl List {
@@ -1327,10 +1348,16 @@ impl List {
         .align_y(Center)
         .padding([2, 8]);
         let mut rows: Vec<Element<'_, Message>> = vec![header.into()];
+        rows.extend(self.buttons_view(c));
+        rows.push(
+            container(text("TABLES").size(11).color(c.text_muted))
+                .padding(iced::padding::top(12).left(8).right(8).bottom(2))
+                .into(),
+        );
         if self.entries.is_empty() {
             rows.push(
                 container(
-                    text("No roll tables yet. A table whose first column is a die, like d6, shows here. Make one with the + above.")
+                    text("No roll tables yet. A table whose first column is a die, like d6, shows here. Make one with the + beside Roll Tables.")
                         .size(12)
                         .color(c.text_muted),
                 )
@@ -1488,6 +1515,98 @@ impl List {
             );
         }
         column(rows).spacing(1).into()
+    }
+}
+
+impl List {
+    /// The Roll Buttons group: each button with what it rolls, and a way to make one.
+    fn buttons_view(&self, c: Colors) -> Vec<Element<'_, Message>> {
+        let new = hint(
+            c,
+            button(text("+").size(13))
+                .padding([0, 6])
+                .style(style::flat(c, false))
+                .on_press(Message::NewButton),
+            "New roll button",
+        );
+        let mut rows: Vec<Element<'_, Message>> = vec![
+            container(
+                row![
+                    text("ROLL BUTTONS").size(11).color(c.text_muted),
+                    space::horizontal(),
+                    new
+                ]
+                .align_y(Center),
+            )
+            .padding(iced::padding::top(6).left(8).right(8).bottom(2))
+            .into(),
+        ];
+        if self.buttons.is_empty() {
+            rows.push(
+                container(
+                    button(
+                        text("Roll two or more tables with one click, like a tavern's name, feel and what's there. Click to make one.")
+                            .size(12)
+                            .color(c.text_muted),
+                    )
+                    .padding(0)
+                    .style(style::flat(c, false))
+                    .on_press(Message::NewButton),
+                )
+                .padding([2, 8])
+                .into(),
+            );
+        }
+        for found in &self.buttons {
+            let roll = hint(
+                c,
+                button(die_label("Roll".into()))
+                    .width(DIE_WIDTH)
+                    .padding([1, 0])
+                    .style(style::secondary(c))
+                    .on_press(Message::RollButton(found.name.clone())),
+                "Roll every table it has",
+            );
+            let name = button(
+                text(&found.name)
+                    .size(13)
+                    .color(c.text)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(Fill)
+            .padding([1, 4])
+            .style(style::flat(c, false))
+            .on_press(Message::EditButton(found.name.clone()));
+            let mut line = column![
+                row![roll, container(name).clip(true).width(Fill)]
+                    .spacing(6)
+                    .align_y(Center),
+                container(text(&found.summary).size(11).color(c.text_muted))
+                    .padding(iced::padding::left(46)),
+            ]
+            .spacing(2);
+            if !found.missing.is_empty() {
+                line = line.push(
+                    container(
+                        text(format!(
+                            "Can't find {}. Click the name to change it.",
+                            found.missing.join(", ")
+                        ))
+                        .size(11)
+                        .color(c.danger),
+                    )
+                    .padding(iced::padding::left(46)),
+                );
+            }
+            let pick = Pick::Button(found.name.clone());
+            rows.push(
+                crate::context_menu::area(container(line).padding([2, 8]), move |position| {
+                    Message::Menu(pick.clone(), position)
+                })
+                .into(),
+            );
+        }
+        rows
     }
 }
 

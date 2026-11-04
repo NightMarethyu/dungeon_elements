@@ -25,6 +25,7 @@ mod note;
 mod preview;
 mod quests;
 mod recent;
+mod roll_buttons;
 mod search;
 mod settings;
 mod style;
@@ -486,6 +487,14 @@ enum Dialog {
     NoteFromRoll {
         name: String,
         place: NotePlace,
+        error: Option<String>,
+    },
+    /// Makes a roll button, or changes the one called `old`.
+    RollButton {
+        old: Option<String>,
+        name: String,
+        /// The tables it rolls, in order.
+        tables: Vec<String>,
         error: Option<String>,
     },
 }
@@ -1323,6 +1332,12 @@ enum Message {
     NewTablePasted(text_editor::Action),
     CreateTable,
     NoteFromRollName(String),
+    RollButtonName(String),
+    RollButtonAdd(table_picker::Choice),
+    /// Move the table at this place in the roll button dialog up (or down, when false).
+    RollButtonMove(usize, bool),
+    RollButtonRemove(usize),
+    SaveRollButton,
     NoteFromRollPlace(NotePlace),
     CreateNoteFromRoll,
     /// Ctrl+Shift+F: puts the cursor in the search box.
@@ -2241,6 +2256,7 @@ impl App {
                 None => return (None, false, false),
             },
             Command::NewRollTable => (Message::ShowNewTable(None), open, false),
+            Command::NewRollButton => (Message::Tables(tables::Message::NewButton), open, false),
             Command::AddRollTableHere => (Message::AddTableAtEnd, is_note && reading, false),
             Command::HowTo => (Message::ShowHelp(help::Page::Guide(0)), true, false),
             Command::Shortcuts => (Message::ShowHelp(help::Page::Shortcuts), true, false),
@@ -2380,8 +2396,28 @@ impl App {
                     Gap,
                     Do(NewRollTable),
                     Do(AddRollTableHere),
+                    Do(NewRollButton),
                     Gap,
                 ]);
+                // The campaign's roll buttons, then the built-in tables.
+                let buttons: Vec<_> = match &self.screen {
+                    Screen::Workspace(workspace) => workspace
+                        .roll_buttons()
+                        .into_iter()
+                        .map(|button| {
+                            menu::item(
+                                &button.name,
+                                Some(Message::Tables(tables::Message::RollButton(
+                                    button.name.clone(),
+                                ))),
+                            )
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if !buttons.is_empty() {
+                    entries.push(menu::submenu("Roll Buttons", buttons));
+                }
                 // Picking a built-in table rolls it, as its die does in the Roll Tables list.
                 entries.extend(tables::Group::ALL.into_iter().map(|group| {
                     let tables = tables::BUILT_IN
@@ -2871,7 +2907,157 @@ impl Workspace {
                 .collect();
             self.tables.set(found, built_in);
             self.tables.open_groups = self.table_settings.open_groups.clone();
+            self.tables.buttons = self.button_rows();
         }
+    }
+
+    /// The campaign's roll buttons, from [`roll_buttons::FILE`].
+    fn roll_buttons(&self) -> Vec<roll_buttons::Button> {
+        std::fs::read_to_string(self.root.join(roll_buttons::FILE))
+            .map(|text| roll_buttons::read(&text))
+            .unwrap_or_default()
+    }
+
+    /// Keeps `buttons` as the campaign's roll buttons.
+    fn save_roll_buttons(&mut self, buttons: &[roll_buttons::Button]) -> Result<(), String> {
+        let file = self.root.join(roll_buttons::FILE);
+        if let Some(folder) = file.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&file, roll_buttons::write(buttons)).map_err(|error| error.to_string())?;
+        self.files_dirty = true;
+        self.refresh_tables();
+        Ok(())
+    }
+
+    /// The roll buttons for the Roll Tables list, each with the tables it can't find.
+    fn button_rows(&self) -> Vec<tables::ButtonRow> {
+        let from = self.root.join(roll_buttons::FILE);
+        self.roll_buttons()
+            .into_iter()
+            .map(|button| tables::ButtonRow {
+                summary: button.summary(),
+                missing: button
+                    .tables
+                    .iter()
+                    .filter(|table| self.linked_table(table, &from).is_none())
+                    .map(|table| tables::label(table))
+                    .collect(),
+                name: button.name,
+            })
+            .collect()
+    }
+
+    /// Rolls the roll button called `name`: each of its tables, shown together in the
+    /// dice roller's Tables list. Returns whether there is such a button.
+    fn roll_button(&mut self, name: &str) -> bool {
+        let Some(button) = self
+            .roll_buttons()
+            .into_iter()
+            .find(|button| button.name.eq_ignore_ascii_case(name.trim()))
+        else {
+            return false;
+        };
+        let Some(table) = button.table() else {
+            return false;
+        };
+        let from = self.root.join(roll_buttons::FILE);
+        let mut rng = self.dice.rng().clone();
+        let mut rolled = tables::roll(&button.name, &table, false, &mut rng, &mut |target| {
+            self.linked_table(target, &from)
+        });
+        *self.dice.rng() = rng;
+        // Each table it rolled shows its own die and number, so the d1's isn't shown.
+        rolled.die = String::new();
+        rolled.values = Vec::new();
+        self.dice.open = true;
+        self.dice.add_table(rolled);
+        true
+    }
+
+    /// Opens the roll button dialog: for a new button, or to change the one called `old`.
+    fn show_roll_button(&mut self, old: Option<String>) -> Task<Message> {
+        let found = old.as_ref().and_then(|old| {
+            self.roll_buttons()
+                .into_iter()
+                .find(|button| button.name.eq_ignore_ascii_case(old))
+        });
+        let (name, tables) = match found {
+            Some(button) => (button.name, button.tables),
+            None => (String::new(), Vec::new()),
+        };
+        self.dialog = Some(Dialog::RollButton {
+            old,
+            name,
+            tables,
+            error: None,
+        });
+        iced::widget::operation::focus(DIALOG_INPUT)
+    }
+
+    /// Saves the roll button in the dialog, in place of the one it was opened on.
+    fn save_roll_button(&mut self) -> Task<Message> {
+        let Some(Dialog::RollButton {
+            old, name, tables, ..
+        }) = &self.dialog
+        else {
+            return Task::none();
+        };
+        let (old, name, picked) = (old.clone(), name.trim().to_string(), tables.clone());
+        let mut buttons = self.roll_buttons();
+        let problem = roll_buttons::name_problem(&name, old.as_deref(), &buttons).or_else(|| {
+            picked
+                .is_empty()
+                .then(|| "Add a table for the button to roll.".to_string())
+        });
+        if let Some(problem) = problem {
+            if let Some(Dialog::RollButton { error, .. }) = &mut self.dialog {
+                *error = Some(problem);
+            }
+            return Task::none();
+        }
+        let button = roll_buttons::Button {
+            name: name.clone(),
+            tables: picked,
+        };
+        match old.as_ref().and_then(|old| {
+            buttons
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(old))
+        }) {
+            Some(at) => buttons[at] = button,
+            None => buttons.push(button),
+        }
+        match self.save_roll_buttons(&buttons) {
+            Ok(()) => {
+                self.dialog = None;
+                self.tables.open = true;
+                self.quests.open = false;
+                self.refresh_tables();
+                self.status = match old {
+                    Some(_) => format!("Changed the {name} roll button"),
+                    None => format!(
+                        "Made the {name} roll button: it's at the top of the Roll Tables list"
+                    ),
+                };
+            }
+            Err(problem) => {
+                if let Some(Dialog::RollButton { error, .. }) = &mut self.dialog {
+                    *error = Some(format!("Could not save it: {problem}"));
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// Deletes the roll button called `name`.
+    fn delete_roll_button(&mut self, name: &str) {
+        let mut buttons = self.roll_buttons();
+        buttons.retain(|button| !button.name.eq_ignore_ascii_case(name));
+        self.status = match self.save_roll_buttons(&buttons) {
+            Ok(()) => format!("Deleted the {name} roll button. Ctrl+Z brings it back"),
+            Err(error) => format!("Could not delete the {name} roll button: {error}"),
+        };
     }
 
     /// The table a link to `target` in the note at `from` names: `[[Note]]` is the
@@ -4273,15 +4459,17 @@ impl Workspace {
                 let _ = self.reload_tab(index);
             }
         }
-        // The tables rolled with other tables link to them in a hidden file.
-        let linked = self.linked_path();
-        if let Ok(text) = std::fs::read_to_string(&linked)
-            && let Some((text, count)) =
-                links::rename_heading(&text, &linked, &self.index, note, old, new)
-        {
-            match std::fs::write(&linked, text) {
-                Ok(()) => changed += count,
-                Err(_) => problems.push(tables::LINKED_FILE.to_string()),
+        // The tables rolled with other tables, and roll buttons, link to them in hidden files.
+        for hidden in [tables::LINKED_FILE, roll_buttons::FILE] {
+            let file = self.root.join(hidden);
+            if let Ok(text) = std::fs::read_to_string(&file)
+                && let Some((text, count)) =
+                    links::rename_heading(&text, &file, &self.index, note, old, new)
+            {
+                match std::fs::write(&file, text) {
+                    Ok(()) => changed += count,
+                    Err(_) => problems.push(hidden.to_string()),
+                }
             }
         }
         self.status = match changed {
@@ -5529,6 +5717,108 @@ impl Workspace {
                     "Create",
                     Message::CreateNoteFromRoll,
                 ),
+                Dialog::RollButton {
+                    old,
+                    name,
+                    tables: picked,
+                    error,
+                } => {
+                    let mut list = column![].spacing(4);
+                    for (at, table) in picked.iter().enumerate() {
+                        let small = |label: &'static str, hint: &'static str, message| {
+                            tooltip(
+                                button(text(label).size(12))
+                                    .padding([2, 8])
+                                    .style(style::secondary(c))
+                                    .on_press_maybe(message),
+                                container(text(hint).size(12))
+                                    .padding([2, 6])
+                                    .style(style::dropdown(c)),
+                                tooltip::Position::Top,
+                            )
+                        };
+                        list = list.push(
+                            row![
+                                text(format!("{}.", at + 1))
+                                    .size(13)
+                                    .color(c.text_muted)
+                                    .width(22),
+                                text(tables::label(table))
+                                    .size(14)
+                                    .color(c.text)
+                                    .width(Fill),
+                                small(
+                                    "↑",
+                                    "Roll it sooner",
+                                    (at > 0).then_some(Message::RollButtonMove(at, true)),
+                                ),
+                                small(
+                                    "↓",
+                                    "Roll it later",
+                                    (at + 1 < picked.len())
+                                        .then_some(Message::RollButtonMove(at, false)),
+                                ),
+                                small("✕", "Take it out", Some(Message::RollButtonRemove(at))),
+                            ]
+                            .spacing(6)
+                            .align_y(Center),
+                        );
+                    }
+                    if picked.is_empty() {
+                        list = list.push(
+                            text("No tables yet. Add the ones to roll, in the order you want them.")
+                                .size(12)
+                                .color(c.text_muted),
+                        );
+                    }
+                    let offered: Vec<table_picker::Choice> = self
+                        .link_choices()
+                        .into_iter()
+                        .filter(|choice| {
+                            choice.adds().iter().any(|table| {
+                                !picked.iter().any(|known| known.eq_ignore_ascii_case(table))
+                            })
+                        })
+                        .collect();
+                    (
+                        match old {
+                            Some(old) => format!("Change the {old} roll button"),
+                            None => "New roll button".to_string(),
+                        },
+                        column![
+                            column![
+                                label("Name"),
+                                text_input("Like Tavern or Ruins", name)
+                                    .id(DIALOG_INPUT)
+                                    .on_input(Message::RollButtonName)
+                                    .on_submit(Message::SaveRollButton)
+                                    .padding(8)
+                                    .style(style::input(c)),
+                            ]
+                            .spacing(4),
+                            column![
+                                label("Tables it rolls"),
+                                list,
+                                pick_list(offered, None::<table_picker::Choice>, Message::RollButtonAdd)
+                                    .placeholder("Add a table...")
+                                    .text_size(13)
+                                    .padding(6)
+                                    .width(260)
+                                    .style(style::choice(c))
+                                    .menu_style(style::choice_menu(c)),
+                            ]
+                            .spacing(6),
+                            text("One click rolls every table, and the results show together in the dice roller's Tables list.")
+                                .size(12)
+                                .color(c.text_muted),
+                        ]
+                        .spacing(16)
+                        .into(),
+                        error,
+                        "Save",
+                        Message::SaveRollButton,
+                    )
+                }
                 Dialog::Types(_)
                 | Dialog::Walkthrough(_)
                 | Dialog::Problems
@@ -6160,6 +6450,8 @@ impl Workspace {
             Message::CreateFolder => Step("New Folder"),
             Message::CreateTable => Step("New Roll Table"),
             Message::CreateNoteFromRoll => Step("New Note"),
+            Message::SaveRollButton => Step("Roll Button"),
+            Message::Tables(tables::Message::DeleteButton(_)) => Step("Delete Roll Button"),
             Message::Types(types_editor::Message::Save) => Step("Note Types Change"),
             Message::WalkthroughEditor(walkthrough_editor::Message::Save) => {
                 Step("Walkthrough Questions Change")
@@ -6683,11 +6975,13 @@ impl Workspace {
             Message::Dice(dice::Message::RollExpression)
                 if dice::Expression::parse(self.dice.expression()).is_err() =>
             {
-                // A table's name rolls the table.
-                match self.table_named(self.dice.expression()) {
+                // A table's name rolls the table, and a roll button's rolls the button.
+                let typed = self.dice.expression().to_string();
+                match self.table_named(&typed) {
                     Some((path, name, table, each_column)) => {
                         self.roll_found(&path, &name, &table, each_column);
                     }
+                    None if self.roll_button(&typed) => {}
                     None => self.dice.update(dice::Message::RollExpression),
                 }
                 Task::none()
@@ -6818,6 +7112,18 @@ impl Workspace {
                     Task::none()
                 }
                 tables::Message::New => self.update(Message::ShowNewTable(None)),
+                tables::Message::RollButton(name) => {
+                    if !self.roll_button(&name) {
+                        self.status = format!("There is no roll button called {name}");
+                    }
+                    Task::none()
+                }
+                tables::Message::NewButton => self.show_roll_button(None),
+                tables::Message::EditButton(name) => self.show_roll_button(Some(name)),
+                tables::Message::DeleteButton(name) => {
+                    self.delete_roll_button(&name);
+                    Task::none()
+                }
                 tables::Message::Close => {
                     self.tables.open = false;
                     Task::none()
@@ -6962,6 +7268,42 @@ impl Workspace {
                     Task::none()
                 }
             },
+            Message::RollButtonName(value) => {
+                if let Some(Dialog::RollButton { name, error, .. }) = &mut self.dialog {
+                    *name = value;
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::RollButtonAdd(choice) => {
+                if let Some(Dialog::RollButton { tables, error, .. }) = &mut self.dialog {
+                    for table in choice.adds() {
+                        if !tables.iter().any(|known| known.eq_ignore_ascii_case(table)) {
+                            tables.push(table.clone());
+                        }
+                    }
+                    *error = None;
+                }
+                Task::none()
+            }
+            Message::RollButtonMove(at, up) => {
+                if let Some(Dialog::RollButton { tables, .. }) = &mut self.dialog {
+                    let to = if up { at.checked_sub(1) } else { Some(at + 1) };
+                    if let Some(to) = to.filter(|&to| to < tables.len()) {
+                        tables.swap(at, to);
+                    }
+                }
+                Task::none()
+            }
+            Message::RollButtonRemove(at) => {
+                if let Some(Dialog::RollButton { tables, .. }) = &mut self.dialog
+                    && at < tables.len()
+                {
+                    tables.remove(at);
+                }
+                Task::none()
+            }
+            Message::SaveRollButton => self.save_roll_button(),
             Message::NoteFromRollName(value) => {
                 if let Some(Dialog::NoteFromRoll { name, error, .. }) = &mut self.dialog {
                     *name = value;
@@ -8598,6 +8940,18 @@ impl Workspace {
                     ),
                 ]
             }
+            Target::Table(tables::Pick::Button(name)) => {
+                let table = |message| Some(Message::Tables(message));
+                vec![
+                    item("Roll", table(tables::Message::RollButton(name.clone()))),
+                    item(
+                        "Change Roll Button...",
+                        table(tables::Message::EditButton(name.clone())),
+                    ),
+                    Entry::Separator,
+                    item("Delete", table(tables::Message::DeleteButton(name.clone()))),
+                ]
+            }
             Target::Table(tables::Pick::BuiltIn(name)) => {
                 let table = |message| Some(Message::Tables(message));
                 vec![
@@ -9616,14 +9970,16 @@ impl Workspace {
             }
         }
 
-        // The tables rolled with other tables link to them in a hidden file.
-        let linked = self.linked_path();
-        if let Ok(text) = std::fs::read_to_string(&linked)
-            && let Some((text, count)) = links::relink_note(&text, &linked, &rename)
-        {
-            match std::fs::write(&linked, text) {
-                Ok(()) => changed_links += count,
-                Err(_) => problems.push(tables::LINKED_FILE.to_string()),
+        // The tables rolled with other tables, and roll buttons, link to them in hidden files.
+        for hidden in [tables::LINKED_FILE, roll_buttons::FILE] {
+            let file = self.root.join(hidden);
+            if let Ok(text) = std::fs::read_to_string(&file)
+                && let Some((text, count)) = links::relink_note(&text, &file, &rename)
+            {
+                match std::fs::write(&file, text) {
+                    Ok(()) => changed_links += count,
+                    Err(_) => problems.push(hidden.to_string()),
+                }
             }
         }
 
@@ -12722,6 +13078,86 @@ mod tests {
         let _ = workspace.update(Message::CloseTab(workspace.active.unwrap()));
         assert!(!workspace.note_open());
         add_to_note(&mut workspace, "Nothing");
+    }
+
+    #[test]
+    fn roll_buttons_roll_their_tables_together() {
+        let mut workspace = workspace_with(
+            "roll_buttons",
+            &[
+                (
+                    "tables/Inns.md",
+                    "| d1 | Name |\n| --- | --- |\n| 1 | The Gilded Goose |\n",
+                ),
+                (
+                    "tables/Moods.md",
+                    "## Night\n\n| d1 | Mood |\n| --- | --- |\n| 1 | Rowdy |\n",
+                ),
+            ],
+        );
+        let root = workspace.root.clone();
+        let _ = workspace.update(Message::Tables(tables::Message::NewButton));
+        // A button needs a name and a table.
+        let _ = workspace.update(Message::SaveRollButton);
+        assert!(matches!(
+            &workspace.dialog,
+            Some(Dialog::RollButton { error: Some(_), .. })
+        ));
+        let _ = workspace.update(Message::RollButtonName("Tavern".into()));
+        for label in ["Inns", "Moods - Night"] {
+            let choice = workspace
+                .link_choices()
+                .into_iter()
+                .find(|choice| choice.to_string() == label)
+                .unwrap();
+            let _ = workspace.update(Message::RollButtonAdd(choice));
+        }
+        let _ = workspace.update(Message::SaveRollButton);
+        assert!(workspace.dialog.is_none(), "{}", workspace.status);
+        let file = std::fs::read_to_string(root.join(roll_buttons::FILE)).unwrap();
+        assert!(file.contains("[[Moods#Night]]"), "{file}");
+
+        // In the Roll Tables list, and rolled from it: one result with each table's.
+        assert_eq!(workspace.tables.buttons.len(), 1);
+        assert!(workspace.tables.buttons[0].missing.is_empty());
+        let _ = workspace.update(Message::Tables(tables::Message::RollButton(
+            "tavern".into(),
+        )));
+        let rolled = workspace.dice.latest_table().unwrap();
+        assert_eq!(rolled.name, "Tavern");
+        assert_eq!(
+            rolled.results,
+            [
+                ("Inns".to_string(), "The Gilded Goose".to_string()),
+                ("Moods - Night".to_string(), "Rowdy".to_string()),
+            ]
+        );
+        assert!(rolled.die.is_empty());
+
+        // Typing its name in the dice roller rolls it too.
+        let _ = workspace.update(Message::Dice(dice::Message::Expression("Tavern".into())));
+        let _ = workspace.update(Message::Dice(dice::Message::RollExpression));
+        assert_eq!(workspace.dice.latest_table().unwrap().name, "Tavern");
+
+        // Renaming a table's note keeps the button rolling it.
+        workspace
+            .rename_note(&root.join("tables/Inns.md"), "Inn names")
+            .unwrap();
+        let file = std::fs::read_to_string(root.join(roll_buttons::FILE)).unwrap();
+        assert!(file.contains("[[Inn names]]"), "{file}");
+        assert!(workspace.button_rows()[0].missing.is_empty());
+
+        // A table that's gone shows; deleting the button is undone like any change.
+        std::fs::remove_file(root.join("tables/Moods.md")).unwrap();
+        workspace.rescan();
+        assert_eq!(workspace.button_rows()[0].missing, ["Moods - Night"]);
+        let _ = workspace.update(Message::Tables(tables::Message::DeleteButton(
+            "Tavern".into(),
+        )));
+        assert!(workspace.roll_buttons().is_empty());
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(workspace.roll_buttons().len(), 1, "{}", workspace.status);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

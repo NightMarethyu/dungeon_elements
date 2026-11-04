@@ -4,6 +4,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Roll buttons
+
+- A **roll button** rolls two or more tables with one click, like a "Tavern" that rolls Inn and shop names, Feel of a place and What's here. Make one with **New Roll Button...** in the Roll Tables list or the Tables menu: a name, then the tables picked from a list, in order.
+- Buttons are at the top of the Roll Tables list and in **Tables > Roll Buttons**, and typing a button's name in the dice roller rolls it. The results show together in the dice roller's Tables list, each with its table's name.
+- Click a button's name to change it, or right-click it to delete it (Ctrl+Z brings it back). Renamed tables are followed, and a missing table is pointed out.
+- They are kept as d1 roll tables in a hidden file in the campaign, `.dungeon_elements/roll buttons.md`.
+
 ### Add to Note
 
 - Each roll in the dice roller, and each result in its **Tables** list, has an **Add to Note** button that puts it into the open note: where the cursor was in the note's text or the field last typed in, or in the reading view, as a new paragraph after the one last clicked (or at the end of the note). Dice go in with their total and the dice, like `2d6+3: 11 (4, 4)`, and Ctrl+Z takes it back out.

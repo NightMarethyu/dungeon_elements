@@ -78,6 +78,17 @@ impl Snapshot {
         let mut snapshot = Snapshot::default();
         let mut listed = Listing::default();
         list(root, &mut listed);
+        // Hidden files that are part of the campaign, so changing them can be undone.
+        for kept in KEPT_HIDDEN {
+            let path = root.join(kept);
+            if let Ok(metadata) = std::fs::metadata(&path)
+                && metadata.is_file()
+            {
+                listed
+                    .files
+                    .insert(path, (metadata.len(), metadata.modified().ok()));
+            }
+        }
         for (path, (len, modified)) in listed.files {
             let bytes = is_text(&path)
                 .then(|| std::fs::read(&path).ok().map(Arc::from))
@@ -116,6 +127,17 @@ impl Snapshot {
     pub fn changes(&mut self, root: &Path) -> Vec<Change> {
         let mut listed = Listing::default();
         list(root, &mut listed);
+        // Hidden files that are part of the campaign, so changing them can be undone.
+        for kept in KEPT_HIDDEN {
+            let path = root.join(kept);
+            if let Ok(metadata) = std::fs::metadata(&path)
+                && metadata.is_file()
+            {
+                listed
+                    .files
+                    .insert(path, (metadata.len(), metadata.modified().ok()));
+            }
+        }
         let mut changes = Vec::new();
 
         for folder in listed.folders.difference(&self.folders) {
@@ -186,6 +208,10 @@ impl Snapshot {
         changes
     }
 }
+
+/// The files in hidden folders that are part of the campaign, not its settings: made in
+/// the app, and undone like any other file.
+const KEPT_HIDDEN: [&str; 1] = [crate::roll_buttons::FILE];
 
 #[derive(Default)]
 struct Listing {
