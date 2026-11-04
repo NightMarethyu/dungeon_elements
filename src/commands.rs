@@ -43,6 +43,7 @@ pub enum Command {
     ShowTypeFiles,
     OpenInReading,
     OpenTablesInTableView,
+    EditThemes,
     ReloadThemes,
     RefreshTree,
     ExpandAll,
@@ -69,7 +70,7 @@ pub enum Command {
 use Command::*;
 
 impl Command {
-    pub const ALL: [Command; 50] = [
+    pub const ALL: [Command; 51] = [
         NewNote,
         NewFolder,
         OpenFile,
@@ -102,6 +103,7 @@ impl Command {
         ShowTypeFiles,
         OpenInReading,
         OpenTablesInTableView,
+        EditThemes,
         ReloadThemes,
         RefreshTree,
         ExpandAll,
@@ -320,6 +322,12 @@ impl Command {
                 "open_tables_in_table_view",
                 "Open Table Notes in Table View",
                 "Open notes that hold only tables with every table ready to edit",
+                None,
+            ),
+            EditThemes => (
+                "edit_themes",
+                "Edit Themes...",
+                "Make your own color theme, or change one you made",
                 None,
             ),
             ReloadThemes => (

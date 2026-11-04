@@ -23,4 +23,12 @@ If a note was changed in a way the app can't show as intended (a word in a numbe
 
 ## Themes
 
-Pick a color theme in **View > Theme**: **Light** (cream, like parchment), **Dark** or **High Contrast**. **System**, the one picked at first, uses Light or Dark to match your computer's setting and follows it when it changes. To make your own, copy a theme file into your themes folder (**Help > About** shows where it is), change its colors, and choose **View > Theme > Reload Themes**.
+Pick a color theme in **View > Theme**: **Light** (cream, like parchment), **Dark** or **High Contrast**. **System**, the one picked at first, uses Light or Dark to match your computer's setting and follows it when it changes. To make your own, choose **View > Theme > Edit Themes...**.
+
+- **New Theme** starts one from Dark (or Light, when a light theme is showing), and **Make a Copy** starts one from the theme you're looking at. The built-in themes can't be changed, but a copy of one can.
+- A theme is five colors: **Background** behind your notes, **Panels** for the sidebar, menus, tabs and dialogs, **Text**, **Accent** for buttons, links and the field you're in, and the **Status bar** along the bottom. The rest, like borders, text boxes and the text on buttons, are worked out from these, so five picks make a whole theme.
+- Click a color to pick it on the right: drag in the square for how strong and how bright it is, along the strip for its hue, type a color code like #57c08c, or click one of the swatches. The window behind shows each color as you pick it.
+- Under the colors, the editor says when some text would be hard to read, like "Text is hard to read on Panels".
+- **Save** keeps the theme and switches to it. **Cancel** (or Escape) goes back to the theme you had. Click one of your own themes in the list to change or rename it, or to **Delete** it; **Undo** under the list brings a deleted theme back.
+
+Your themes are saved as files in your themes folder (**Help > About** shows where it is), so you can share one by sending its file. A theme file someone gives you goes in that folder too: choose **View > Theme > Reload Themes** to see it.
