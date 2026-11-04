@@ -96,6 +96,56 @@ pub fn name_problem(name: &str, old: Option<&str>, buttons: &[Button]) -> Option
     taken.then(|| format!("There is a roll button called {name} already."))
 }
 
+/// `yaml` (a `_type.yaml` or the walkthrough's questions) with every `table:` that names
+/// the roll button `old` naming `new` instead, or `None` if none does.
+pub fn rename_in_yaml(yaml: &str, old: &str, new: &str) -> Option<String> {
+    let mut changed = false;
+    let lines: Vec<String> = yaml
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let Some(value) = trimmed.strip_prefix("table:") else {
+                return line.to_string();
+            };
+            let indent = &line[..line.len() - trimmed.len()];
+            let quoted = value.trim();
+            let (open, inner, close) = match quoted.chars().next() {
+                Some(quote @ ('"' | '\'')) if quoted.len() > 1 && quoted.ends_with(quote) => {
+                    (&quoted[..1], &quoted[1..quoted.len() - 1], &quoted[..1])
+                }
+                _ => ("", quoted, ""),
+            };
+            let mut found = false;
+            let tables: Vec<String> = crate::table_picker::split(inner)
+                .into_iter()
+                .map(|table| {
+                    if table.eq_ignore_ascii_case(old) {
+                        found = true;
+                        new.to_string()
+                    } else {
+                        table
+                    }
+                })
+                .collect();
+            if !found {
+                return line.to_string();
+            }
+            changed = true;
+            format!(
+                "{indent}table: {open}{}{close}",
+                crate::table_picker::join(&tables)
+            )
+        })
+        .collect();
+    changed.then(|| {
+        let mut text = lines.join("\n");
+        if yaml.ends_with('\n') {
+            text.push('\n');
+        }
+        text
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +186,16 @@ mod tests {
             tavern().summary(),
             "Inn and shop names, Feel of a place, English - Female"
         );
+    }
+
+    #[test]
+    fn renamed_buttons_are_followed_in_fields_and_questions() {
+        let yaml = "fields:\n  - key: name\n    table: Female names, tavern\n  - key: feel\n    table: \"Tavern\"\n  - key: other\n    table: Taverns\n";
+        assert_eq!(
+            rename_in_yaml(yaml, "Tavern", "Inn").unwrap(),
+            "fields:\n  - key: name\n    table: Female names, Inn\n  - key: feel\n    table: \"Inn\"\n  - key: other\n    table: Taverns\n"
+        );
+        assert_eq!(rename_in_yaml(yaml, "Ruins", "Inn"), None);
     }
 
     #[test]

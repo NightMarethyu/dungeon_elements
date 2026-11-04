@@ -112,6 +112,18 @@ pub fn choices(campaign: Vec<(String, Option<String>)>) -> Vec<Choice> {
     choices
 }
 
+/// What the Add a Table dropdown offers for the campaign's roll buttons, named
+/// `buttons`: each rolls like a table, so a field or question can roll one.
+pub fn buttons(buttons: &[String]) -> Vec<Choice> {
+    buttons
+        .iter()
+        .map(|name| Choice {
+            adds: vec![name.clone()],
+            label: format!("{name} (roll button)"),
+        })
+        .collect()
+}
+
 /// The tables in a `table:` value, like `Female names, Male names`.
 pub fn split(tables: &str) -> Vec<String> {
     tables

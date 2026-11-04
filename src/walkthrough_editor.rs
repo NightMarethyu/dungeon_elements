@@ -357,8 +357,10 @@ impl Editor {
         root: &Path,
         folders: Vec<(String, Option<ContentType>)>,
         campaign_tables: Vec<(String, Option<String>)>,
+        buttons: &[String],
     ) -> Self {
-        let tables = table_picker::choices(campaign_tables);
+        let mut tables = table_picker::buttons(buttons);
+        tables.extend(table_picker::choices(campaign_tables));
 
         let file = root.join(walkthrough::FILE);
         let (draft, broken) = match fs::read_to_string(&file) {
@@ -1585,7 +1587,7 @@ mod tests {
     #[test]
     fn starts_from_the_default_questions_and_saves_them() {
         let root = temp_folder("save");
-        let mut editor = Editor::new(&root, folders(), Vec::new());
+        let mut editor = Editor::new(&root, folders(), Vec::new(), &[]);
         assert!(editor.draft.is_none());
         assert!(!editor.has_changes());
 
@@ -1605,7 +1607,7 @@ mod tests {
         assert_eq!(saved.notes, Questions::built_in().notes);
 
         // Back to the built-in questions removes the file.
-        let mut editor = Editor::new(&root, folders(), Vec::new());
+        let mut editor = Editor::new(&root, folders(), Vec::new(), &[]);
         assert!(editor.draft.is_some());
         editor.update(Message::UseBuiltIn);
         assert!(editor.has_changes());
@@ -1618,7 +1620,7 @@ mod tests {
     #[test]
     fn renaming_a_note_follows_it_everywhere() {
         let root = temp_folder("rename");
-        let mut editor = Editor::new(&root, folders(), Vec::new());
+        let mut editor = Editor::new(&root, folders(), Vec::new(), &[]);
         editor.update(Message::StartFromDefault);
         let draft = editor.draft.as_ref().unwrap();
         let start = draft.notes.iter().position(|n| n.key == "start").unwrap();
@@ -1643,7 +1645,7 @@ mod tests {
     #[test]
     fn tells_mistakes_in_plain_words() {
         let root = temp_folder("mistakes");
-        let mut editor = Editor::new(&root, folders(), Vec::new());
+        let mut editor = Editor::new(&root, folders(), Vec::new(), &[]);
         editor.update(Message::StartFromDefault);
         editor.update(Message::AddQuestion);
         let (mistakes, _) = editor.problems();
@@ -1675,7 +1677,7 @@ mod tests {
     fn a_broken_file_can_be_replaced() {
         let root = temp_folder("broken");
         fs::write(root.join(walkthrough::FILE), "chapters: [").unwrap();
-        let mut editor = Editor::new(&root, folders(), Vec::new());
+        let mut editor = Editor::new(&root, folders(), Vec::new(), &[]);
         assert!(editor.broken.is_some());
         assert!(!editor.can_try());
         editor.update(Message::StartFromDefault);
