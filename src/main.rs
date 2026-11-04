@@ -29,6 +29,7 @@ mod recent;
 mod roll_buttons;
 mod search;
 mod settings;
+mod steps;
 mod style;
 mod table_editor;
 mod table_picker;
@@ -602,6 +603,8 @@ enum UndoTarget {
     Files,
     /// The open table editor's own steps.
     Table,
+    /// The open dialog's own steps, like Note Types.
+    Dialog,
 }
 
 /// How a message counts for the campaign's Undo (see [`Workspace::file_kind`]).
@@ -6776,6 +6779,10 @@ impl Workspace {
     /// What Undo (or with `redo`, Redo) would take back now: the active note's last
     /// change or the campaign's, whichever is newer.
     fn undo_target(&self, redo: bool) -> Option<UndoTarget> {
+        // While a dialog with its own Undo is open, Undo works in it alone.
+        if self.dialog_steps().is_some() {
+            return self.dialog_undo_label(redo).map(|_| UndoTarget::Dialog);
+        }
         // While the table editor is open, Undo works in the table alone.
         if let Some(editor) = self.open_table() {
             let label = if redo {
@@ -6835,6 +6842,7 @@ impl Workspace {
                 self.file_history.last_undo()
             }
             .map(|step| step.label.clone()),
+            UndoTarget::Dialog => self.dialog_undo_label(redo),
             UndoTarget::Table => {
                 let editor = self.open_table()?;
                 if redo {
@@ -6845,6 +6853,35 @@ impl Workspace {
                 .map(String::from)
             }
         }
+    }
+
+    /// The name of the open dialog that has its own Undo and Redo, if one is open.
+    fn dialog_steps(&self) -> Option<&'static str> {
+        match &self.dialog {
+            Some(Dialog::Types(_)) => Some("Note Types"),
+            _ => None,
+        }
+    }
+
+    /// What Undo (or Redo) would do in the open dialog.
+    fn dialog_undo_label(&self, redo: bool) -> Option<String> {
+        match &self.dialog {
+            Some(Dialog::Types(editor)) if redo => editor.redo_label().map(String::from),
+            Some(Dialog::Types(editor)) => editor.undo_label().map(String::from),
+            _ => None,
+        }
+    }
+
+    /// Takes back the open dialog's last change, or with `redo`, does it again.
+    fn undo_dialog(&mut self, redo: bool) -> Task<Message> {
+        let label = match &mut self.dialog {
+            Some(Dialog::Types(editor)) => editor.undo(redo),
+            _ => None,
+        };
+        if let Some(label) = label {
+            self.status = format!("{} {label}", if redo { "Redid" } else { "Undid" });
+        }
+        Task::none()
     }
 
     /// The table editor, if it is open in the active note.
@@ -6891,8 +6928,11 @@ impl Workspace {
             Some(UndoTarget::Note) => self.undo_note(redo),
             Some(UndoTarget::Files) => self.undo_files(redo, false),
             Some(UndoTarget::Table) => self.undo_table(redo),
+            Some(UndoTarget::Dialog) => self.undo_dialog(redo),
             None => {
-                self.status = if self.open_table().is_some() {
+                self.status = if let Some(dialog) = self.dialog_steps() {
+                    format!("Nothing to {what} in {dialog}")
+                } else if self.open_table().is_some() {
                     format!("Nothing to {what} in this table")
                 } else {
                     format!("Nothing to {what}")
@@ -13030,31 +13070,12 @@ fn format_bar<'a>(
 
     // Undo and Redo, greyed out when there is nothing to do, saying what they would do.
     let undo_tool = |redo_it: bool, what: Option<String>| -> Element<'a, Message> {
-        let (name, keys, icon, message) = if redo_it {
-            ("Redo", "Ctrl+Y", REDO_ICON, Message::Redo)
+        let message = if redo_it {
+            Message::Redo
         } else {
-            ("Undo", "Ctrl+Z", UNDO_ICON, Message::Undo)
+            Message::Undo
         };
-        let color = if what.is_some() { c.text } else { c.text_muted };
-        let icon = icon.replace("#000", &theme::to_hex(color));
-        let icon = svg(svg::Handle::from_memory(icon.into_bytes()))
-            .width(16)
-            .height(16);
-        let hint = match what {
-            Some(ref what) => format!("{name} {what} ({keys})"),
-            None => format!("Nothing to {} ({keys})", name.to_lowercase()),
-        };
-        tooltip(
-            button(container(icon).center_y(20))
-                .padding([2, 6])
-                .style(style::flat(c, false))
-                .on_press_maybe(what.map(|_| message)),
-            container(text(hint).size(12))
-                .padding([2, 6])
-                .style(style::dropdown(c)),
-            tooltip::Position::Bottom,
-        )
-        .into()
+        steps::button(c, redo_it, what, message)
     };
 
     let tools = row![
@@ -13128,11 +13149,6 @@ fn format_bar<'a>(
         .style(style::panel(c.sidebar))
         .into()
 }
-
-/// The arrow on the Undo button: back and round.
-const UNDO_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 2.5 1.5 6 5 9.5M1.5 6H10a4 4 0 0 1 0 8H6.5" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
-/// The Redo button's arrow, the other way.
-const REDO_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M11 2.5 14.5 6 11 9.5M14.5 6H6a4 4 0 0 0 0 8h3.5" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
 
 /// The editor for a block of the note in the reading view.
 fn block_editor(
@@ -13680,6 +13696,34 @@ mod tests {
         let file = std::fs::read_to_string(root.join(tables::LINKED_FILE)).unwrap();
         assert!(!file.contains("| d1"), "{file}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn undo_works_in_note_types_while_it_is_open() {
+        let mut workspace = workspace_with(
+            "undo_note_types",
+            &[
+                ("Inn.md", ""),
+                ("npcs/_type.yaml", "type: npc\nfields:\n  - key: name\n"),
+            ],
+        );
+        type_text(&mut workspace, "Orc");
+        let _ = workspace.update(Message::ShowTypes);
+        assert_eq!(workspace.undo_label(false), None);
+        let _ = workspace.update(Message::Types(types_editor::Message::AddField));
+        assert_eq!(workspace.undo_label(false).as_deref(), Some("Add Field"));
+
+        // Ctrl+Z takes back the dialog's change, not the typing in the note behind it.
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "Orc");
+        assert_eq!(workspace.undo_label(true).as_deref(), Some("Add Field"));
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "Orc");
+
+        // Closed, Undo is the note's again.
+        let _ = workspace.update(Message::Types(types_editor::Message::Cancel));
+        assert_eq!(workspace.undo_label(false).as_deref(), Some("Typing"));
+        let _ = std::fs::remove_dir_all(&workspace.root);
     }
 
     #[test]
