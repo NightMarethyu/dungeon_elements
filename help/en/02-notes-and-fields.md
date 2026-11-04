@@ -86,6 +86,7 @@ The buttons at the top right of a note switch how you see it:
 - Undoing back to the last save shows the note as saved again.
 - While the table editor is open, Undo and Redo work in the table: a row added, a die changed, a result typed. **Cancel** puts the whole table back as it was.
 - While **Campaign > Note Types...** is open, Undo and Redo work in it: a field added, removed, moved or renamed, a kind changed, a new type. The arrows at its top left say what they would do, like **Undo Remove Field Status**, and Undo goes back to the type the change was made to. **Save** keeps it all as one step that Ctrl+Z can take back after the window closes, and **Cancel** leaves every change out.
+- **Campaign > Walkthrough Questions...** works the same way while it is open (see [the walkthrough](guide:walkthrough)).
 
 Undo takes back changes to the campaign too: a new note or folder, a rename, a move, a delete, a change to Note Types or the walkthrough questions, a walkthrough answer, a link fix or a ticked quest step. A rename or move is undone together with the links that changed to follow it, and a deleted note or folder comes back with its pictures. Ctrl+Z takes back whichever came last, the change to the open note or the change to the campaign, and the Edit menu says which, like **Undo Rename Saltmarsh**. The campaign remembers about two hundred of these steps while the app is open.
 

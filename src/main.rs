@@ -6859,6 +6859,7 @@ impl Workspace {
     fn dialog_steps(&self) -> Option<&'static str> {
         match &self.dialog {
             Some(Dialog::Types(_)) => Some("Note Types"),
+            Some(Dialog::Walkthrough(_)) => Some("the walkthrough questions"),
             _ => None,
         }
     }
@@ -6868,6 +6869,8 @@ impl Workspace {
         match &self.dialog {
             Some(Dialog::Types(editor)) if redo => editor.redo_label().map(String::from),
             Some(Dialog::Types(editor)) => editor.undo_label().map(String::from),
+            Some(Dialog::Walkthrough(editor)) if redo => editor.redo_label().map(String::from),
+            Some(Dialog::Walkthrough(editor)) => editor.undo_label().map(String::from),
             _ => None,
         }
     }
@@ -6876,6 +6879,7 @@ impl Workspace {
     fn undo_dialog(&mut self, redo: bool) -> Task<Message> {
         let label = match &mut self.dialog {
             Some(Dialog::Types(editor)) => editor.undo(redo),
+            Some(Dialog::Walkthrough(editor)) => editor.undo(redo),
             _ => None,
         };
         if let Some(label) = label {
@@ -13723,6 +13727,26 @@ mod tests {
         // Closed, Undo is the note's again.
         let _ = workspace.update(Message::Types(types_editor::Message::Cancel));
         assert_eq!(workspace.undo_label(false).as_deref(), Some("Typing"));
+        let _ = std::fs::remove_dir_all(&workspace.root);
+    }
+
+    #[test]
+    fn undo_works_in_the_walkthrough_questions_while_they_are_open() {
+        let mut workspace = workspace_with("undo_walkthrough_questions", &[("Inn.md", "")]);
+        type_text(&mut workspace, "Inn");
+        let _ = workspace.update(Message::ShowWalkthroughEditor);
+        let _ = workspace.update(Message::WalkthroughEditor(
+            walkthrough_editor::Message::StartFromDefault,
+        ));
+        assert_eq!(
+            workspace.undo_label(false).as_deref(),
+            Some("Start from the Default Questions")
+        );
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "Inn");
+        assert_eq!(workspace.undo_label(false), None);
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "Inn");
         let _ = std::fs::remove_dir_all(&workspace.root);
     }
 

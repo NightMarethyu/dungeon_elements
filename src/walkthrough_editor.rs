@@ -15,6 +15,7 @@ use iced::{Center, Element, Fill};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::note;
+use crate::steps::{self, Step, Steps};
 use crate::style;
 use crate::table_picker;
 use crate::theme::Colors;
@@ -75,6 +76,10 @@ pub enum Message {
     TryIt,
     Save,
     Cancel,
+    /// Takes back the last change made in the dialog.
+    Undo,
+    /// Does the last change taken back again.
+    Redo,
 }
 
 /// An entry of a pick list: what it stands for (`None` for "none" or "the default"), and
@@ -122,6 +127,18 @@ pub struct Editor {
     selected: Selected,
     changed: bool,
     pub error: Option<String>,
+    /// Undo and Redo while the dialog is open.
+    steps: Steps<Snapshot>,
+}
+
+/// The dialog as it was before a change, for Undo, with what was shown so Undo goes
+/// back to it.
+#[derive(Clone, PartialEq)]
+struct Snapshot {
+    draft: Option<Draft>,
+    broken: Option<String>,
+    selected: Selected,
+    changed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -384,6 +401,7 @@ impl Editor {
             selected,
             changed: false,
             error: None,
+            steps: Steps::default(),
         }
     }
 
@@ -531,6 +549,159 @@ impl Editor {
     }
 
     pub fn update(&mut self, message: Message) {
+        match message {
+            Message::Undo => {
+                self.undo(false);
+                return;
+            }
+            Message::Redo => {
+                self.undo(true);
+                return;
+            }
+            _ => {}
+        }
+        let Some(step) = self.step(&message) else {
+            return self.apply(message);
+        };
+        let before = self.snapshot();
+        self.apply(message);
+        let after = self.snapshot();
+        // Only what changes the questions is a step, not just what is shown.
+        if before.draft != after.draft || before.broken != after.broken {
+            self.steps.record(before, &after, step);
+        }
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            draft: self.draft.clone(),
+            broken: self.broken.clone(),
+            selected: self.selected,
+            changed: self.changed,
+        }
+    }
+
+    /// What Undo would take back, like "Add Question".
+    pub fn undo_label(&self) -> Option<&str> {
+        self.steps.undo_label()
+    }
+
+    /// What Redo would do again.
+    pub fn redo_label(&self) -> Option<&str> {
+        self.steps.redo_label()
+    }
+
+    /// Takes back the last change (or with `redo`, does it again), showing the chapter
+    /// or notes it was made to. Gives what the change was.
+    pub fn undo(&mut self, redo: bool) -> Option<String> {
+        let (state, label) = self.steps.undo(self.snapshot(), redo)?;
+        self.draft = state.draft;
+        self.broken = state.broken;
+        self.selected = state.selected;
+        self.changed = state.changed;
+        self.error = None;
+        Some(label)
+    }
+
+    /// What `message` would be as an Undo step, if it can change the questions.
+    fn step(&self, message: &Message) -> Option<Step> {
+        let draft = self.draft.as_ref();
+        let chapter = match self.selected {
+            Selected::Chapter(index) => draft.and_then(|draft| draft.chapters.get(index)),
+            Selected::Notes => None,
+        };
+        let question = |index: usize| {
+            chapter
+                .and_then(|chapter| chapter.questions.get(index))
+                .map(|question| match question.short.trim() {
+                    "" => question.ask.trim().to_string(),
+                    short => short.to_string(),
+                })
+                .filter(|name| !name.is_empty())
+        };
+        let about_question = |what: &str, index: usize| {
+            Step::named(match question(index) {
+                Some(name) => format!("{what} \"{name}\""),
+                None => what.to_string(),
+            })
+        };
+        let about_note = |what: &str, index: usize| {
+            let key = draft
+                .and_then(|draft| draft.notes.get(index))
+                .map(|note| note.key.trim().to_string())
+                .filter(|key| !key.is_empty());
+            Step::named(match key {
+                Some(key) => format!("{what} {key}"),
+                None => what.to_string(),
+            })
+        };
+        let chapter_title = chapter
+            .map(|chapter| chapter.title.trim().to_string())
+            .filter(|title| !title.is_empty());
+        let about_chapter = |what: &str| {
+            Step::named(match &chapter_title {
+                Some(title) => format!("{what} {title}"),
+                None => what.to_string(),
+            })
+        };
+        Some(match message {
+            Message::ChapterTitle(_) => Step::typing("chapter-title"),
+            Message::ChapterIntro(_) => Step::typing("chapter-intro"),
+            Message::Ask(index, _) => Step::typing(format!("ask-{index}")),
+            Message::Short(index, _) => Step::typing(format!("short-{index}")),
+            Message::Hint(index, _) => Step::typing(format!("hint-{index}")),
+            Message::ImportLabel(index, _) => Step::typing(format!("import-{index}")),
+            Message::Tables(index, table_picker::Edit::Inspire(_)) => {
+                Step::typing(format!("inspire-{index}"))
+            }
+            Message::NoteKey(index, _) => Step::typing(format!("note-key-{index}")),
+            Message::NoteName(index, _) => Step::typing(format!("note-name-{index}")),
+            Message::SetValue(index, set, _) => Step::typing(format!("set-{index}-{set}")),
+
+            Message::AddChapter => Step::named("Add Chapter"),
+            Message::ChapterUp | Message::ChapterDown => about_chapter("Move Chapter"),
+            Message::RemoveChapter => about_chapter("Remove Chapter"),
+            Message::AddQuestion => Step::named("Add Question"),
+            Message::GoesInto(index, _) => about_question("Change Note of", *index),
+            Message::Field(index, _) => about_question("Change Field of", *index),
+            Message::OwnTables(index, _) | Message::Tables(index, _) => {
+                about_question("Change Tables of", *index)
+            }
+            Message::AddPick(index, _) => about_question("Add a Pick to", *index),
+            Message::RemovePick(index, _) => about_question("Remove a Pick from", *index),
+            Message::Import(index, _) => about_question("Change Import of", *index),
+            Message::MoveTo(index, _) => about_question("Move", *index),
+            Message::QuestionUp(index) | Message::QuestionDown(index) => {
+                about_question("Move", *index)
+            }
+            Message::RemoveQuestion(index) => about_question("Remove", *index),
+
+            Message::AddNote => Step::named("Add Note"),
+            Message::NoteFolder(index, _) => about_note("Change Folder of", *index),
+            Message::NoteMany(index, _) => about_note("Change One or Many of", *index),
+            Message::NoteNaming(index, _) => about_note("Change Naming of", *index),
+            Message::AddSet(index) => about_note("Add a Value to", *index),
+            Message::SetField(index, ..) => about_note("Change a Value of", *index),
+            Message::RemoveSet(index, _) => about_note("Remove a Value from", *index),
+            Message::AddTo(index, _) | Message::AddToField(index, _) => {
+                about_note("Change Link of", *index)
+            }
+            Message::RemoveNote(index) => about_note("Remove Note", *index),
+
+            Message::StartFromDefault => Step::named("Start from the Default Questions"),
+            Message::UseBuiltIn => Step::named("Use the Built-in Questions"),
+
+            Message::SelectNotes
+            | Message::SelectChapter(_)
+            | Message::TryIt
+            | Message::Save
+            | Message::Cancel
+            | Message::Undo
+            | Message::Redo => return None,
+        })
+    }
+
+    fn apply(&mut self, message: Message) {
         self.error = None;
         match message {
             Message::StartFromDefault => {
@@ -1009,7 +1180,14 @@ impl Editor {
 
         container(
             column![
-                text("Walkthrough Questions").size(22).color(c.text),
+                row![
+                    steps::button(c, false, self.undo_label().map(String::from), Message::Undo),
+                    steps::button(c, true, self.redo_label().map(String::from), Message::Redo),
+                    space().width(6),
+                    text("Walkthrough Questions").size(22).color(c.text),
+                ]
+                .spacing(2)
+                .align_y(Center),
                 row![
                     container(list).width(220).height(Fill),
                     rule::vertical(1).style(style::separator(c)),
@@ -1582,6 +1760,47 @@ mod tests {
         let draft = Draft::from_questions(&built_in);
         let yaml = serde_yaml_ng::to_string(&draft.to_questions()).unwrap();
         assert_eq!(walkthrough::parse(&yaml).unwrap(), built_in);
+    }
+
+    #[test]
+    fn undoes_and_redoes_changes_while_open() {
+        let root = temp_folder("undo");
+        let mut editor = Editor::new(&root, folders(), Vec::new(), &[]);
+        editor.update(Message::StartFromDefault);
+        assert_eq!(
+            editor.undo_label(),
+            Some("Start from the Default Questions")
+        );
+        let chapters = editor.draft.as_ref().unwrap().chapters.len();
+        let questions =
+            |editor: &Editor| editor.draft.as_ref().unwrap().chapters[0].questions.len();
+        let start = questions(&editor);
+
+        editor.update(Message::RemoveQuestion(1));
+        assert!(editor.undo_label().unwrap().starts_with("Remove \""));
+        // Typing in one box is one step.
+        editor.update(Message::Ask(0, "W".into()));
+        editor.update(Message::Ask(0, "Wh".into()));
+        assert_eq!(editor.undo_label(), Some("Typing"));
+        // Looking at the notes isn't a step, but Undo goes back to the chapter.
+        editor.update(Message::SelectNotes);
+        assert_eq!(editor.undo(false).as_deref(), Some("Typing"));
+        assert_eq!(editor.selected, Selected::Chapter(0));
+        editor.undo(false);
+        assert_eq!(questions(&editor), start);
+
+        editor.update(Message::Redo);
+        assert_eq!(questions(&editor), start - 1);
+        editor.update(Message::AddChapter);
+        assert_eq!(editor.draft.as_ref().unwrap().chapters.len(), chapters + 1);
+        editor.update(Message::Undo);
+        assert_eq!(editor.draft.as_ref().unwrap().chapters.len(), chapters);
+
+        // Starting from the defaults can be taken back too, to nothing changed.
+        while editor.undo(false).is_some() {}
+        assert!(editor.draft.is_none());
+        assert!(!editor.has_changes());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
