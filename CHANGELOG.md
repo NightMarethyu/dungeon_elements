@@ -4,6 +4,13 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
+### Theme editor
+
+- **View > Theme > Edit Themes...** makes a color theme with no file to write: pick five colors (Background, Panels, Text, Accent and Status bar), and the rest are worked out from them. The window shows each color as it's picked.
+- A color picker with a square for strength and brightness, a hue strip, a color code box and swatches. It is its own piece, for the map tools to use later.
+- The editor warns when text would be hard to read, like "Text is hard to read on Panels".
+- **New Theme**, **Make a Copy** of any theme, rename and change your own, and **Delete** them with **Undo**. Themes are saved as ordinary theme files in your themes folder.
+
 ### Roll buttons
 
 - A **roll button** rolls two or more tables with one click, like a "Tavern" that rolls Inn and shop names, Feel of a place and What's here. Make one with **New Roll Button...** in the Roll Tables list or the Tables menu: a name, then the tables picked from a list, in order.

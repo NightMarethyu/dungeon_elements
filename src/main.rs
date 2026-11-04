@@ -7,6 +7,7 @@ mod backlinks;
 mod campaign;
 mod check;
 mod code;
+mod color_picker;
 mod commands;
 mod context_menu;
 mod date;
@@ -35,6 +36,7 @@ mod tables;
 mod tags;
 mod templates;
 mod theme;
+mod theme_editor;
 mod types;
 mod types_editor;
 mod walkthrough;
@@ -116,6 +118,8 @@ struct App {
     after_close: Option<Message>,
     /// Whether the "About" dialog is showing.
     about: bool,
+    /// View > Theme > Edit Themes..., while it is open. The window shows its colors.
+    theme_editor: Option<theme_editor::Editor>,
     /// The Help window, if it is open.
     help: Option<help::Help>,
     /// The window's size, for keeping right-click menus inside it.
@@ -1093,6 +1097,8 @@ enum Message {
     CheckSystemTheme,
     /// The computer's light or dark setting, from asking or from it changing.
     SystemTheme(iced::theme::Mode),
+    EditThemes,
+    ThemeEditor(theme_editor::Message),
     ReloadThemes,
     ToggleExtensions(bool),
     ToggleTypeFiles(bool),
@@ -1378,6 +1384,7 @@ impl App {
             menu_cursor: menu::Cursor::default(),
             after_close: None,
             about: false,
+            theme_editor: None,
             help: None,
             window: window_settings().size,
         };
@@ -1406,11 +1413,29 @@ impl App {
     }
 
     fn colors(&self) -> Colors {
-        self.themes[self.theme].colors
+        match &self.theme_editor {
+            Some(editor) => editor.preview(&self.themes),
+            None => self.themes[self.theme].colors,
+        }
     }
 
     fn theme(&self) -> iced::Theme {
-        self.themes[self.theme].to_iced()
+        match &self.theme_editor {
+            Some(editor) => Theme {
+                name: "Preview".into(),
+                colors: editor.preview(&self.themes),
+                path: None,
+            }
+            .to_iced(),
+            None => self.themes[self.theme].to_iced(),
+        }
+    }
+
+    /// Colors the logo and the dice for the colors showing now.
+    fn color_pictures(&mut self) {
+        let c = self.colors();
+        self.logos = (logo(c, c.menu_bar), logo(c, c.background));
+        self.dice = dice::Icons::new(c);
     }
 
     /// Switches to the theme named `name`, or the default theme if there is none by that name.
@@ -1431,10 +1456,7 @@ impl App {
                     .position(|theme| theme.name == theme::DEFAULT)
             })
             .unwrap_or(0);
-
-        let c = self.colors();
-        self.logos = (logo(c, c.menu_bar), logo(c, c.background));
-        self.dice = dice::Icons::new(c);
+        self.color_pictures();
     }
 
     /// Shows `message` in the status bar, or under the buttons on the splash screen.
@@ -1656,6 +1678,8 @@ impl App {
                 };
                 return self.menu_arrow(open, arrow);
             }
+            // The theme editor covers the window, so shortcuts wait until it closes.
+            Message::Run(_) if self.theme_editor.is_some() => return Task::none(),
             Message::Run(command) => {
                 return match self.command(command).0 {
                     Some(message) => self.update(message),
@@ -1694,7 +1718,14 @@ impl App {
             // Escape closes an open menu, and only that.
             Message::Escape if closed => return Task::none(),
             // Tab moves between the form's fields, not under the Help or About window.
-            Message::TabField(_) if self.help.is_some() || self.about => return Task::none(),
+            Message::TabField(_)
+                if self.help.is_some() || self.about || self.theme_editor.is_some() =>
+            {
+                return Task::none();
+            }
+            Message::Escape if self.theme_editor.is_some() => {
+                return self.update(Message::ThemeEditor(theme_editor::Message::Close));
+            }
             Message::Escape if self.help.is_some() => {
                 self.help = None;
                 return Task::none();
@@ -1737,6 +1768,45 @@ impl App {
                     self.themes[self.theme].name.clone()
                 };
                 self.save_settings();
+                return Task::none();
+            }
+            Message::EditThemes => {
+                self.theme_editor = Some(theme_editor::Editor::new(&self.themes, self.theme));
+                self.color_pictures();
+                return Task::none();
+            }
+            Message::ThemeEditor(message) => {
+                let Some(editor) = &mut self.theme_editor else {
+                    return Task::none();
+                };
+                match editor.update(message, &self.themes) {
+                    theme_editor::Outcome::Nothing => {}
+                    theme_editor::Outcome::Close => self.theme_editor = None,
+                    theme_editor::Outcome::Saved(name) => {
+                        self.theme_editor = None;
+                        let (themes, problems) = theme::load(theme::user_folder().as_deref());
+                        self.themes = themes;
+                        self.use_theme(&name);
+                        self.settings.theme = self.themes[self.theme].name.clone();
+                        self.save_settings();
+                        self.notify(
+                            theme_problems(&problems)
+                                .unwrap_or_else(|| format!("Saved the {name} theme, and using it")),
+                        );
+                    }
+                    theme_editor::Outcome::Reload(shown) => {
+                        let (themes, _) = theme::load(theme::user_folder().as_deref());
+                        self.themes = themes;
+                        // The theme in use may have been the one deleted, and then it's Dark.
+                        let name = self.settings.theme.clone();
+                        self.use_theme(&name);
+                        let shown = shown.unwrap_or_else(|| self.themes[self.theme].name.clone());
+                        if let Some(editor) = &mut self.theme_editor {
+                            editor.reloaded(&self.themes, Some(&shown));
+                        }
+                    }
+                }
+                self.color_pictures();
                 return Task::none();
             }
             Message::ReloadThemes => {
@@ -2077,6 +2147,14 @@ impl App {
             Screen::Splash { .. } => None,
         };
         let about = self.about.then(|| modal(about_dialog(c, &self.logos.1)));
+        // The window behind shows the colors being picked, undimmed, while the editor
+        // keeps the colors in use, so it stays readable whatever is picked.
+        let theme_editor = self.theme_editor.as_ref().map(|editor| {
+            let dialog = editor
+                .view(self.themes[self.theme].colors, &self.themes, self.theme)
+                .map(Message::ThemeEditor);
+            opaque(center(opaque(dialog)))
+        });
         let help = self.help.as_ref().map(|help| {
             modal(
                 container(help.view(c).map(Message::Help))
@@ -2114,6 +2192,7 @@ impl App {
             view,
             layer(dialog),
             layer(about),
+            layer(theme_editor),
             layer(help),
             layer(context),
             layer(dropdown),
@@ -2242,6 +2321,7 @@ impl App {
                 true,
                 settings.open_tables_in_table_view,
             ),
+            Command::EditThemes => (Message::EditThemes, true, false),
             Command::ReloadThemes => (Message::ReloadThemes, true, false),
             Command::RefreshTree => (Message::RefreshTree, open, false),
             Command::ExpandAll => (Message::ExpandAll, open, false),
@@ -2375,6 +2455,7 @@ impl App {
                         .checked(!following && index == self.theme)
                 }));
                 themes.push(Entry::Separator);
+                themes.push(self.command_entry(EditThemes));
                 themes.push(self.command_entry(ReloadThemes));
                 entries.push(menu::submenu("Theme", themes));
                 entries.push(menu::submenu(

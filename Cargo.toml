@@ -16,6 +16,7 @@ chrono = { version = "0.4.45", default-features = false, features = [
 fastrand = "2"
 iced = { version = "0.14", features = [
   "advanced",
+  "canvas",
   "image-without-codecs",
   "markdown",
   "svg",

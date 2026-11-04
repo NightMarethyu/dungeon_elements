@@ -67,7 +67,68 @@ pub struct Colors {
     pub corner_radius: f32,
 }
 
+/// Every color a theme sets, by the name its file gives it, in the order files list them.
+pub const ROLES: [&str; 25] = [
+    "background",
+    "sidebar",
+    "menu_bar",
+    "menu",
+    "tab_active",
+    "tab_inactive",
+    "border",
+    "text",
+    "text_muted",
+    "field_background",
+    "selection",
+    "hover",
+    "accent",
+    "accent_text",
+    "status_bar",
+    "status_text",
+    "danger",
+    "warning",
+    "success",
+    "code_comment",
+    "code_string",
+    "code_number",
+    "code_keyword",
+    "code_function",
+    "code_type",
+];
+
 impl Colors {
+    /// The color named `role`, one of [`ROLES`].
+    pub fn get(&self, role: &str) -> Option<Color> {
+        Some(match role {
+            "background" => self.background,
+            "sidebar" => self.sidebar,
+            "menu_bar" => self.menu_bar,
+            "menu" => self.menu,
+            "tab_active" => self.tab_active,
+            "tab_inactive" => self.tab_inactive,
+            "border" => self.border,
+            "text" => self.text,
+            "text_muted" => self.text_muted,
+            "field_background" => self.field_background,
+            "selection" => self.selection,
+            "hover" => self.hover,
+            "accent" => self.accent,
+            "accent_text" => self.accent_text,
+            "status_bar" => self.status_bar,
+            "status_text" => self.status_text,
+            "danger" => self.danger,
+            "warning" => self.warning,
+            "success" => self.success,
+            "code_comment" => self.code_comment,
+            "code_string" => self.code_string,
+            "code_number" => self.code_number,
+            "code_keyword" => self.code_keyword,
+            "code_function" => self.code_function,
+            "code_type" => self.code_type,
+            _ => return None,
+        })
+    }
+
     /// Sets the color named `role` to `value`.
     fn set(&mut self, role: &str, value: Color) -> Result<(), String> {
         let slot = match role {
@@ -107,6 +168,8 @@ impl Colors {
 pub struct Theme {
     pub name: String,
     pub colors: Colors,
+    /// The file a user theme was loaded from; `None` for a built-in one.
+    pub path: Option<PathBuf>,
 }
 
 impl Theme {
@@ -179,6 +242,7 @@ fn parse(yaml: &str, dark: Option<&Theme>, light: Option<&Theme>) -> Result<Them
     Ok(Theme {
         name: file.name.trim().to_string(),
         colors,
+        path: None,
     })
 }
 
@@ -301,15 +365,252 @@ pub fn load(folder: Option<&Path>) -> (Vec<Theme>, Vec<String>) {
             Ok(theme) if theme.name.is_empty() => {
                 problems.push(format!("{file_name}: the theme has no name"));
             }
-            Ok(theme) => match themes.iter_mut().find(|t| t.name == theme.name) {
-                Some(existing) => *existing = theme,
-                None => themes.push(theme),
-            },
+            Ok(mut theme) => {
+                theme.path = Some(path.clone());
+                match themes.iter_mut().find(|t| t.name == theme.name) {
+                    Some(existing) => *existing = theme,
+                    None => themes.push(theme),
+                }
+            }
             Err(error) => problems.push(format!("{file_name}: {error}")),
         }
     }
 
     (themes, problems)
+}
+
+/// WCAG's contrast ratio between two colors, from 1 to 21. Text needs 4.5 to be easy to
+/// read, and large text or a link 3.
+pub fn contrast(a: Color, b: Color) -> f32 {
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// How bright `color` looks, from 0 (black) to 1 (white).
+fn luminance(color: Color) -> f32 {
+    let channel = |v: f32| {
+        if v <= 0.039_28 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+}
+
+/// `from`, moved `amount` (0 to 1) of the way to `to`.
+pub fn mix(from: Color, to: Color, amount: f32) -> Color {
+    let at = |a: f32, b: f32| a + (b - a) * amount;
+    Color::from_rgb(at(from.r, to.r), at(from.g, to.g), at(from.b, to.b))
+}
+
+/// Whether `background` is a dark one, so the theme is built on Dark rather than Light.
+pub fn is_dark(background: Color) -> bool {
+    luminance(background) < 0.18
+}
+
+/// The five colors the theme editor picks. Every other color is worked out from them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Main {
+    Background,
+    Panels,
+    Text,
+    Accent,
+    StatusBar,
+}
+
+impl Main {
+    pub const ALL: [Main; 5] = [
+        Main::Background,
+        Main::Panels,
+        Main::Text,
+        Main::Accent,
+        Main::StatusBar,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Main::Background => "Background",
+            Main::Panels => "Panels",
+            Main::Text => "Text",
+            Main::Accent => "Accent",
+            Main::StatusBar => "Status bar",
+        }
+    }
+
+    /// What it colors, for the editor to say under its name.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Main::Background => "Behind your notes",
+            Main::Panels => "The sidebar, menus, tabs and dialogs",
+            Main::Text => "Writing everywhere",
+            Main::Accent => "Buttons, links and the field you're in",
+            Main::StatusBar => "The strip along the bottom",
+        }
+    }
+
+    pub fn get(self, colors: &Colors) -> Color {
+        match self {
+            Main::Background => colors.background,
+            Main::Panels => colors.sidebar,
+            Main::Text => colors.text,
+            Main::Accent => colors.accent,
+            Main::StatusBar => colors.status_bar,
+        }
+    }
+
+    /// Sets the color to `value`, and works out again every color that comes from it.
+    pub fn set(self, colors: &mut Colors, value: Color) {
+        let value = Color { a: 1.0, ..value };
+        match self {
+            Main::Background => colors.background = value,
+            Main::Panels => colors.sidebar = value,
+            Main::Text => colors.text = value,
+            Main::Accent => colors.accent = value,
+            Main::StatusBar => colors.status_bar = value,
+        }
+        derive(colors);
+    }
+}
+
+/// Works out the colors that come from the five [`Main`] ones: the other panels, borders,
+/// fields, hover and selection, muted text, and the text on the accent and the status bar.
+/// The message and code colors stay as they are.
+pub fn derive(colors: &mut Colors) {
+    let (background, panels, text, accent) = (
+        colors.background,
+        colors.sidebar,
+        colors.text,
+        colors.accent,
+    );
+    let dark = is_dark(background);
+    colors.menu = panels;
+    colors.tab_active = background;
+    colors.tab_inactive = mix(panels, text, 0.05);
+    colors.menu_bar = mix(panels, text, 0.08);
+    colors.hover = mix(panels, text, 0.05);
+    colors.border = mix(panels, text, 0.15);
+    colors.selection = mix(mix(panels, text, 0.08), accent, 0.15);
+    colors.field_background = if dark {
+        mix(panels, text, 0.12)
+    } else {
+        mix(background, Color::WHITE, 0.6)
+    };
+    colors.text_muted = mix(text, background, 0.3);
+    colors.accent_text = readable_on(accent);
+    colors.status_text = readable_on(colors.status_bar);
+}
+
+/// Near-black or near-white, whichever is easier to read on `paper`, tinted with it.
+fn readable_on(paper: Color) -> Color {
+    let dark = mix(paper, Color::BLACK, 0.85);
+    let light = mix(paper, Color::WHITE, 0.92);
+    if contrast(dark, paper) >= contrast(light, paper) {
+        dark
+    } else {
+        light
+    }
+}
+
+/// Text that is hard to read in `colors`, in words like "Text is hard to read on
+/// Panels". Empty when everything reads well.
+pub fn readability(colors: &Colors) -> Vec<String> {
+    let checks = [
+        ("Text", colors.text, "Background", colors.background, 4.5),
+        ("Text", colors.text, "Panels", colors.sidebar, 4.5),
+        (
+            "Text",
+            colors.text,
+            "text boxes",
+            colors.field_background,
+            4.5,
+        ),
+        (
+            "Muted text",
+            colors.text_muted,
+            "Background",
+            colors.background,
+            3.0,
+        ),
+        (
+            "Accent",
+            colors.accent,
+            "Background",
+            colors.background,
+            3.0,
+        ),
+        ("Accent", colors.accent, "Panels", colors.sidebar, 3.0),
+        (
+            "Button text",
+            colors.accent_text,
+            "Accent",
+            colors.accent,
+            4.5,
+        ),
+        (
+            "Writing",
+            colors.status_text,
+            "Status bar",
+            colors.status_bar,
+            4.5,
+        ),
+    ];
+    checks
+        .into_iter()
+        .filter(|(_, ink, _, paper, least)| contrast(*ink, *paper) < *least)
+        .map(|(ink, _, paper, _, _)| format!("{ink} is hard to read on {paper}."))
+        .collect()
+}
+
+/// A theme file for `name` with `colors`: every color, so it looks the same whatever
+/// the built-in themes become.
+pub fn to_yaml(name: &str, colors: &Colors) -> String {
+    let base = if is_dark(colors.background) {
+        "dark"
+    } else {
+        "light"
+    };
+    let mut text = format!(
+        "# Made with Edit Themes in Dungeon Elements.\nname: {}\nbase: {base}\ncolors:\n",
+        serde_yaml_ng::to_string(name)
+            .unwrap_or_else(|_| format!("{name:?}"))
+            .trim()
+    );
+    for role in ROLES {
+        if let Some(color) = colors.get(role) {
+            text.push_str(&format!("  {role}: \"{}\"\n", to_hex(color)));
+        }
+    }
+    text.push_str(&format!(
+        "border_width: {}\ncorner_radius: {}\n",
+        colors.border_width, colors.corner_radius
+    ));
+    text
+}
+
+/// The file name a theme called `name` is saved under, like `Forest at night.yaml`.
+pub fn file_name(name: &str) -> String {
+    let safe: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe = safe.trim();
+    format!("{}.yaml", if safe.is_empty() { "theme" } else { safe })
+}
+
+/// Reads one theme from `yaml`, the way [`load`] reads a user's, against the built-in
+/// `themes`.
+#[cfg(test)]
+fn parse_user(yaml: &str, themes: &[Theme]) -> Result<Theme, String> {
+    let (dark, light) = bases(themes);
+    parse(yaml, Some(&dark), Some(&light))
 }
 
 #[cfg(test)]
@@ -328,22 +629,6 @@ mod tests {
         assert_eq!(for_system(Mode::Light), "Light");
         assert_eq!(for_system(Mode::Dark), "Dark");
         assert_eq!(for_system(Mode::None), "Dark");
-    }
-
-    /// WCAG's contrast ratio between two colors, from 1 to 21.
-    fn contrast(a: Color, b: Color) -> f32 {
-        let luminance = |c: Color| {
-            let channel = |v: f32| {
-                if v <= 0.039_28 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
-        };
-        let (x, y) = (luminance(a), luminance(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
     }
 
     #[test]
@@ -411,6 +696,56 @@ mod tests {
         }
         assert!(contrast(c.accent_text, c.accent) >= 4.5);
         assert!(contrast(c.status_text, c.status_bar) >= 4.5);
+    }
+
+    #[test]
+    fn five_colors_make_a_readable_theme() {
+        // The main colors of each built-in theme, worked out again, read well.
+        for theme in built_in() {
+            let mut colors = theme.colors;
+            derive(&mut colors);
+            assert!(
+                readability(&colors).is_empty(),
+                "{}: {:?}",
+                theme.name,
+                readability(&colors)
+            );
+        }
+        // And a new one: a deep purple with pink.
+        let mut colors = built_in()[1].colors;
+        Main::Background.set(&mut colors, Color::from_rgb8(0x24, 0x10, 0x3a));
+        Main::Panels.set(&mut colors, Color::from_rgb8(0x2e, 0x16, 0x4a));
+        Main::Text.set(&mut colors, Color::from_rgb8(0xf3, 0xe8, 0xff));
+        Main::Accent.set(&mut colors, Color::from_rgb8(0xff, 0x6a, 0xd5));
+        Main::StatusBar.set(&mut colors, Color::from_rgb8(0x00, 0xb8, 0xc8));
+        assert!(
+            readability(&colors).is_empty(),
+            "{:?}",
+            readability(&colors)
+        );
+
+        // Text the same as the background is pointed out.
+        Main::Text.set(&mut colors, Color::from_rgb8(0x2e, 0x16, 0x4a));
+        assert!(readability(&colors).contains(&"Text is hard to read on Panels.".to_string()));
+    }
+
+    #[test]
+    fn saved_themes_load_the_same() {
+        let themes = built_in();
+        let mut colors = themes[1].colors;
+        Main::Accent.set(&mut colors, Color::from_rgb8(0xff, 0x6a, 0xd5));
+        let yaml = to_yaml("Pink: at night", &colors);
+        let theme = parse_user(&yaml, &themes).unwrap();
+        assert_eq!(theme.name, "Pink: at night");
+        for role in ROLES {
+            assert_eq!(
+                to_hex(theme.colors.get(role).unwrap()),
+                to_hex(colors.get(role).unwrap()),
+                "{role}"
+            );
+        }
+        assert_eq!(theme.colors.corner_radius, colors.corner_radius);
+        assert_eq!(file_name("Pink: at night"), "Pink_ at night.yaml");
     }
 
     #[test]
