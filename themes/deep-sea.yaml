@@ -1,0 +1,31 @@
+# Navy and slate blue, with sea-glass teal.
+name: Deep Sea
+base: dark
+colors:
+  background: "#0e1924"
+  sidebar: "#132230"
+  menu_bar: "#23323f"
+  menu: "#132230"
+  tab_active: "#0e1924"
+  tab_inactive: "#1d2c3a"
+  border: "#303f4d"
+  text: "#d5e4f0"
+  text_muted: "#99a7b3"
+  field_background: "#2a3947"
+  selection: "#294953"
+  hover: "#1d2c3a"
+  accent: "#4fd1c5"
+  accent_text: "#0c1f1e"
+  status_bar: "#17496b"
+  status_text: "#ecf0f3"
+  danger: "#ff8a80"
+  warning: "#ffd166"
+  success: "#7bd389"
+  code_comment: "#8aa2b8"
+  code_string: "#f6c177"
+  code_number: "#9ccfd8"
+  code_keyword: "#82aaff"
+  code_function: "#c3e88d"
+  code_type: "#4fd1c5"
+border_width: 1
+corner_radius: 4

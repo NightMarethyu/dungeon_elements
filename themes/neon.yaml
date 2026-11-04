@@ -1,0 +1,31 @@
+# Cyberpunk: near-black with neon pink and electric cyan.
+name: Neon
+base: dark
+colors:
+  background: "#0c0a12"
+  sidebar: "#15121f"
+  menu_bar: "#262331"
+  menu: "#15121f"
+  tab_active: "#0c0a12"
+  tab_inactive: "#201c2a"
+  border: "#5a2a63"           # a faint neon glow around panels
+  text: "#e8e4ff"
+  text_muted: "#a6a3b8"
+  field_background: "#2e2b3a"
+  selection: "#46244a"
+  hover: "#201c2a"
+  accent: "#ff2bd6"
+  accent_text: "#260620"
+  status_bar: "#00e5ff"
+  status_text: "#002226"
+  danger: "#ff5c7a"
+  warning: "#ffd23f"
+  success: "#39ff88"
+  code_comment: "#7f7aa8"
+  code_string: "#ff8ae2"
+  code_number: "#ffd23f"
+  code_keyword: "#00e5ff"
+  code_function: "#39ff88"
+  code_type: "#b388ff"
+border_width: 1
+corner_radius: 4

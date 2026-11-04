@@ -1099,6 +1099,10 @@ enum Message {
     SystemTheme(iced::theme::Mode),
     EditThemes,
     ThemeEditor(theme_editor::Message),
+    /// Where Share... saved a copy of a theme, if anywhere.
+    ThemeShared(Result<Option<PathBuf>, String>),
+    /// The theme file picked for Add Theme..., if any.
+    ThemeFilePicked(Option<PathBuf>),
     ReloadThemes,
     ToggleExtensions(bool),
     ToggleTypeFiles(bool),
@@ -1429,6 +1433,45 @@ impl App {
             .to_iced(),
             None => self.themes[self.theme].to_iced(),
         }
+    }
+
+    /// Does what the theme editor asked for.
+    fn theme_outcome(&mut self, outcome: theme_editor::Outcome) -> Task<Message> {
+        match outcome {
+            theme_editor::Outcome::Nothing => {}
+            theme_editor::Outcome::Close => self.theme_editor = None,
+            theme_editor::Outcome::Saved(name) => {
+                self.theme_editor = None;
+                let (themes, problems) = theme::load(theme::user_folder().as_deref());
+                self.themes = themes;
+                self.use_theme(&name);
+                self.settings.theme = self.themes[self.theme].name.clone();
+                self.save_settings();
+                self.notify(
+                    theme_problems(&problems)
+                        .unwrap_or_else(|| format!("Saved the {name} theme, and using it")),
+                );
+            }
+            theme_editor::Outcome::Reload(shown) => {
+                let (themes, _) = theme::load(theme::user_folder().as_deref());
+                self.themes = themes;
+                // The theme in use may have been the one deleted, and then it's Dark.
+                let name = self.settings.theme.clone();
+                self.use_theme(&name);
+                let shown = shown.unwrap_or_else(|| self.themes[self.theme].name.clone());
+                if let Some(editor) = &mut self.theme_editor {
+                    editor.reloaded(&self.themes, Some(&shown));
+                }
+            }
+            theme_editor::Outcome::Share(file, yaml) => {
+                return Task::perform(share_theme(file, yaml), Message::ThemeShared);
+            }
+            theme_editor::Outcome::PickFile => {
+                return Task::perform(pick_theme(), Message::ThemeFilePicked);
+            }
+        }
+        self.color_pictures();
+        Task::none()
     }
 
     /// Colors the logo and the dice for the colors showing now.
@@ -1779,35 +1822,37 @@ impl App {
                 let Some(editor) = &mut self.theme_editor else {
                     return Task::none();
                 };
-                match editor.update(message, &self.themes) {
-                    theme_editor::Outcome::Nothing => {}
-                    theme_editor::Outcome::Close => self.theme_editor = None,
-                    theme_editor::Outcome::Saved(name) => {
-                        self.theme_editor = None;
-                        let (themes, problems) = theme::load(theme::user_folder().as_deref());
-                        self.themes = themes;
-                        self.use_theme(&name);
-                        self.settings.theme = self.themes[self.theme].name.clone();
-                        self.save_settings();
-                        self.notify(
-                            theme_problems(&problems)
-                                .unwrap_or_else(|| format!("Saved the {name} theme, and using it")),
-                        );
-                    }
-                    theme_editor::Outcome::Reload(shown) => {
-                        let (themes, _) = theme::load(theme::user_folder().as_deref());
-                        self.themes = themes;
-                        // The theme in use may have been the one deleted, and then it's Dark.
-                        let name = self.settings.theme.clone();
-                        self.use_theme(&name);
-                        let shown = shown.unwrap_or_else(|| self.themes[self.theme].name.clone());
-                        if let Some(editor) = &mut self.theme_editor {
-                            editor.reloaded(&self.themes, Some(&shown));
+                let outcome = editor.update(message, &self.themes);
+                return self.theme_outcome(outcome);
+            }
+            Message::ThemeShared(result) => {
+                if let Some(editor) = &mut self.theme_editor {
+                    match result {
+                        Ok(Some(path)) => {
+                            editor.notify(format!("Saved a copy as {}", path.display()))
                         }
+                        Ok(None) => {}
+                        Err(error) => editor.notify(format!("Could not save a copy: {error}")),
                     }
                 }
-                self.color_pictures();
                 return Task::none();
+            }
+            Message::ThemeFilePicked(path) => {
+                let (Some(path), Some(editor)) = (path, &mut self.theme_editor) else {
+                    return Task::none();
+                };
+                let outcome = editor.add(&path, &self.themes);
+                let added = match &outcome {
+                    theme_editor::Outcome::Reload(Some(name)) => Some(name.clone()),
+                    _ => None,
+                };
+                let task = self.theme_outcome(outcome);
+                if let (Some(name), Some(editor)) = (added, &mut self.theme_editor) {
+                    editor.notify(format!(
+                        "Added {name}. Click Save to use it, or pick it under View > Theme."
+                    ));
+                }
+                return task;
             }
             Message::ReloadThemes => {
                 let folder = theme::user_folder();
@@ -12679,6 +12724,32 @@ async fn save_export(
     let path = handle.path().to_path_buf();
     std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
     Ok(Some(path))
+}
+
+/// Asks where to save a copy of a theme, and saves it there.
+async fn share_theme(file: String, yaml: String) -> Result<Option<PathBuf>, String> {
+    let Some(handle) = rfd::AsyncFileDialog::new()
+        .set_title("Share a theme")
+        .add_filter("Dungeon Elements theme", &["yaml"])
+        .set_file_name(&file)
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = handle.path().to_path_buf();
+    std::fs::write(&path, yaml).map_err(|error| error.to_string())?;
+    Ok(Some(path))
+}
+
+/// Asks for a theme file someone gave you.
+async fn pick_theme() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Add a theme")
+        .add_filter("Dungeon Elements theme", &["yaml", "yml"])
+        .pick_file()
+        .await
+        .map(|handle| handle.path().to_path_buf())
 }
 
 /// Asks for Markdown files to add to the walkthrough, like the players' characters.

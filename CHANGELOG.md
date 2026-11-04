@@ -10,6 +10,9 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 - A color picker with a square for strength and brightness, a hue strip, a color code box and swatches. It is its own piece, for the map tools to use later.
 - The editor warns when text would be hard to read, like "Text is hard to read on Panels".
 - **New Theme**, **Make a Copy** of any theme, rename and change your own, and **Delete** them with **Undo**. Themes are saved as ordinary theme files in your themes folder.
+- **Every color** in the editor lists all of a theme's colors (menu bar, borders, text boxes, messages, code...) to fine-tune one at a time.
+- **Share...** saves a copy of a theme anywhere, to give to someone, and **Add Theme...** brings one in.
+- Five new built-in themes, for eight in all: **Neon** (cyberpunk pink and cyan), **Vaporwave**, **Forest**, **Deep Sea** and **Frost** (light). Each passes the same readability test as the others.
 
 ### Roll buttons
 

@@ -14,6 +14,14 @@ use serde::Deserialize;
 const DARK: &str = include_str!("../themes/dark.yaml");
 const LIGHT: &str = include_str!("../themes/light.yaml");
 const HIGH_CONTRAST: &str = include_str!("../themes/high-contrast.yaml");
+/// The themes after the first three, in the order View > Theme lists them.
+const MORE: [(&str, &str); 5] = [
+    ("neon", include_str!("../themes/neon.yaml")),
+    ("vaporwave", include_str!("../themes/vaporwave.yaml")),
+    ("forest", include_str!("../themes/forest.yaml")),
+    ("deep-sea", include_str!("../themes/deep-sea.yaml")),
+    ("frost", include_str!("../themes/frost.yaml")),
+];
 
 /// The name of the theme used when the chosen one is missing, or the computer
 /// has no light or dark preference.
@@ -96,6 +104,38 @@ pub const ROLES: [&str; 25] = [
     "code_type",
 ];
 
+/// What the color named `role` colors, in words, for the theme editor's list of them.
+pub fn role_label(role: &str) -> &'static str {
+    match role {
+        "background" => "Background",
+        "sidebar" => "Panels (sidebar, tab bar, dialogs)",
+        "menu_bar" => "Menu bar",
+        "menu" => "Open menus",
+        "tab_active" => "Tab in front",
+        "tab_inactive" => "Tabs behind",
+        "border" => "Borders",
+        "text" => "Text",
+        "text_muted" => "Muted text",
+        "field_background" => "Text boxes",
+        "selection" => "Selected row",
+        "hover" => "Under the mouse",
+        "accent" => "Accent",
+        "accent_text" => "Text on accent buttons",
+        "status_bar" => "Status bar",
+        "status_text" => "Status bar text",
+        "danger" => "Errors",
+        "warning" => "Warnings",
+        "success" => "Done and saved",
+        "code_comment" => "Code: comments",
+        "code_string" => "Code: text in quotes",
+        "code_number" => "Code: numbers",
+        "code_keyword" => "Code: keywords",
+        "code_function" => "Code: functions",
+        "code_type" => "Code: types and tags",
+        _ => "Color",
+    }
+}
+
 impl Colors {
     /// The color named `role`, one of [`ROLES`].
     pub fn get(&self, role: &str) -> Option<Color> {
@@ -130,7 +170,7 @@ impl Colors {
     }
 
     /// Sets the color named `role` to `value`.
-    fn set(&mut self, role: &str, value: Color) -> Result<(), String> {
+    pub fn set(&mut self, role: &str, value: Color) -> Result<(), String> {
         let slot = match role {
             "background" => &mut self.background,
             "sidebar" => &mut self.sidebar,
@@ -308,13 +348,18 @@ pub fn to_hex(color: Color) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
-/// The built-in themes: Light, Dark and High Contrast.
+/// The built-in themes: Light, Dark and High Contrast, then Neon, Vaporwave, Forest, Deep
+/// Sea and Frost.
 pub fn built_in() -> Vec<Theme> {
     let light = parse(LIGHT, None, None).expect("themes/light.yaml is valid");
     let dark = parse(DARK, None, None).expect("themes/dark.yaml is valid");
     let high_contrast =
         parse(HIGH_CONTRAST, None, None).expect("themes/high-contrast.yaml is valid");
-    vec![light, dark, high_contrast]
+    let mut themes = vec![light, dark, high_contrast];
+    themes.extend(MORE.iter().map(|(file, yaml)| {
+        parse(yaml, None, None).unwrap_or_else(|error| panic!("themes/{file}.yaml: {error}"))
+    }));
+    themes
 }
 
 /// The themes a user theme's missing colors come from: Dark for `base: dark`,
@@ -607,8 +652,7 @@ pub fn file_name(name: &str) -> String {
 
 /// Reads one theme from `yaml`, the way [`load`] reads a user's, against the built-in
 /// `themes`.
-#[cfg(test)]
-fn parse_user(yaml: &str, themes: &[Theme]) -> Result<Theme, String> {
+pub fn parse_user(yaml: &str, themes: &[Theme]) -> Result<Theme, String> {
     let (dark, light) = bases(themes);
     parse(yaml, Some(&dark), Some(&light))
 }
@@ -620,7 +664,19 @@ mod tests {
     #[test]
     fn built_in_themes_load() {
         let names: Vec<_> = built_in().into_iter().map(|theme| theme.name).collect();
-        assert_eq!(names, [LIGHT_NAME, DEFAULT, "High Contrast"]);
+        assert_eq!(
+            names,
+            [
+                LIGHT_NAME,
+                DEFAULT,
+                "High Contrast",
+                "Neon",
+                "Vaporwave",
+                "Forest",
+                "Deep Sea",
+                "Frost"
+            ]
+        );
     }
 
     #[test]
@@ -674,6 +730,49 @@ mod tests {
         assert!(contrast(c.text, c.background) >= 12.0);
         assert!(contrast(c.accent_text, c.accent) >= 4.5);
         assert!(contrast(c.status_text, c.status_bar) >= 4.5);
+    }
+
+    #[test]
+    fn every_built_in_theme_is_readable() {
+        for theme in built_in() {
+            let c = theme.colors;
+            assert!(
+                readability(&c).is_empty(),
+                "{}: {:?}",
+                theme.name,
+                readability(&c)
+            );
+            // Messages, links and code show on every background, as large or bold text.
+            for ink in [
+                c.text_muted,
+                c.accent,
+                c.danger,
+                c.warning,
+                c.success,
+                c.code_comment,
+                c.code_string,
+                c.code_number,
+                c.code_keyword,
+                c.code_function,
+                c.code_type,
+            ] {
+                for paper in [
+                    c.background,
+                    c.sidebar,
+                    c.menu,
+                    c.field_background,
+                    c.selection,
+                ] {
+                    assert!(
+                        contrast(ink, paper) >= 3.0,
+                        "{}: {} on {}",
+                        theme.name,
+                        to_hex(ink),
+                        to_hex(paper)
+                    );
+                }
+            }
+        }
     }
 
     #[test]
