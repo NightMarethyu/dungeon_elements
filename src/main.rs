@@ -562,6 +562,9 @@ struct Tab {
     /// from, so they are made again when that changes. The one being edited is in `edit`.
     table_editors: Vec<(usize, Box<table_editor::Editor>)>,
     table_editors_for: String,
+    /// The block of the reading view last clicked to edit, for Add to Note to put a
+    /// result after.
+    last_block: Option<usize>,
     /// The file the text was last saved to, if any.
     path: Option<PathBuf>,
     /// The folder a new note is saved in.
@@ -729,6 +732,7 @@ fn undo_kind(message: &Message) -> UndoKind {
         Message::AddPicture(_) => Step("Insert Picture"),
         Message::ToggleTask(_) => Step("Tick Task"),
         Message::RollIntoField(..) | Message::FillField(_) => Step("Roll"),
+        Message::Dice(dice::Message::AddToNote(_)) => Step("Add to Note"),
         Message::AddField => Step("Add Field"),
         Message::RestoreField(_) => Step("Bring Back Field"),
         Message::TableEditor(table_editor::Message::Done) => Step("Table Change"),
@@ -3828,6 +3832,7 @@ impl Workspace {
             table_view: false,
             table_editors: Vec::new(),
             table_editors_for: String::new(),
+            last_block: None,
             disk: path.as_deref().and_then(check::modified_time),
             path,
             folder,
@@ -6658,6 +6663,7 @@ impl Workspace {
                 self.status = format!("Copied {result}");
                 iced::clipboard::write(result)
             }
+            Message::Dice(dice::Message::AddToNote(result)) => self.add_to_note(&result),
             Message::Dice(dice::Message::NewNote(name)) => {
                 // The place picked last time, since rolls of one kind tend to go together.
                 let places = self.note_places();
@@ -7755,6 +7761,7 @@ impl Workspace {
                     && let Some(range) = preview.block_range(index)
                 {
                     let content = text_editor::Content::with_text(&preview.source()[range.clone()]);
+                    tab.last_block = Some(index);
                     tab.edit = Some(ReadEdit::Block {
                         index,
                         range,
@@ -8653,7 +8660,7 @@ impl Workspace {
         if self.dice.open {
             main = main
                 .push(rule::horizontal(c.border_width.max(1.0)).style(style::separator(c)))
-                .push(self.dice.view(c, dice).map(Message::Dice));
+                .push(self.dice.view(c, dice, self.note_open()).map(Message::Dice));
         }
 
         let body = row![
@@ -10751,6 +10758,85 @@ impl Workspace {
         }
     }
 
+    /// Whether a note is open for the dice pane's Add to Note.
+    fn note_open(&self) -> bool {
+        !self.walkthrough_shown() && self.active_tab().is_some_and(Tab::is_note)
+    }
+
+    /// Puts a rolled `result` into the open note: at the cursor of the text box last
+    /// typed in (the note's text, a long text field, a table cell), at the end of the
+    /// short text field last typed in, or in the reading view, as a new paragraph after
+    /// the block last clicked. With nowhere picked yet, it goes at the end of the note.
+    fn add_to_note(&mut self, result: &str) -> Task<Message> {
+        if !self.note_open() || result.trim().is_empty() {
+            return Task::none();
+        }
+        let name = self
+            .active_tab()
+            .map(|tab| tab.name(false))
+            .unwrap_or_default();
+        self.status = format!("Added to {name}");
+        let reading = self.active_tab().is_some_and(Tab::reading);
+        if !reading {
+            if let Some((content, id)) = self.focused_text_mut() {
+                content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                    std::sync::Arc::new(result.to_string()),
+                )));
+                if let Some(tab) = self.active_tab_mut() {
+                    tab.modified = true;
+                }
+                return iced::widget::operation::focus(id);
+            }
+            if let Some(tab) = self.active_tab_mut()
+                && let Some(form) = tab.form.as_mut().filter(|_| !tab.source)
+                && let Some(id) = form.append_to_focused(result)
+            {
+                tab.modified = true;
+                return iced::widget::operation::focus(id);
+            }
+        }
+
+        // The reading view: after the block last clicked, which may be open to edit.
+        let editing = match self.active_tab().and_then(|tab| tab.edit.as_ref()) {
+            Some(ReadEdit::Block { index, .. } | ReadEdit::Table { index, .. }) => Some(*index),
+            _ => None,
+        };
+        let added = if reading { self.finish_editing() } else { 0 };
+        let (root, index) = (self.root.clone(), self.index.clone());
+        let Some(tab) = self.active_tab_mut() else {
+            return Task::none();
+        };
+        // The block it was, or the last of the blocks it became.
+        let block = editing
+            .map(|block| block.saturating_add_signed(added))
+            .or(tab.last_block)
+            .filter(|_| reading);
+        let Ok(text) = tab.text() else {
+            return Task::none();
+        };
+        let after = block.and_then(|block| {
+            let preview = tab.preview.as_ref()?;
+            let count = preview.block_count();
+            (count > 0)
+                .then(|| preview.block_range(block.min(count - 1)))
+                .flatten()
+        });
+        let (new, start) = add_after(&text, after.map(|range| range.end), result);
+        tab.set_text(&new);
+        tab.modified = true;
+        if reading {
+            let preview = tab.make_preview(&root, &index);
+            // The next result goes after this one.
+            tab.last_block = (0..preview.block_count()).find(|&block| {
+                preview
+                    .block_range(block)
+                    .is_some_and(|range| range.end > start)
+            });
+            tab.preview = Some(preview);
+        }
+        Task::none()
+    }
+
     /// Changes the text editor being typed in (see [`Self::focused_text_mut`]) with
     /// `change`, and gives it back the focus. If there is none, says `hint` instead.
     fn change_focused_text(
@@ -12164,6 +12250,26 @@ async fn save(
 /// The note's `text` with the block at `range` replaced by `edited`. Text added at the
 /// end (an empty range there) gets a blank line before it, and a block edited down to
 /// nothing takes the blank lines around it with it.
+/// `text` with `result` added as a paragraph of its own after byte `after`, or at the
+/// end, and where the result starts in it.
+fn add_after(text: &str, after: Option<usize>, result: &str) -> (String, usize) {
+    let result = result.trim();
+    match after.filter(|&at| text.is_char_boundary(at)) {
+        Some(at) => (
+            format!("{}\n\n{result}{}", &text[..at], &text[at..]),
+            at + 2,
+        ),
+        None => {
+            let kept = text.trim_end();
+            if kept.is_empty() {
+                (format!("{result}\n"), 0)
+            } else {
+                (format!("{kept}\n\n{result}\n"), kept.len() + 2)
+            }
+        }
+    }
+}
+
 fn replace_block(text: &str, range: std::ops::Range<usize>, edited: &str) -> String {
     let edited = edited.trim_matches(['\n', '\r']).trim_end();
     let (before, after) = (&text[..range.start], &text[range.end..]);
@@ -12560,6 +12666,62 @@ mod tests {
 
     fn shown(workspace: &Workspace) -> String {
         workspace.active_tab().unwrap().text().unwrap()
+    }
+
+    fn add_to_note(workspace: &mut Workspace, result: &str) {
+        let _ = workspace.update(Message::Dice(dice::Message::AddToNote(result.into())));
+    }
+
+    #[test]
+    fn add_to_note_goes_at_the_cursor_and_undoes_in_one_step() {
+        let mut workspace = workspace_with("add_to_note", &[("Loot.md", "First.\n")]);
+        type_text(&mut workspace, "Found ");
+        add_to_note(&mut workspace, "1d20: 14");
+        assert_eq!(shown(&workspace), "Found 1d20: 14First.\n");
+        // The cursor ends after it, so the next one follows.
+        add_to_note(&mut workspace, " and more");
+        assert_eq!(shown(&workspace), "Found 1d20: 14 and moreFirst.\n");
+
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "Found 1d20: 14First.\n");
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(shown(&workspace), "Found First.\n");
+    }
+
+    #[test]
+    fn add_to_note_in_the_reading_view_goes_after_the_block_clicked() {
+        let mut workspace = workspace_with(
+            "add_to_note_reading",
+            &[("Journal.md", "First.\n\nSecond.\n")],
+        );
+        let _ = workspace.update(Message::SetReading(true));
+        // Nothing clicked yet: at the end.
+        add_to_note(&mut workspace, "The Gilded Goose");
+        assert_eq!(shown(&workspace), "First.\n\nSecond.\n\nThe Gilded Goose\n");
+
+        // After the paragraph clicked, even while it is open to edit, and the next
+        // one after that.
+        let _ = workspace.update(Message::EditBlock(0));
+        add_to_note(&mut workspace, "2d6+3: 11 (4, 4)");
+        add_to_note(&mut workspace, "Rain");
+        assert_eq!(
+            shown(&workspace),
+            "First.\n\n2d6+3: 11 (4, 4)\n\nRain\n\nSecond.\n\nThe Gilded Goose\n"
+        );
+        let _ = workspace.update(Message::Undo);
+        assert_eq!(
+            shown(&workspace),
+            "First.\n\n2d6+3: 11 (4, 4)\n\nSecond.\n\nThe Gilded Goose\n"
+        );
+    }
+
+    #[test]
+    fn add_to_note_needs_a_note() {
+        let mut workspace = workspace_with("add_to_note_none", &[("Loot.md", "Gold\n")]);
+        assert!(workspace.note_open());
+        let _ = workspace.update(Message::CloseTab(workspace.active.unwrap()));
+        assert!(!workspace.note_open());
+        add_to_note(&mut workspace, "Nothing");
     }
 
     #[test]

@@ -236,7 +236,8 @@ Play at the table, solo play, and writing. This needs panes the user can arrange
 - [ ] A progress bar for the walkthrough (moved from Planned features)
 - [ ] A theme editor (View > Theme > Edit Themes..., see [Themes](#themes)), so nobody has to write a theme's YAML by hand. Its first theme: dark with neon green accents
 - [ ] Opening an Obsidian vault (or any folder Dungeon Elements hasn't opened before) offers a template, without changing existing notes (moved from Phase 5)
-- [ ] **Add to note** on each result in the dice pane's Dice and Tables history: puts the result at the cursor in the open note. The first piece of the journal: a roll goes straight into the entry
+- [x] **Add to note** on each result in the dice pane's Dice and Tables history: puts the result at the cursor in the open note. The first piece of the journal: a roll goes straight into the entry
+  - At the cursor of the note's text or the field last typed in (the end of a short field); in the reading view, a new paragraph after the block last clicked, or the end of the note. Dice go in as `2d6+3: 11 (4, 4)`. One Undo step; greyed out with no note open
 
 #### Step 2: layouts, one at a time (see [Layouts](#layouts))
 

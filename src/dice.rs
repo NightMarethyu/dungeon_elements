@@ -933,6 +933,26 @@ impl Roll {
         self.expression.has_parts() || self.dice().filter(|die| die.kept).count() > 1
     }
 
+    /// What Add to note writes: `2d6+3: 11 (4, 4)`, `1d20: 14`, or with advantage
+    /// `1d20 with advantage: 17 (17, 4 dropped)`.
+    pub fn note_text(&self) -> String {
+        let dice: Vec<String> = self
+            .dice()
+            .map(|die| {
+                if die.kept {
+                    die.value.to_string()
+                } else {
+                    format!("{} dropped", die.value)
+                }
+            })
+            .collect();
+        let mut text = format!("{}: {}", self.name(), self.total());
+        if dice.len() > 1 || self.expression.has_parts() {
+            text.push_str(&format!(" ({})", dice.join(", ")));
+        }
+        text
+    }
+
     /// For the list of earlier rolls: `2d6+3: 4, 5 (12)`.
     fn line(&self) -> String {
         let dice: Vec<String> = self
@@ -1017,6 +1037,8 @@ pub enum Message {
     Copy(String),
     /// Make a note named after a table's result. The workspace does it.
     NewNote(String),
+    /// Put a result into the open note, where its cursor was. The workspace does it.
+    AddToNote(String),
     /// Hide the roller, from the – in its corner.
     Hide,
     /// Show the Dice or the Tables list.
@@ -1052,7 +1074,7 @@ impl Roller {
                 self.list = list;
                 self.changes += 1;
             }
-            Message::Copy(_) | Message::NewNote(_) => {}
+            Message::Copy(_) | Message::NewNote(_) | Message::AddToNote(_) => {}
         }
     }
 
@@ -1139,7 +1161,8 @@ impl Roller {
         self.changes
     }
 
-    pub fn view<'a>(&'a self, c: Colors, icons: &Icons) -> Element<'a, Message> {
+    /// The pane. `note_open` is whether a note is open for Add to note to put a result in.
+    pub fn view<'a>(&'a self, c: Colors, icons: &Icons, note_open: bool) -> Element<'a, Message> {
         let dice = Die::ALL.iter().zip(&icons.dice).map(|(&die, icon)| {
             let count = self.count(die);
             let label = if count == 1 {
@@ -1239,7 +1262,7 @@ impl Roller {
         });
 
         row![
-            container(self.lists(c)).width(260).height(Fill),
+            container(self.lists(c, note_open)).width(260).height(Fill),
             rule::vertical(c.border_width.max(1.0)).style(style::separator(c)),
             column![container(bar).padding(padding::top(12).left(16).right(16))]
                 .push(error)
@@ -1252,7 +1275,7 @@ impl Roller {
     }
 
     /// The Dice or Tables switch, over the list it picks.
-    fn lists(&self, c: Colors) -> Element<'_, Message> {
+    fn lists(&self, c: Colors, note_open: bool) -> Element<'_, Message> {
         let switch = |list: List, label: String, hint: &str| {
             tip(
                 c,
@@ -1278,8 +1301,8 @@ impl Roller {
         .spacing(2);
 
         let list = match self.list {
-            List::Dice => self.results(c),
-            List::Tables => self.table_list(c),
+            List::Dice => self.results(c, note_open),
+            List::Tables => self.table_list(c, note_open),
         };
         // The list keeps the column's whole width, however short its lines are, and
         // scrolls when there are more rolls than fit.
@@ -1300,7 +1323,7 @@ impl Roller {
 
     /// Every result rolled on a table, the latest first, each with its table's name and
     /// buttons to copy it or make a note of it.
-    fn table_list(&self, c: Colors) -> Element<'_, Message> {
+    fn table_list(&self, c: Colors, note_open: bool) -> Element<'_, Message> {
         let mut view = column![].spacing(10);
         match self.tables.split_first() {
             None => {
@@ -1311,11 +1334,11 @@ impl Roller {
                 );
             }
             Some((latest, earlier)) => {
-                view = view.push(table_result(c, latest));
+                view = view.push(table_result(c, latest, note_open));
                 for rolled in earlier {
                     view = view
                         .push(rule::horizontal(1).style(style::separator(c)))
-                        .push(earlier_table_result(c, rolled));
+                        .push(earlier_table_result(c, rolled, note_open));
                 }
             }
         }
@@ -1323,7 +1346,7 @@ impl Roller {
     }
 
     /// The last roll of dice, and a few before it.
-    fn results(&self, c: Colors) -> Element<'_, Message> {
+    fn results(&self, c: Colors, note_open: bool) -> Element<'_, Message> {
         let mut view = column![text("Result:").size(14)].spacing(6);
 
         match self.rolls.first() {
@@ -1381,6 +1404,7 @@ impl Roller {
                     roll.name()
                 };
                 view = view.push(text(summary).size(12).color(c.text_muted));
+                view = view.push(add_to_note(c, roll.note_text(), note_open, false));
             }
         }
 
@@ -1388,10 +1412,16 @@ impl Roller {
             view = view.push(space().height(4));
             for roll in &self.rolls[1..] {
                 view = view.push(
-                    text(roll.line())
-                        .size(12)
-                        .color(c.text_muted)
-                        .wrapping(text::Wrapping::None),
+                    row![
+                        text(roll.line())
+                            .size(12)
+                            .color(c.text_muted)
+                            .wrapping(text::Wrapping::None)
+                            .width(Fill),
+                        add_to_note(c, roll.note_text(), note_open, true),
+                    ]
+                    .spacing(6)
+                    .align_y(Center),
                 );
             }
         }
@@ -1402,7 +1432,11 @@ impl Roller {
 
 /// The latest roll on a table: its result, what the die rolled, the tables its result
 /// rolled on, and buttons to copy it or make a note of it.
-fn table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Message> {
+fn table_result<'a>(
+    c: Colors,
+    rolled: &'a tables::Rolled,
+    note_open: bool,
+) -> Element<'a, Message> {
     let values: Vec<String> = rolled.values.iter().map(i64::to_string).collect();
     // A table rolled with its linked tables shows each of their rolls below instead.
     let title = if values.is_empty() {
@@ -1427,28 +1461,33 @@ fn table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Messag
     for inner in &rolled.inner {
         view = view.push(text(inner.line()).size(11).color(c.text_muted));
     }
-    view.push(result_buttons(c, rolled)).into()
+    view.push(result_buttons(c, rolled, note_open)).into()
 }
 
 /// A result rolled before the latest: its table's name, the result, and its buttons.
-fn earlier_table_result<'a>(c: Colors, rolled: &'a tables::Rolled) -> Element<'a, Message> {
+fn earlier_table_result<'a>(
+    c: Colors,
+    rolled: &'a tables::Rolled,
+    note_open: bool,
+) -> Element<'a, Message> {
     column![
         text(&rolled.name).size(11).color(c.text_muted),
         text(rolled.text()).size(13).color(c.text),
-        result_buttons(c, rolled),
+        result_buttons(c, rolled, note_open),
     ]
     .spacing(4)
     .into()
 }
 
-/// Copy and Make Note, for a result rolled on a table.
-fn result_buttons<'a>(c: Colors, rolled: &tables::Rolled) -> Element<'a, Message> {
+/// Add to Note, Copy and Make Note, for a result rolled on a table.
+fn result_buttons<'a>(c: Colors, rolled: &tables::Rolled, note_open: bool) -> Element<'a, Message> {
     let name = rolled.note_name();
     row![
+        add_to_note(c, rolled.text(), note_open, false),
         tip(
             c,
             button(text("Copy").size(12))
-                .padding([3, 10])
+                .padding([3, 8])
                 .style(style::secondary(c))
                 .on_press(Message::Copy(rolled.text())),
             "Copy the result".to_string(),
@@ -1456,14 +1495,43 @@ fn result_buttons<'a>(c: Colors, rolled: &tables::Rolled) -> Element<'a, Message
         tip(
             c,
             button(text("Make Note").size(12))
-                .padding([3, 10])
+                .padding([3, 8])
                 .style(style::secondary(c))
                 .on_press_maybe((!name.is_empty()).then(|| Message::NewNote(name.clone()))),
             format!("Make a note called {name}"),
         ),
     ]
     .spacing(6)
+    .wrap()
     .into()
+}
+
+/// The Add to Note button for `result`: greyed out with no note open. `small` is the
+/// short one beside each earlier roll of dice.
+fn add_to_note<'a>(
+    c: Colors,
+    result: String,
+    note_open: bool,
+    small: bool,
+) -> Element<'a, Message> {
+    let (label, padding, size) = if small {
+        ("Add", [1, 6], 11)
+    } else {
+        ("Add to Note", [3, 8], 12)
+    };
+    let hint = if note_open {
+        "Put this in the open note, where you were writing".to_string()
+    } else {
+        "Open a note to add this".to_string()
+    };
+    tip(
+        c,
+        button(text(label).size(size))
+            .padding(padding)
+            .style(style::secondary(c))
+            .on_press_maybe(note_open.then_some(Message::AddToNote(result))),
+        hint,
+    )
 }
 
 /// `content` with `label` shown above it on hover.
@@ -1874,6 +1942,45 @@ mod tests {
             inner: Vec::new(),
             joins: Vec::new(),
         }
+    }
+
+    #[test]
+    fn note_text_has_the_total_and_the_dice() {
+        let roll = |expression: &str, parts: Vec<Part>, mode: Mode| Roll {
+            label: None,
+            expression: Expression::parse(expression).unwrap(),
+            mode,
+            parts,
+        };
+        let dice = |values: &[(u32, bool)]| Part::Dice {
+            negative: false,
+            rolled: values
+                .iter()
+                .map(|&(value, kept)| Rolled { value, kept })
+                .collect(),
+        };
+        assert_eq!(
+            roll("1d20", vec![dice(&[(14, true)])], Mode::Normal).note_text(),
+            "1d20: 14"
+        );
+        assert_eq!(
+            roll(
+                "2d6+3",
+                vec![dice(&[(4, true), (4, true)]), Part::Number(3)],
+                Mode::Normal
+            )
+            .note_text(),
+            "2d6+3: 11 (4, 4)"
+        );
+        assert_eq!(
+            roll(
+                "1d20",
+                vec![dice(&[(17, true), (4, false)])],
+                Mode::Advantage
+            )
+            .note_text(),
+            "1d20 with advantage: 17 (17, 4 dropped)"
+        );
     }
 
     #[test]
