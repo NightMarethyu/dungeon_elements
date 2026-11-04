@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use iced::widget::{
     button, column, container, row, rule, scrollable, space, svg, text, text_input, tooltip,
 };
-use iced::{Center, Element, Fill};
+use iced::{Center, Color, Element, Fill, FillPortion};
 use serde_yaml_ng::Value;
 
 use crate::dice;
@@ -21,7 +21,7 @@ use crate::form::Form;
 use crate::note;
 use crate::style;
 use crate::tables;
-use crate::theme::Colors;
+use crate::theme::{self, Colors};
 use crate::types::{ContentType, Field, Kind, Width};
 use crate::walkthrough::{self, Answer, Campaign, Current, Progress, Question, Questions, Written};
 
@@ -103,6 +103,9 @@ pub enum Step {
 #[derive(Debug, Clone, Default)]
 struct ChapterState {
     answered: usize,
+    /// How many of its questions have no answer and were skipped, alone or with the
+    /// whole chapter.
+    skipped_questions: usize,
     total: usize,
     skipped: bool,
     /// Whether each of its questions is answered.
@@ -225,10 +228,20 @@ impl Walkthrough {
                     .iter()
                     .map(|question| self.progress.answered(campaign, &self.questions, question))
                     .collect();
+                let skipped = self.progress.is_skipped(&chapter.id);
+                let skipped_questions = chapter
+                    .questions
+                    .iter()
+                    .zip(&questions)
+                    .filter(|(question, answered)| {
+                        !**answered && (skipped || self.progress.is_skipped(&question.key()))
+                    })
+                    .count();
                 ChapterState {
                     answered: questions.iter().filter(|answered| **answered).count(),
+                    skipped_questions,
                     total: chapter.questions.len(),
-                    skipped: self.progress.is_skipped(&chapter.id),
+                    skipped,
                     questions,
                 }
             })
@@ -273,6 +286,18 @@ impl Walkthrough {
         }
         steps.push(Step::Done);
         steps
+    }
+
+    /// How far the whole walkthrough has got: the questions answered, the ones skipped
+    /// with no answer, and how many there are.
+    pub fn totals(&self) -> Tally {
+        self.chapters
+            .iter()
+            .fold(Tally::default(), |sum, chapter| Tally {
+                answered: sum.answered + chapter.answered,
+                skipped: sum.skipped + chapter.skipped_questions,
+                total: sum.total + chapter.total,
+            })
     }
 
     /// The first question with no answer that wasn't skipped, or else the end.
@@ -869,8 +894,17 @@ impl Walkthrough {
                         column![
                             text(&chapter.title).size(14),
                             text(progress).size(12).color(c.text_muted),
+                            progress_bar(
+                                c,
+                                Tally {
+                                    answered: state.answered,
+                                    skipped: state.skipped_questions,
+                                    total: state.total,
+                                },
+                                3.0,
+                            ),
                         ]
-                        .spacing(2),
+                        .spacing(3),
                     )
                     .width(Fill)
                     .padding([8, 8])
@@ -1080,13 +1114,33 @@ impl Walkthrough {
             .into(),
         };
 
+        let totals = self.totals();
+        let overall = container(
+            column![
+                text(totals.label()).size(12).color(c.text_muted),
+                progress_bar(c, totals, 6.0),
+            ]
+            .spacing(6)
+            .max_width(760),
+        )
+        .padding(iced::Padding {
+            top: 20.0,
+            right: 40.0,
+            bottom: 4.0,
+            left: 40.0,
+        })
+        .width(Fill);
+
         row![
             sidebar,
             rule::vertical(c.border_width.max(1.0)).style(style::separator(c)),
-            container(scrollable(container(body).padding([32, 40]).width(Fill)))
-                .width(Fill)
-                .height(Fill)
-                .style(style::panel(c.background)),
+            container(column![
+                overall,
+                scrollable(container(body).padding([24, 40]).width(Fill)).height(Fill),
+            ])
+            .width(Fill)
+            .height(Fill)
+            .style(style::panel(c.background)),
         ]
         .into()
     }
@@ -1239,9 +1293,111 @@ fn capitalized(name: &str) -> String {
         .join(" ")
 }
 
+/// How many questions are answered and skipped, of how many.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub answered: usize,
+    /// Skipped and not answered.
+    pub skipped: usize,
+    pub total: usize,
+}
+
+impl Tally {
+    /// What the bar at the top of the walkthrough says.
+    pub fn label(&self) -> String {
+        let Tally {
+            answered,
+            skipped,
+            total,
+        } = *self;
+        if total > 0 && answered + skipped >= total {
+            return if skipped == 0 {
+                format!("All done: every one of the {total} questions answered")
+            } else {
+                format!("All done: {answered} of {total} questions answered, {skipped} skipped")
+            };
+        }
+        let questions = if total == 1 { "question" } else { "questions" };
+        if skipped == 0 {
+            format!("{answered} of {total} {questions} answered")
+        } else {
+            format!("{answered} of {total} {questions} answered, {skipped} skipped")
+        }
+    }
+}
+
+/// A bar `height` high: answered questions in the accent color, skipped ones in a
+/// paler accent, and the rest left empty.
+fn progress_bar<'a, M: 'a>(c: Colors, progress: Tally, height: f32) -> Element<'a, M> {
+    let radius = height / 2.0;
+    let part = |color: Color, portion: usize| -> Option<Element<'a, M>> {
+        (portion > 0).then(|| {
+            container(space())
+                .width(FillPortion(portion.min(u16::MAX as usize) as u16))
+                .height(height)
+                .style(move |_: &iced::Theme| container::Style {
+                    background: Some(color.into()),
+                    ..container::Style::default()
+                })
+                .into()
+        })
+    };
+    let rest = progress
+        .total
+        .saturating_sub(progress.answered + progress.skipped);
+    let skipped = theme::mix(c.accent, c.field_background, 0.5);
+    let border = c.border;
+    let track = c.field_background;
+    container(
+        row![]
+            .push(part(c.accent, progress.answered))
+            .push(part(skipped, progress.skipped))
+            .push(part(Color::TRANSPARENT, rest))
+            .width(Fill),
+    )
+    .width(Fill)
+    .height(height + 2.0)
+    .padding(1)
+    .clip(true)
+    .style(move |_: &iced::Theme| container::Style {
+        background: Some(track.into()),
+        border: iced::Border {
+            color: border,
+            width: 1.0,
+            radius: radius.into(),
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_progress_bar_says_how_far_the_walkthrough_has_got() {
+        let tally = |answered, skipped, total| Tally {
+            answered,
+            skipped,
+            total,
+        };
+        assert_eq!(tally(0, 0, 38).label(), "0 of 38 questions answered");
+        assert_eq!(tally(14, 0, 38).label(), "14 of 38 questions answered");
+        assert_eq!(
+            tally(14, 3, 38).label(),
+            "14 of 38 questions answered, 3 skipped"
+        );
+        assert_eq!(tally(0, 0, 1).label(), "0 of 1 question answered");
+        assert_eq!(
+            tally(38, 0, 38).label(),
+            "All done: every one of the 38 questions answered"
+        );
+        assert_eq!(
+            tally(30, 8, 38).label(),
+            "All done: 30 of 38 questions answered, 8 skipped"
+        );
+    }
 
     #[test]
     fn a_pasted_list_is_split_into_names() {
