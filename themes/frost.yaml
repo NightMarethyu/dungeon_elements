@@ -1,0 +1,31 @@
+# A light theme of cool greys and ice blue, with dark slate ink.
+name: Frost
+base: light
+colors:
+  background: "#f3f6f9"
+  sidebar: "#e3e9f0"
+  menu_bar: "#d3d9e1"
+  menu: "#e3e9f0"
+  tab_active: "#f3f6f9"
+  tab_inactive: "#d9dfe6"
+  border: "#c5ccd3"
+  text: "#1b2631"
+  text_muted: "#5c646d"
+  field_background: "#fafbfd"
+  selection: "#b8c7d8"
+  hover: "#d9dfe6"
+  accent: "#1d5ea8"
+  accent_text: "#edf2f8"
+  status_bar: "#2a4866"
+  status_text: "#eef0f3"
+  danger: "#a3201b"
+  warning: "#6b4c00"
+  success: "#25622b"
+  code_comment: "#4f5d6b"
+  code_string: "#8a3a12"
+  code_number: "#1f6a4a"
+  code_keyword: "#1d4e9a"
+  code_function: "#6a3d00"
+  code_type: "#1b6670"
+border_width: 1
+corner_radius: 4

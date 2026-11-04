@@ -235,7 +235,7 @@ Play at the table, solo play, and writing. This needs panes the user can arrange
   - Built in two steps: making and rolling buttons (kept in `.dungeon_elements/roll buttons.md`, undone like any file change), then setting them on fields and walkthrough questions (a long text field gets a line per table, a short field a list; renaming a button follows it into `_type.yaml` and `_walkthrough.yaml`)
 - [ ] Undo and Redo inside the Note Types and walkthrough question editors while they are open (their Save is already one step to undo)
 - [ ] A progress bar for the walkthrough (moved from Planned features)
-- [ ] A theme editor (View > Theme > Edit Themes..., see [Themes](#themes)), so nobody has to write a theme's YAML by hand. Its first theme: dark with neon green accents
+- [x] A theme editor (View > Theme > Edit Themes..., see [Themes](#themes)), so nobody has to write a theme's YAML by hand, with five new built-in themes (Neon, Vaporwave, Forest, Deep Sea and Frost) and Share / Add Theme for swapping them
 - [ ] Opening an Obsidian vault (or any folder Dungeon Elements hasn't opened before) offers a template, without changing existing notes (moved from Phase 5)
 - [x] **Add to note** on each result in the dice pane's Dice and Tables history: puts the result at the cursor in the open note. The first piece of the journal: a roll goes straight into the entry
   - At the cursor of the note's text or the field last typed in (the end of a short field); in the reading view, a new paragraph after the block last clicked, or the end of the note. Dice go in as `2d6+3: 11 (4, 4)`. One Undo step; greyed out with no note open

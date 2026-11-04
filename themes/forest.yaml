@@ -1,0 +1,31 @@
+# Deep greens and moss, with an amber lantern for an accent.
+name: Forest
+base: dark
+colors:
+  background: "#171f17"
+  sidebar: "#1e281d"
+  menu_bar: "#2d372b"
+  menu: "#1e281d"
+  tab_active: "#171f17"
+  tab_inactive: "#283226"
+  border: "#3b4438"
+  text: "#dde6d1"
+  text_muted: "#a2aa99"
+  field_background: "#353f33"
+  selection: "#494a33"
+  hover: "#283226"
+  accent: "#e3b55b"
+  accent_text: "#221b0e"
+  status_bar: "#36532b"
+  status_text: "#eff1ee"
+  danger: "#f08a6c"
+  warning: "#e3b55b"
+  success: "#9ccc65"
+  code_comment: "#93a683"
+  code_string: "#e3b55b"
+  code_number: "#c5e1a5"
+  code_keyword: "#8fbcbb"
+  code_function: "#ffcc80"
+  code_type: "#a5d6a7"
+border_width: 1
+corner_radius: 4

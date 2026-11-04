@@ -1,0 +1,31 @@
+# Pastel pink, aqua and lilac on a dusky purple, like an old sunset.
+name: Vaporwave
+base: dark
+colors:
+  background: "#241733"
+  sidebar: "#2e1d42"
+  menu_bar: "#3e2d51"
+  menu: "#2e1d42"
+  tab_active: "#241733"
+  tab_inactive: "#38274b"
+  border: "#4d3c5e"
+  text: "#fbeaff"
+  text_muted: "#bbabc2"
+  field_background: "#473659"
+  selection: "#5b3864"
+  hover: "#38274b"
+  accent: "#ff71ce"
+  accent_text: "#26111f"
+  status_bar: "#01cdfe"
+  status_text: "#001f26"
+  danger: "#ff8f9e"
+  warning: "#fffb96"
+  success: "#05ffa1"
+  code_comment: "#a08cbf"
+  code_string: "#ff9de2"
+  code_number: "#fffb96"
+  code_keyword: "#01cdfe"
+  code_function: "#05ffa1"
+  code_type: "#c99bff"
+border_width: 1
+corner_radius: 4

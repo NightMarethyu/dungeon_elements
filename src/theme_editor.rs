@@ -7,12 +7,45 @@
 
 use std::path::PathBuf;
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, tooltip};
 use iced::{Center, Color, Element, Fill};
 
 use crate::color_picker::{self, Picker};
 use crate::style;
 use crate::theme::{self, Colors, Main, Theme};
+
+/// What the picker changes: one of the five main colors, which brings the colors worked
+/// out from it along, or any single color by its name in [`theme::ROLES`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Main(Main),
+    Role(&'static str),
+}
+
+impl Target {
+    fn get(self, colors: &Colors) -> Color {
+        match self {
+            Target::Main(main) => main.get(colors),
+            Target::Role(role) => colors.get(role).unwrap_or(Color::BLACK),
+        }
+    }
+
+    fn set(self, colors: &mut Colors, color: Color) {
+        match self {
+            Target::Main(main) => main.set(colors, color),
+            Target::Role(role) => {
+                let _ = colors.set(role, Color { a: 1.0, ..color });
+            }
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Target::Main(main) => main.label(),
+            Target::Role(role) => theme::role_label(role),
+        }
+    }
+}
 
 /// The theme being made or changed.
 #[derive(Debug, Clone)]
@@ -30,8 +63,14 @@ pub enum Message {
     NewTheme,
     MakeCopy,
     Name(String),
-    /// Pick this one of the five colors.
-    Pick(Main),
+    /// Pick this color.
+    Pick(Target),
+    /// Show every color, or only the five main ones.
+    ShowAll(bool),
+    /// Save a copy of the theme shown somewhere else, to give to someone.
+    Share,
+    /// Bring in a theme file someone gave you.
+    AddTheme,
     Picker(color_picker::Message),
     Save,
     Delete,
@@ -47,17 +86,25 @@ pub enum Outcome {
     Close,
     /// Load the themes again and use the one called this, then close the editor.
     Saved(String),
-    /// Load the themes again, since one was deleted or put back, and show the one called
-    /// this (or the one in use).
+    /// Load the themes again, since one was deleted, put back or added, and show the one
+    /// called this (or the one in use).
     Reload(Option<String>),
+    /// Ask where to save a copy of a theme: its file name and what goes in it.
+    Share(String, String),
+    /// Ask for a theme file to add, and hand it to [`Editor::add`].
+    PickFile,
 }
 
 pub struct Editor {
     /// The theme shown, as its place in the app's list.
     selected: usize,
     draft: Option<Draft>,
-    /// Which of the five colors the picker changes.
-    picking: Main,
+    /// Which color the picker changes.
+    picking: Target,
+    /// Whether every color is listed, not only the five main ones.
+    all: bool,
+    /// What happened last, like where a shared copy went.
+    notice: Option<String>,
     picker: Picker,
     error: Option<String>,
     /// The last theme deleted, for Undo: its file, what was in it, and its name.
@@ -76,7 +123,9 @@ impl Editor {
         let mut editor = Editor {
             selected: current,
             draft: None,
-            picking: Main::Background,
+            picking: Target::Main(Main::Background),
+            all: false,
+            notice: None,
             picker: Picker::new(Color::BLACK),
             error: None,
             deleted: None,
@@ -112,9 +161,9 @@ impl Editor {
         self.pick(self.picking, themes);
     }
 
-    fn pick(&mut self, main: Main, themes: &[Theme]) {
-        self.picking = main;
-        self.picker = Picker::new(main.get(&self.preview(themes)));
+    fn pick(&mut self, target: Target, themes: &[Theme]) {
+        self.picking = target;
+        self.picker = Picker::new(target.get(&self.preview(themes)));
     }
 
     fn start(&mut self, name: String, colors: Colors, themes: &[Theme]) {
@@ -129,7 +178,10 @@ impl Editor {
 
     pub fn update(&mut self, message: Message, themes: &[Theme]) -> Outcome {
         match message {
-            Message::Select(index) => self.select(themes, index),
+            Message::Select(index) => {
+                self.notice = None;
+                self.select(themes, index);
+            }
             Message::NewTheme => {
                 // A new theme starts from Dark, or Light when a light one is showing.
                 let light = !theme::is_dark(self.preview(themes).background);
@@ -159,7 +211,25 @@ impl Editor {
                     self.error = None;
                 }
             }
-            Message::Pick(main) => self.pick(main, themes),
+            Message::Pick(target) => self.pick(target, themes),
+            Message::ShowAll(all) => {
+                self.all = all;
+                if !all && matches!(self.picking, Target::Role(_)) {
+                    self.pick(Target::Main(Main::Background), themes);
+                }
+            }
+            Message::Share => {
+                let name = match &self.draft {
+                    Some(draft) if !draft.name.trim().is_empty() => draft.name.trim().to_string(),
+                    _ => themes
+                        .get(self.selected)
+                        .map(|theme| theme.name.clone())
+                        .unwrap_or_default(),
+                };
+                let yaml = theme::to_yaml(&name, &self.preview(themes));
+                return Outcome::Share(theme::file_name(&name), yaml);
+            }
+            Message::AddTheme => return Outcome::PickFile,
             Message::Picker(message) => {
                 if let (Some(color), Some(draft)) = (self.picker.update(message), &mut self.draft) {
                     self.picking.set(&mut draft.colors, color);
@@ -180,6 +250,60 @@ impl Editor {
             Message::Close => return Outcome::Close,
         }
         Outcome::Nothing
+    }
+
+    /// Says `notice` under the buttons, like where a shared copy was saved.
+    pub fn notify(&mut self, notice: String) {
+        self.notice = Some(notice);
+    }
+
+    /// Adds the theme file at `path` to the user's themes, under a name no theme has, and
+    /// shows it.
+    pub fn add(&mut self, path: &std::path::Path, themes: &[Theme]) -> Outcome {
+        let Some(folder) = theme::user_folder() else {
+            self.error = Some("Your settings folder could not be found.".into());
+            return Outcome::Nothing;
+        };
+        self.add_to(&folder, path, themes)
+    }
+
+    /// [`Editor::add`], into `folder`.
+    fn add_to(
+        &mut self,
+        folder: &std::path::Path,
+        path: &std::path::Path,
+        themes: &[Theme],
+    ) -> Outcome {
+        let file = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let theme = match std::fs::read_to_string(path)
+            .map_err(|error| error.to_string())
+            .and_then(|yaml| theme::parse_user(&yaml, themes))
+        {
+            Ok(theme) if !theme.name.trim().is_empty() => theme,
+            Ok(_) => {
+                self.error = Some(format!("{file} is a theme with no name."));
+                return Outcome::Nothing;
+            }
+            Err(error) => {
+                self.error = Some(format!(
+                    "{file} isn't a theme Dungeon Elements can read: {error}"
+                ));
+                return Outcome::Nothing;
+            }
+        };
+        // A friend's Midnight beside your own Midnight becomes Midnight 2.
+        let name = free_name(theme.name.trim(), themes);
+        match write(folder, &name, &theme.colors, None) {
+            Ok(_) => Outcome::Reload(Some(name)),
+            Err(error) => {
+                self.error = Some(error);
+                Outcome::Nothing
+            }
+        }
     }
 
     /// After the themes are loaded again: shows the one called `name`, if there is one.
@@ -266,10 +390,24 @@ impl Editor {
             );
         }
         list = list.push(Space::new().height(8)).push(
-            button(text("New Theme").size(13))
-                .padding([5, 10])
-                .style(style::secondary(c))
-                .on_press(Message::NewTheme),
+            row![
+                button(text("New Theme").size(13))
+                    .padding([5, 10])
+                    .style(style::secondary(c))
+                    .on_press(Message::NewTheme),
+                tooltip(
+                    button(text("Add Theme...").size(13))
+                        .padding([5, 10])
+                        .style(style::secondary(c))
+                        .on_press(Message::AddTheme),
+                    container(text("Bring in a theme file someone gave you").size(12))
+                        .padding(6)
+                        .style(style::dropdown(c)),
+                    tooltip::Position::Bottom,
+                ),
+            ]
+            .spacing(6)
+            .wrap(),
         );
         if let Some((_, _, name)) = &self.deleted {
             list = list.push(
@@ -313,21 +451,21 @@ impl Editor {
             .into(),
         };
 
-        // The five colors: click one to pick it.
-        let mut mains = column![].spacing(4);
-        for main in Main::ALL {
-            let color = main.get(&colors);
-            let picked = editing && main == self.picking;
+        // The five main colors, or every color: click one to pick it.
+        let row_for = |target: Target, hint: Option<&'static str>| {
+            let color = target.get(&colors);
+            let picked = editing && target == self.picking;
+            let size = if hint.is_some() { 28 } else { 20 };
             let swatch = container(Space::new())
-                .width(28)
-                .height(28)
+                .width(size)
+                .height(size)
                 .style(color_picker::swatch_style(color, c));
-            let words = column![
-                text(main.label()).size(13).color(c.text),
-                text(main.hint()).size(11).color(c.text_muted),
-            ]
-            .spacing(1)
-            .width(Fill);
+            let mut words = column![text(target.label()).size(13).color(c.text)]
+                .spacing(1)
+                .width(Fill);
+            if let Some(hint) = hint {
+                words = words.push(text(hint).size(11).color(c.text_muted));
+            }
             let line = row![
                 swatch,
                 words,
@@ -335,14 +473,51 @@ impl Editor {
             ]
             .spacing(10)
             .align_y(Center);
-            mains = mains.push(
-                button(line)
-                    .width(Fill)
-                    .padding([5, 8])
-                    .style(style::flat(c, picked))
-                    .on_press_maybe(editing.then_some(Message::Pick(main))),
-            );
-        }
+            button(line)
+                .width(Fill)
+                .padding(if hint.is_some() { [5, 8] } else { [3, 8] })
+                .style(style::flat(c, picked))
+                .on_press_maybe(editing.then_some(Message::Pick(target)))
+        };
+        let colors_list: Element<'a, Message> = if self.all {
+            let mut every = column![
+                text("Changing one of the five main colors works the colors that come from it out again.")
+                    .size(11)
+                    .color(c.text_muted)
+            ]
+            .spacing(2);
+            for role in theme::ROLES {
+                every = every.push(row_for(Target::Role(role), None));
+            }
+            scrollable(every.padding(iced::Padding::ZERO.right(8)))
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new().width(3).scroller_width(3),
+                ))
+                .height(Fill)
+                .into()
+        } else {
+            column(
+                Main::ALL
+                    .into_iter()
+                    .map(|main| row_for(Target::Main(main), Some(main.hint())).into()),
+            )
+            .spacing(4)
+            .into()
+        };
+        let switch = |words: &'static str, all: bool| {
+            button(text(words).size(12))
+                .padding([2, 8])
+                .style(style::flat(c, self.all == all))
+                .on_press(Message::ShowAll(all))
+        };
+        let colors_header = row![
+            label("Colors"),
+            Space::new().width(Fill),
+            switch("Main five", false),
+            switch("Every color", true),
+        ]
+        .spacing(4)
+        .align_y(Center);
 
         let problems = theme::readability(&colors);
         let readability: Element<'a, Message> = if problems.is_empty() {
@@ -361,9 +536,10 @@ impl Editor {
             .into()
         };
 
-        let middle = column![top, column![label("Colors"), mains].spacing(4)]
+        let middle = column![top, column![colors_header, colors_list].spacing(6)]
             .spacing(14)
-            .width(300);
+            .width(300)
+            .height(Fill);
 
         let swatches: Vec<Color> = SWATCHES
             .iter()
@@ -371,13 +547,9 @@ impl Editor {
             .collect();
         let picker: Element<'a, Message> = if editing {
             column![
-                label(match self.picking {
-                    Main::Background => "Pick the Background",
-                    Main::Panels => "Pick the Panels",
-                    Main::Text => "Pick the Text",
-                    Main::Accent => "Pick the Accent",
-                    Main::StatusBar => "Pick the Status bar",
-                }),
+                text(format!("Pick: {}", self.picking.label()))
+                    .size(12)
+                    .color(c.text_muted),
                 self.picker.view(c, 260.0, &swatches).map(Message::Picker),
                 Space::new().height(6),
                 readability,
@@ -405,9 +577,20 @@ impl Editor {
                     .on_press(Message::MakeCopy),
             );
         }
+        buttons = buttons.push(tooltip(
+            button(text("Share..."))
+                .style(style::secondary(c))
+                .on_press(Message::Share),
+            container(text("Save a copy of this theme to give to someone").size(12))
+                .padding(6)
+                .style(style::dropdown(c)),
+            tooltip::Position::Top,
+        ));
         buttons = buttons.push(Space::new().width(Fill));
         if let Some(error) = &self.error {
             buttons = buttons.push(text(error).size(12).color(c.danger));
+        } else if let Some(notice) = &self.notice {
+            buttons = buttons.push(text(notice).size(12).color(c.text_muted));
         }
         buttons = buttons
             .push(
@@ -507,6 +690,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn single_colors_can_be_fine_tuned() {
+        let themes = theme::built_in();
+        let mut editor = Editor::new(&themes, 1);
+        editor.update(Message::MakeCopy, &themes);
+        editor.update(Message::ShowAll(true), &themes);
+        editor.update(Message::Pick(Target::Role("border")), &themes);
+        editor.update(
+            Message::Picker(color_picker::Message::Code("#ff0000".into())),
+            &themes,
+        );
+        let colors = editor.preview(&themes);
+        assert_eq!(theme::to_hex(colors.border), "#ff0000");
+        // Only that color changes.
+        assert_eq!(colors.hover, themes[1].colors.hover);
+
+        // Going back to the main five picks one of them.
+        editor.update(Message::ShowAll(false), &themes);
+        assert_eq!(editor.picking, Target::Main(Main::Background));
+    }
+
+    #[test]
+    fn themes_are_shared_and_added() {
+        let folder =
+            std::env::temp_dir().join(format!("dungeon_elements_shared_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let themes = theme::built_in();
+
+        // Share... gives the shown theme's file, even a built-in one.
+        let neon = themes.iter().position(|t| t.name == "Neon").unwrap();
+        let mut editor = Editor::new(&themes, neon);
+        let Outcome::Share(file, yaml) = editor.update(Message::Share, &themes) else {
+            panic!("Share should ask where to save");
+        };
+        assert_eq!(file, "Neon.yaml");
+        let given = folder.join("from a friend.yaml");
+        std::fs::write(&given, yaml).unwrap();
+
+        // Adding it beside the built-in Neon makes it Neon 2.
+        let user = folder.join("themes");
+        assert_eq!(
+            editor.add_to(&user, &given, &themes),
+            Outcome::Reload(Some("Neon 2".into()))
+        );
+        let (loaded, problems) = theme::load(Some(&user));
+        assert!(problems.is_empty(), "{problems:?}");
+        let added = loaded.iter().find(|t| t.name == "Neon 2").unwrap();
+        assert_eq!(added.colors.accent, themes[neon].colors.accent);
+
+        // A file that isn't a theme says so.
+        std::fs::write(&given, "hello: there\n").unwrap();
+        assert_eq!(editor.add_to(&user, &given, &themes), Outcome::Nothing);
+        assert!(editor.error.as_ref().unwrap().contains("isn't a theme"));
+
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
     fn names_must_be_new() {
         let themes = theme::built_in();
         assert!(name_problem(" ", None, &themes).is_some());
@@ -530,7 +771,7 @@ mod tests {
         assert!(editor.draft.is_none(), "Dark is built in");
         editor.update(Message::NewTheme, &themes);
         editor.update(Message::Name("Midnight".into()), &themes);
-        editor.update(Message::Pick(Main::Accent), &themes);
+        editor.update(Message::Pick(Target::Main(Main::Accent)), &themes);
         editor.update(
             Message::Picker(color_picker::Message::Code("#ff6ad5".into())),
             &themes,
