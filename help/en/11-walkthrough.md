@@ -82,3 +82,5 @@ A template can bring questions of its own, made for its folders, and a campaign 
 Mistakes show at the bottom of the dialog in plain words, like a question with no text, and must be fixed before saving. Questions the campaign can't ask, like one about a field its type no longer has, are listed there too. They can still be saved, and the walkthrough leaves them out.
 
 **Save** keeps the questions for this campaign. **Save and Try It** opens the walkthrough with them. **Use the Built-In Questions** goes back to the built-in ones.
+
+**Ctrl+Z** and **Ctrl+Y**, or the arrows at the dialog's top left, undo and redo changes while it is open, even **Start from the Default Questions**. Each arrow says what it would do, like **Undo Remove "Pitch"**, and Undo goes back to the chapter the change was made in.

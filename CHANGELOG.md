@@ -4,9 +4,10 @@ All notable changes to Dungeon Elements are listed here. The format follows [Kee
 
 ## [Unreleased]
 
-### Undo in Note Types
+### Undo in Note Types and the walkthrough questions
 
 - While **Campaign > Note Types...** is open, Ctrl+Z and Ctrl+Y (or the arrows at its top left) undo and redo changes in it: fields added, removed, moved and renamed, kinds, options and tables changed, new types. Typing in a box is one step until a pause, and Undo shows the type the change was made to. Before, Ctrl+Z undid typing in the note behind the window.
+- **Campaign > Walkthrough Questions...** has the same Undo and Redo while it is open: chapters and questions added, removed and moved, the note, field and tables picked, the notes it makes, and **Start from the Default Questions**, which can be taken back to try the defaults.
 
 ### Walkthrough progress
 
